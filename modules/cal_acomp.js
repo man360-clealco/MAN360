@@ -37,8 +37,8 @@ window.Modulos.cal_acomp = (() => {
   function horaAtual() {
     const n=new Date(); return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
   }
-  function hoje()  { const d=new Date(); d.setHours(0,0,0,0); return d; }
-  function amanha(){ const d=hoje(); d.setDate(d.getDate()+1); return d; }
+  function hoje()  { const d=new Date(); d.setHours(12,0,0,0); return d; }
+  function amanha(){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+1); return d; }
 
   /* ── Estado ── */
   let _semana    = semanaAtual();
@@ -332,11 +332,9 @@ window.Modulos.cal_acomp = (() => {
       const isHoje=iso===hjIso;
       if (fatias[0] && fatias[0].tipo==='folga') return `<div class="cag-mg-day" style="background:#fff;border:1px solid #d1d5db"></div>`;
       if (fatias[0] && fatias[0].tipo==='passado') return `<div class="cag-mg-day" style="background:var(--cag-realizado)"></div>`;
-      if (fatias.length===1) return `<div class="cag-mg-day${isHoje?' hoje':''}" style="background:${corTipo(fatias[0].tipo)}"></div>`;
-      let grad='linear-gradient(to right',acc=0;
-      for (const f of fatias){grad+=`,${corTipo(f.tipo)} ${acc}%,${corTipo(f.tipo)} ${acc+f.pct}%`;acc+=f.pct;}
-      grad+=')';
-      return `<div class="cag-mg-day${isHoje?' hoje':''}" style="background:${grad}"></div>`;
+      // Usar a cor do tipo predominante (maior pct)
+      const tipoPred = fatias.reduce((a,b) => b.pct > a.pct ? b : a, fatias[0]);
+      return `<div class="cag-mg-day${isHoje?' hoje':''}" style="background:${corTipo(tipoPred.tipo)}"></div>`;
     }).join('');
     const fila=(_fila[equipe.id]||[]).filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
     const hhD=hhSemanaEquipe(equipe);
@@ -449,7 +447,13 @@ window.Modulos.cal_acomp = (() => {
     for (const eq of _equipes) for (const item of (_fila[eq.id]||[])) if(item.status==='em_execucao') emExec.push({...item,equipeNome:eq.nome});
     const hjIso=isoDate(hoje()),amhIso=isoDate(amanha());
     const indispHoje=[],indispAmanha=[],deFerias=[];
+    // Só colaboradores CAL com cadastro completo (turno + escala + âncora)
     for (const c of _colabs) {
+      if (!c.turno_id || !c.escala_id) continue;
+      const ancora = c.data_ref_folga || c.primeira_folga;
+      const esc = _escalas[c.escala_id];
+      if (!esc) continue;
+      if (esc.tipo_ciclo !== 'ADM' && !ancora) continue;
       const id=c.cracha||c.chapa;
       if(_ferias.some(f=>f.chapa===id&&hjIso>=f.data_inicio&&hjIso<=f.data_fim)){deFerias.push(c.nome||id);continue;}
       const fh=projetarFolgas(c,inicioSemana(_semana),fimSemana(_semana));
@@ -1019,7 +1023,7 @@ window.Modulos.cal_acomp = (() => {
     if(document.getElementById('cag-style'))return;
     const s=document.createElement('style'); s.id='cag-style';
     s.textContent=`
-      :root{--cag-realizado:#86efac;--cag-prog:#93c5fd;--cag-fora:#fde047;--cag-mcu:#fca5a5;--cag-estourado:#c4b5fd;--cag-folga:#ffffff;--cag-vazio:#e4e4e7;--cag-prog-l:#dbeafe;--cag-fora-l:#fef9c3;--cag-mcu-l:#fee2e2;--cs-prog:#2563eb;--cs-fora:#ca8a04;--cs-mcu:#dc2626;--cs-inter:#d97706;--cs-done:#16a34a;}
+      :root{--cag-realizado:#16a34a;--cag-prog:#2563eb;--cag-fora:#ca8a04;--cag-mcu:#dc2626;--cag-estourado:#7c3aed;--cag-folga:#e5e7eb;--cag-vazio:#d1d5db;--cag-prog-l:#dbeafe;--cag-fora-l:#fef9c3;--cag-mcu-l:#fee2e2;--cs-prog:#2563eb;--cs-fora:#ca8a04;--cs-mcu:#dc2626;--cs-inter:#d97706;--cs-done:#16a34a;}
       .cag-mod{display:flex;flex-direction:column;gap:10px;padding:14px;}
       .cag-loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:13px;}
       .cag-loading i{font-size:20px;animation:cag-spin 1s linear infinite;}
