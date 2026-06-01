@@ -133,7 +133,7 @@ window.Modulos.cal_acomp = (() => {
       if (folgas.has(hjIso)) continue;
       const saida = saidaTurno(c.turno_id);
       const entrada = entradaTurno(c.turno_id);
-      const intervalo = (_turnos[c.turno_id]?.intervalo_min||0);
+      const intervalo = (_turnos[c.turno_id] ? _turnos[c.turno_id].intervalo_min||0 : 0);
       if (saida===null) continue;
       if (minAgora >= saida) continue; // já passou do horário
       if (minAgora <= entrada) { // ainda não começou — HH total do dia
@@ -270,7 +270,7 @@ window.Modulos.cal_acomp = (() => {
     const db=getDB(); const semAnt=_semana-1;
     const anoAnt=inicioSemana(semAnt).getFullYear();
     const {data:antigos}=await db.from('cal_fila').select('*').eq('semana',semAnt).eq('ano',anoAnt).in('status',['pendente','aguardando_inicio']);
-    if (!antigos?.length) return;
+    if (!antigos || !antigos.length) return;
     for (const item of antigos) {
       const jaExiste=(_fila[item.equipe_id]||[]).some(i=>i.os===item.os&&i.cod_servico===item.cod_servico);
       if (jaExiste) continue;
@@ -330,8 +330,8 @@ window.Modulos.cal_acomp = (() => {
       const dt=new Date(ini); dt.setDate(dt.getDate()+i);
       const iso=isoDate(dt);
       const isHoje=iso===hjIso;
-      if (fatias[0]?.tipo==='folga') return `<div class="cag-mg-day" style="background:#fff;border:1px solid #d1d5db"></div>`;
-      if (fatias[0]?.tipo==='passado') return `<div class="cag-mg-day" style="background:var(--cag-realizado)"></div>`;
+      if (fatias[0] && fatias[0].tipo==='folga') return `<div class="cag-mg-day" style="background:#fff;border:1px solid #d1d5db"></div>`;
+      if (fatias[0] && fatias[0].tipo==='passado') return `<div class="cag-mg-day" style="background:var(--cag-realizado)"></div>`;
       if (fatias.length===1) return `<div class="cag-mg-day${isHoje?' hoje':''}" style="background:${corTipo(fatias[0].tipo)}"></div>`;
       let grad='linear-gradient(to right',acc=0;
       for (const f of fatias){grad+=`,${corTipo(f.tipo)} ${acc}%,${corTipo(f.tipo)} ${acc+f.pct}%`;acc+=f.pct;}
@@ -486,7 +486,8 @@ window.Modulos.cal_acomp = (() => {
         const key=p.os+'|'+(p.cod_servico||'');
         const incluso=osNaFila.has(key);
         const badge=incluso?`<span class="cag-badge" style="color:var(--green);background:var(--green-l)">Incluso</span>`:`<span class="cag-badge" style="color:#9ca3af;background:#f3f4f6">Não incluso</span>`;
-        const btnInserir=`<button class="cag-act blue cag-prog-inserir" data-os='${JSON.stringify({os:p.os,cod:p.cod_servico||'',desc:p.desc_servico||'',hh:p.hh_previsto||0,equipe_orig:p.equipe||''})}' title="Inserir na fila"><i class="ti ti-plus"></i></button>`;
+        const _dadosOS = {os:p.os,cod:p.cod_servico||'',desc:p.desc_servico||'',hh:p.hh_previsto||0,equipe_orig:p.equipe||''};
+        const btnInserir=`<button class="cag-act blue cag-prog-inserir" data-os="${btoa(unescape(encodeURIComponent(JSON.stringify(_dadosOS))))}" title="Inserir na fila"><i class="ti ti-plus"></i></button>`;
         return `<div class="cag-prog-row" data-key="${key}">
           ${tr(p.os||'—',`<span class="cag-desc-cell cag-prog-desc" data-full="${(p.desc_servico||'').replace(/"/g,'&quot;')}">${p.desc_servico||'—'}</span>`,p.hh_previsto?`${p.hh_previsto} HH`:'—',`<span style="font-size:10px;color:#6b7280">${p.equipe||'—'}</span>`,badge+' '+btnInserir)}
           <div class="cag-prog-expand" id="expand-${key.replace(/[^a-z0-9]/gi,'_')}"></div>
@@ -647,7 +648,7 @@ window.Modulos.cal_acomp = (() => {
     c.querySelectorAll('.cag-prog-inserir').forEach(btn=>{
       btn.addEventListener('click',e=>{
         e.stopPropagation();
-        const dados=JSON.parse(btn.dataset.os);
+        const dados=JSON.parse(decodeURIComponent(escape(atob(btn.dataset.os))));
         abrirModalInserirPrografila(dados);
       });
     });
@@ -659,7 +660,7 @@ window.Modulos.cal_acomp = (() => {
         const full=el.dataset.full;
         if(full&&full.length>el.textContent.length-3){
           const row=el.closest('.cag-prog-row');
-          const key=row?.dataset.key?.replace(/[^a-z0-9]/gi,'_');
+          const key=row && row.dataset && row.dataset.key ? row.dataset.key.replace(/[^a-z0-9]/gi,'_') : null;
           const exp=c.querySelector(`#expand-${key}`);
           if(exp){
             if(exp.classList.contains('open')){exp.innerHTML='';exp.classList.remove('open');}
@@ -938,7 +939,7 @@ window.Modulos.cal_acomp = (() => {
 
   function abrirModalEquipe(equipeId) {
     const equipe=equipeId?_equipes.find(e=>e.id===equipeId):null;
-    const chapasNaEq=new Set((equipe?.membros||[]).map(m=>m.chapa));
+    const chapasNaEq=new Set(((equipe && equipe.membros)||[]).map(m=>m.chapa));
     const membHtml=_colabs.map(c=>{
       const cracha=c.cracha||c.chapa; const naEq=chapasNaEq.has(cracha);
       const emOutra=!naEq&&_equipes.some(e=>e.id!==equipeId&&(e.membros||[]).some(m=>m.chapa===cracha));
@@ -980,7 +981,7 @@ window.Modulos.cal_acomp = (() => {
     else await db.from('cal_equipes').update({nome}).eq('id',eqId);
     const {data:ma}=await db.from('cal_equipe_membros').select('*').eq('equipe_id',eqId);
     const ca=new Set((ma||[]).map(m=>m.chapa));
-    for (const ch of chapas) if(!ca.has(ch)){const c=_colabs.find(x=>(x.cracha||x.chapa)===ch);await db.from('cal_equipe_membros').insert({equipe_id:eqId,chapa:ch,nome:c?.nome||null,vigencia_inicio:new Date().toISOString()});}
+    for (const ch of chapas) if(!ca.has(ch)){const c=_colabs.find(x=>(x.cracha||x.chapa)===ch);await db.from('cal_equipe_membros').insert({equipe_id:eqId,chapa:ch,nome:(c && c.nome)||null,vigencia_inicio:new Date().toISOString()});}
     for (const ch of ca) if(!chapas.includes(ch)) await db.from('cal_equipe_membros').delete().eq('equipe_id',eqId).eq('chapa',ch);
   }
 
