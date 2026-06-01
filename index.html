@@ -990,4 +990,340 @@ function showToast(msg, tipo, dur) {
   setTimeout(() => t.classList.remove('show'), dur);
 }
 
-/* ──
+/* ── Banner ── */
+function showBanner(msg, show) {
+  const b = document.getElementById('banner');
+  document.getElementById('banner-msg').textContent = msg;
+  b.classList.toggle('show', !!show);
+}
+
+/* ── Dropdown global ── */
+document.addEventListener('click', e => {
+  if (!e.target.closest('.dd-wrap'))
+    document.querySelectorAll('.dd-panel').forEach(p => p.classList.remove('show'));
+});
+function toggleDD(id) {
+  const panel = document.getElementById(id);
+  const wasOpen = panel.classList.contains('show');
+  document.querySelectorAll('.dd-panel').forEach(p => p.classList.remove('show'));
+  if (!wasOpen) panel.classList.add('show');
+}
+
+/* ── Sidebar desktop: hover expande/recolhe ── */
+function expandirSidebar() {
+  document.getElementById('sidebar').classList.add('expanded');
+}
+function recolherSidebar() {
+  document.getElementById('sidebar').classList.remove('expanded');
+}
+
+/* ── Drawer mobile ── */
+let touchStartX = 0;
+
+function abrirDrawer() {
+  const overlay = document.getElementById('sidebar-overlay');
+  const drawer  = document.getElementById('sidebar-drawer');
+  overlay.style.display = 'block';
+  drawer.style.display  = 'flex';
+  requestAnimationFrame(() => {
+    overlay.classList.add('show');
+    drawer.classList.add('open');
+  });
+  overlay.style.pointerEvents = 'auto';
+}
+
+function fecharDrawer() {
+  const overlay = document.getElementById('sidebar-overlay');
+  const drawer  = document.getElementById('sidebar-drawer');
+  overlay.classList.remove('show');
+  drawer.classList.remove('open');
+  overlay.style.pointerEvents = 'none';
+  setTimeout(() => {
+    overlay.style.display = 'none';
+    drawer.style.display  = 'none';
+  }, 280);
+}
+
+/* Swipe para abrir/fechar drawer */
+document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  const drawer = document.getElementById('sidebar-drawer');
+  const isOpen = drawer.classList.contains('open');
+  if (!isOpen && touchStartX < 24 && dx > 60) abrirDrawer();   // swipe → da borda esquerda
+  if (isOpen  && dx < -60) fecharDrawer();                       // swipe ← fecha
+}, { passive: true });
+
+/* ── Montar navegação — desktop e mobile ── */
+function montarNav() {
+  construirNav(document.getElementById('nav-items'),    'desktop');
+  construirNav(document.getElementById('drawer-items'), 'mobile');
+}
+
+function construirNav(container, modo) {
+  container.innerHTML = '';
+
+  MAN360_CONFIG.nav.forEach((grupo, gi) => {
+    if (modo === 'desktop') {
+      const grp = document.createElement('div');
+      grp.className = 'nav-group';
+
+      const btn = document.createElement('div');
+      btn.className = 'nav-group-btn';
+      btn.innerHTML = `
+        <i class="ti ti-${grupo.icon} group-icon" aria-hidden="true"></i>
+        <span class="nav-group-label">${grupo.group}</span>
+        <i class="ti ti-chevron-down nav-group-chevron" aria-hidden="true"></i>
+      `;
+
+      const itemsWrap = document.createElement('div');
+      itemsWrap.className = 'nav-group-items';
+
+      // Itens diretos do grupo (nível 2)
+      (grupo.items || []).forEach(item => {
+        itemsWrap.appendChild(criarNavItem(item, 'desktop'));
+      });
+
+      // Sub-grupos (nível 2 colapsável → itens nível 3)
+      (grupo.subgroups || []).forEach((sg, si) => {
+        const sgBtn = document.createElement('div');
+        sgBtn.className = 'nav-subgroup-btn';
+        sgBtn.innerHTML = `
+          <i class="ti ti-${sg.icon} sub-icon" aria-hidden="true"></i>
+          <span class="nav-subgroup-label">${sg.label}</span>
+          <i class="ti ti-chevron-down nav-subgroup-chevron" aria-hidden="true"></i>
+        `;
+        const sgItems = document.createElement('div');
+        sgItems.className = 'nav-subgroup-items';
+        (sg.items || []).forEach(item => sgItems.appendChild(criarNavItem(item, 'desktop', true)));
+
+        sgBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          document.getElementById('sidebar').classList.add('expanded');
+          const isOpen = sgItems.classList.contains('open');
+          // Fecha outros subgrupos do mesmo grupo
+          itemsWrap.querySelectorAll('.nav-subgroup-items').forEach(x => x.classList.remove('open'));
+          itemsWrap.querySelectorAll('.nav-subgroup-btn').forEach(x => x.classList.remove('open'));
+          if (!isOpen) { sgItems.classList.add('open'); sgBtn.classList.add('open'); }
+        });
+
+        itemsWrap.appendChild(sgBtn);
+        itemsWrap.appendChild(sgItems);
+      });
+
+      btn.addEventListener('click', () => {
+        document.getElementById('sidebar').classList.add('expanded');
+        const isOpen = itemsWrap.classList.contains('open');
+        container.querySelectorAll('.nav-group-items').forEach(x => x.classList.remove('open'));
+        container.querySelectorAll('.nav-group-btn').forEach(x => x.classList.remove('open'));
+        if (!isOpen) { itemsWrap.classList.add('open'); btn.classList.add('open'); }
+      });
+
+      grp.appendChild(btn);
+      grp.appendChild(itemsWrap);
+      container.appendChild(grp);
+
+    } else {
+      // Mobile drawer
+      const grp = document.createElement('div');
+      const btn = document.createElement('div');
+      btn.className = 'drawer-group-btn';
+      btn.innerHTML = `
+        <i class="ti ti-${grupo.icon} group-icon" aria-hidden="true"></i>
+        <span class="drawer-group-label">${grupo.group}</span>
+        <i class="ti ti-chevron-down drawer-group-chevron" aria-hidden="true"></i>
+      `;
+      const itemsWrap = document.createElement('div');
+      itemsWrap.className = 'drawer-group-items';
+
+      (grupo.items || []).forEach(item => itemsWrap.appendChild(criarNavItem(item, 'mobile')));
+
+      (grupo.subgroups || []).forEach(sg => {
+        const sgBtn = document.createElement('div');
+        sgBtn.className = 'drawer-subgroup-btn';
+        sgBtn.innerHTML = `
+          <i class="ti ti-${sg.icon}" aria-hidden="true"></i>
+          ${sg.label}
+          <i class="ti ti-chevron-down drawer-subgroup-chevron" aria-hidden="true"></i>
+        `;
+        const sgItems = document.createElement('div');
+        sgItems.className = 'drawer-subgroup-items';
+        (sg.items || []).forEach(item => sgItems.appendChild(criarNavItem(item, 'mobile', true)));
+
+        sgBtn.addEventListener('click', e => {
+          e.stopPropagation();
+          const isOpen = sgItems.classList.contains('open');
+          itemsWrap.querySelectorAll('.drawer-subgroup-items').forEach(x => x.classList.remove('open'));
+          itemsWrap.querySelectorAll('.drawer-subgroup-btn').forEach(x => x.classList.remove('open'));
+          if (!isOpen) { sgItems.classList.add('open'); sgBtn.classList.add('open'); }
+        });
+
+        itemsWrap.appendChild(sgBtn);
+        itemsWrap.appendChild(sgItems);
+      });
+
+      btn.addEventListener('click', () => {
+        const isOpen = itemsWrap.classList.contains('open');
+        container.querySelectorAll('.drawer-group-items').forEach(x => x.classList.remove('open'));
+        container.querySelectorAll('.drawer-group-btn').forEach(x => x.classList.remove('open'));
+        if (!isOpen) { itemsWrap.classList.add('open'); btn.classList.add('open'); }
+      });
+
+      grp.appendChild(btn);
+      grp.appendChild(itemsWrap);
+      container.appendChild(grp);
+    }
+  });
+}
+
+function criarNavItem(item, modo, isSubItem) {
+  const isWip = item.status === 'wip';
+  const el = document.createElement('div');
+  el.className = (modo === 'desktop' ? 'nav-item' : 'drawer-item') + (isWip ? ' wip' : '');
+  el.dataset.page = item.page;
+  if (isSubItem && modo === 'desktop') el.style.paddingLeft = '28px';
+  if (isSubItem && modo === 'mobile')  el.style.paddingLeft = '44px';
+
+  if (modo === 'desktop') {
+    el.innerHTML = `
+      <span class="nav-item-label">${item.label}</span>
+      ${isWip ? `<span class="nav-badge">Em construção</span>` : ''}
+    `;
+  } else {
+    el.innerHTML = `
+      ${item.label}
+      ${isWip ? `<span class="drawer-item-badge">Em construção</span>` : ''}
+    `;
+  }
+
+  el.addEventListener('click', () => {
+    if (isWip) { mostrarWip(item); }
+    else        { navegarPara(item); }
+    if (modo === 'mobile') fecharDrawer();
+  });
+  return el;
+}
+
+function setActiveItem(page) {
+  document.querySelectorAll('.nav-item, .drawer-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.page === page);
+  });
+  // Desktop — abre grupo e subgrupo que contém o item ativo
+  document.querySelectorAll('.nav-group-items').forEach(items => {
+    if (items.querySelector(`.nav-item[data-page="${page}"]`)) {
+      items.classList.add('open');
+      items.previousElementSibling?.classList.add('open');
+    }
+    items.querySelectorAll('.nav-subgroup-items').forEach(sg => {
+      if (sg.querySelector(`.nav-item[data-page="${page}"]`)) {
+        sg.classList.add('open');
+        sg.previousElementSibling?.classList.add('open');
+        items.classList.add('open');
+        items.previousElementSibling?.classList.add('open');
+      }
+    });
+  });
+  // Mobile drawer
+  document.querySelectorAll('.drawer-group-items').forEach(items => {
+    if (items.querySelector(`.drawer-item[data-page="${page}"]`)) {
+      items.classList.add('open');
+      items.previousElementSibling?.classList.add('open');
+    }
+    items.querySelectorAll('.drawer-subgroup-items').forEach(sg => {
+      if (sg.querySelector(`.drawer-item[data-page="${page}"]`)) {
+        sg.classList.add('open');
+        sg.previousElementSibling?.classList.add('open');
+        items.classList.add('open');
+        items.previousElementSibling?.classList.add('open');
+      }
+    });
+  });
+}
+
+/* ── Tela Em construção ── */
+function mostrarWip(item) {
+  setActiveItem(item.page);
+  document.getElementById('topbar-icon').className = `ti ti-${item.icon}`;
+  document.getElementById('topbar-title').textContent = item.label.toUpperCase();
+  document.getElementById('module-loading').classList.remove('show');
+  document.getElementById('module-container').innerHTML = `
+    <div class="wip-screen">
+      <i class="ti ti-tools"></i>
+      <h2>Em construção</h2>
+      <p>O módulo <strong>${item.label}</strong> ainda está sendo desenvolvido e estará disponível em breve.</p>
+    </div>
+  `;
+}
+
+/* ── Roteador ── */
+async function navegarPara(item) {
+  window.location.hash = item.page;
+  setActiveItem(item.page);
+  document.getElementById('topbar-icon').className = `ti ti-${item.icon}`;
+  document.getElementById('topbar-title').textContent = item.label.toUpperCase();
+
+  const loading   = document.getElementById('module-loading');
+  const container = document.getElementById('module-container');
+  loading.classList.add('show');
+  container.innerHTML = '';
+
+  try {
+    await carregarModulo(item.page);
+  } catch(e) {
+    container.innerHTML = `<div style="padding:40px;text-align:center;color:#9ca3af">
+      <i class="ti ti-alert-circle" style="font-size:32px;display:block;margin-bottom:8px"></i>
+      Erro ao carregar módulo: ${e.message}
+    </div>`;
+  }
+  loading.classList.remove('show');
+}
+
+/* ── Carregador de módulos ── */
+async function carregarModulo(page) {
+  // Remove script anterior para forçar reload sempre
+  const prev = document.querySelector(`script[data-mod="${page}"]`);
+  if (prev) prev.remove();
+  if (window.Modulos) delete window.Modulos[page];
+
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = `modules/${page}.js?v=` + Date.now();
+    s.dataset.mod = page;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error(`Módulo '${page}' não encontrado`));
+    document.head.appendChild(s);
+  });
+
+  if (window.Modulos && window.Modulos[page]) {
+    await window.Modulos[page].init(document.getElementById('module-container'));
+  }
+}
+/* ── Exportar (delegado ao módulo ativo) ── */
+function exportarModulo() {
+  if (window.Modulos && window.Modulos[moduloAtivo] && window.Modulos[moduloAtivo].exportar) {
+    window.Modulos[moduloAtivo].exportar();
+  }
+}
+
+/* ── Inicialização ── */
+window.addEventListener('load', () => {
+  montarNav();
+
+  // Achatar todos os itens (grupos diretos + subgrupos) de forma segura
+  const todosItens = [];
+  MAN360_CONFIG.nav.forEach(g => {
+    (g.items || []).forEach(i => todosItens.push(i));
+    (g.subgroups || []).forEach(sg => (sg.items || []).forEach(i => todosItens.push(i)));
+  });
+
+  // Ler hash para restaurar página após reload
+  const hashPage = (window.location.hash || '').replace('#', '');
+  const itemHash = hashPage ? todosItens.find(i => i.page === hashPage && i.status === 'active') : null;
+  const itemInicio = todosItens.find(i => i.status === 'active');
+  const alvo = itemHash || itemInicio;
+  if (alvo) navegarPara(alvo);
+});
+</script>
+
+</body>
+</html>
