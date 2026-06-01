@@ -184,8 +184,13 @@ window.Modulos.cal_acomp = (() => {
         hhRestDia-=usado; hhRestItem-=usado;
         if (hhRestItem<=0) { hhRestItem=0; itemIdx++; }
       }
-      if (hhRestDia<=0 && itemIdx<fila.length) {
-        diasFatias[diaIdx].push({tipo:'estouro', hh:1});
+      // Só marca estouro se ainda sobrou serviço E o dia estava cheio
+      if (hhRestDia<=0 && itemIdx<fila.length && diasDisp[diaIdx]>0) {
+        // Verifica se o dia realmente estourou (alocado > disponível)
+        const hhAlocDia = diasFatias[diaIdx].reduce((s,f)=>s+f.hh,0);
+        if (hhAlocDia >= diasDisp[diaIdx]) {
+          diasFatias[diaIdx].push({tipo:'estouro', hh:0.01});
+        }
       }
     }
 
@@ -218,7 +223,7 @@ window.Modulos.cal_acomp = (() => {
     const ini = isoDate(inicioSemana(_semana));
     const fim = isoDate(fimSemana(_semana));
 
-    const {data:safrasRaw} = await db.from('programacao_semanal').select('safra').neq('safra','');
+    const {data:safrasRaw} = await db.from('programacao_semanal').select('safra').not('safra','is',null);
     _safras = [...new Set((safrasRaw||[]).map(r=>r.safra).filter(Boolean))].sort().reverse();
     if (!_safra&&_safras.length) _safra=_safras[0];
 
@@ -250,11 +255,12 @@ window.Modulos.cal_acomp = (() => {
 
     if (_semana===semanaAtual()) await migrarPendentes(ano);
 
-    const {data:prog} = await db.from('programacao_semanal').select('*').eq('semana',_semana).eq('ano',ano);
+    const {data:prog} = await db.from('programacao_semanal').select('*')
+      .eq('semana',_semana).eq('ano',ano).like('equipe','CAL%');
     _progSem = prog||[];
 
     // Carteiras disponíveis na semana (equipes distintas da programação)
-    const cartsDisponiveis = [...new Set((_progSem||[]).map(p=>p.equipe).filter(Boolean))].sort();
+    const cartsDisponiveis = [...new Set((_progSem||[]).map(p=>p.equipe).filter(e=>e&&e.startsWith('CAL')))].sort();
     // Manter seleção existente, adicionar novas por padrão
     const selAntes = new Set(_carteiras);
     _carteiras = cartsDisponiveis.map(c=>({
@@ -290,8 +296,11 @@ window.Modulos.cal_acomp = (() => {
   ══════════════════════════════════════ */
   async function salvarOrdem(equipeId) {
     const db=getDB();
-    for (let i=0;i<(_fila[equipeId]||[]).length;i++)
-      await db.from('cal_fila').update({ordem:i+1}).eq('id',_fila[equipeId][i].id);
+    const fila=_fila[equipeId]||[];
+    for (let i=0;i<fila.length;i++) {
+      if (!fila[i] || !fila[i].id) continue;
+      await db.from('cal_fila').update({ordem:i+1}).eq('id',fila[i].id);
+    }
   }
 
   async function atualizarStatus(id,status,extra={}) {
@@ -1002,8 +1011,14 @@ window.Modulos.cal_acomp = (() => {
         touchStartThreshold:5,
         onEnd:async evt=>{
           const equipeId=parseInt(el.id.replace('fila-',''));
-          const fila=_fila[equipeId]; if(!fila)return;
-          const [item]=fila.splice(evt.oldIndex,1); fila.splice(evt.newIndex,0,item);
+          if(!_fila[equipeId])return;
+          // Reconstruir ordem a partir dos data-id no DOM
+          const cards=[...el.querySelectorAll('.cag-card[data-id]')];
+          const novaOrdem=cards.map(card=>parseInt(card.dataset.id)).filter(Boolean);
+          const filaAntiga=[..._fila[equipeId]];
+          _fila[equipeId]=novaOrdem.map(id=>filaAntiga.find(i=>parseInt(i.id)===id)).filter(Boolean);
+          // Adicionar itens que não estavam no DOM (ex: btn inserir)
+          filaAntiga.forEach(i=>{if(!_fila[equipeId].find(x=>x.id===i.id))_fila[equipeId].push(i);});
           await salvarOrdem(equipeId); await recarregarDados();
         }
       });
