@@ -1,6 +1,6 @@
-/* ═══════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════════
    MAN360 — Configuração Central
-   ═══════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════════ */
 
 const MAN360_CONFIG = {
   supabase: {
@@ -10,52 +10,117 @@ const MAN360_CONFIG = {
 
   /*
     Estrutura de navegação:
-    - grupo: label do grupo pai (nível 1)
-    - subgrupo: label do subgrupo (nível 2, opcional — expande dentro do grupo)
-    - items: módulos folha (nível 2 ou 3)
+    - group:    label do grupo pai (nível 1)
+    - icon:     ícone tabler (aparece na sidebar e no topbar ao selecionar)
+    - items:    módulos folha diretos do grupo
+    - subgroups: subgrupos colapsáveis dentro do grupo
 
     status: 'active' = navegável | 'wip' = Em construção
     module: caminho do JS (só para active)
+
+    ÍCONES: aparecem apenas no cabeçalho da página (topbar) ao selecionar o item.
+    A sidebar mostra só o ícone do GRUPO, sem ícones individuais por item.
   */
   nav: [
     {
       group: 'Ordens de Serviço',
       icon: 'clipboard-list',
+      defaultOpen: true,
       items: [
-        { label: 'Carteiras de Serviço', page: 'carteiras',    icon: 'folders',       status: 'wip' },
-        { label: 'Apontamentos',         page: 'apontamentos', icon: 'clock-record',  status: 'active', module: 'modules/apontamentos.js' },
+        {
+          label: 'Programação Semanal',
+          page: 'prog_semanal',
+          icon: 'calendar-week',
+          status: 'active',
+          module: 'modules/prog_semanal.js',
+        },
+        {
+          label: 'Apontamentos',
+          page: 'apontamentos',
+          icon: 'writing',
+          status: 'active',
+          module: 'modules/apontamentos.js',
+        },
       ],
     },
     {
-      group: 'Planejamento',
+      group: 'Programação',
       icon: 'calendar-stats',
-      items: [
-        { label: 'Programação Semanal', page: 'prog_semanal', icon: 'calendar-week', status: 'active', module: 'modules/prog_semanal.js' },
-      ],
+      items: [],
       subgroups: [
         {
           label: 'Caldeiraria',
           icon: 'flame',
           items: [
-            { label: 'Acompanhamento Serviços', page: 'cal_acomp', icon: 'chart-bar', status: 'active', module: 'modules/cal_acomp.js' },
-            { label: 'Backlog Caldeiraria',     page: 'cal_backlog', icon: 'list-details', status: 'wip' },
+            {
+              label: 'Caldeiraria',
+              page: 'cal_acomp',
+              icon: 'flame',
+              status: 'active',
+              module: 'modules/cal_acomp.js',
+            },
           ],
         },
         {
           label: 'Mecânica',
           icon: 'tool',
           items: [
-            { label: 'Acompanhamento Serviços', page: 'mec_acomp',   icon: 'chart-bar',    status: 'wip' },
-            { label: 'Backlog Mecânica',        page: 'mec_backlog', icon: 'list-details', status: 'wip' },
+            {
+              label: 'Mecânica',
+              page: 'mec_acomp',
+              icon: 'tool',
+              status: 'wip',
+            },
+          ],
+        },
+      ],
+    },
+    {
+      group: 'Backlog',
+      icon: 'list-details',
+      items: [],
+      subgroups: [
+        {
+          label: 'Caldeiraria',
+          icon: 'flame',
+          items: [
+            {
+              label: 'Caldeiraria',
+              page: 'cal_backlog',
+              icon: 'flame',
+              status: 'wip',
+            },
           ],
         },
         {
-          label: 'Lubrificação',
-          icon: 'droplet',
+          label: 'Mecânica',
+          icon: 'settings',
           items: [
-            { label: 'Aderência das Rotas',    page: 'lub_rotas',   icon: 'route',        status: 'wip' },
-            { label: 'Consumo Lubrificante',   page: 'lub_consumo', icon: 'chart-line',   status: 'wip' },
+            {
+              label: 'Mecânica',
+              page: 'mec_backlog',
+              icon: 'settings',
+              status: 'wip',
+            },
           ],
+        },
+      ],
+    },
+    {
+      group: 'Confiabilidade',
+      icon: 'chart-line',
+      items: [
+        {
+          label: 'Análise de Óleo',
+          page: 'conf_oleo',
+          icon: 'droplet',
+          status: 'wip',
+        },
+        {
+          label: 'Análise de Vibração',
+          page: 'conf_vibracao',
+          icon: 'activity',
+          status: 'wip',
         },
       ],
     },
@@ -63,25 +128,24 @@ const MAN360_CONFIG = {
       group: 'Externo',
       icon: 'building-factory',
       items: [
-        { label: 'Equipamentos em Manutenção', page: 'ext_equip',    icon: 'settings',      status: 'wip' },
-        { label: 'Reparo Componentes',         page: 'ext_reparo',   icon: 'hammer',        status: 'wip' },
-        { label: 'Locações',                   page: 'ext_locacoes', icon: 'truck',         status: 'wip' },
-      ],
-    },
-    {
-      group: 'Confiabilidade',
-      icon: 'chart-line',
-      items: [
-        { label: 'Análise de Vibração', page: 'conf_vibracao', icon: 'activity',  status: 'wip' },
-        { label: 'Análise de Óleo',    page: 'conf_oleo',     icon: 'droplet',   status: 'wip' },
-      ],
-    },
-    {
-      group: 'Equipamentos',
-      icon: 'engine',
-      items: [
-        { label: 'Fichas Técnicas', page: 'equip_fichas',   icon: 'file-description', status: 'wip' },
-        { label: 'Pré-cadastro',   page: 'equip_precad',   icon: 'forms',            status: 'wip' },
+        {
+          label: 'Equip. Manutenção',
+          page: 'ext_equip',
+          icon: 'engine',
+          status: 'wip',
+        },
+        {
+          label: 'Reparo Componentes',
+          page: 'ext_reparo',
+          icon: 'hammer',
+          status: 'wip',
+        },
+        {
+          label: 'Locações',
+          page: 'ext_locacoes',
+          icon: 'truck',
+          status: 'wip',
+        },
       ],
     },
   ],
