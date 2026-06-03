@@ -26,6 +26,7 @@ window.Modulos.proj_caldeiraria = (() => {
   let _filtTipos  = [];
   let _filtCrit   = [];
   let _filtMO     = '';
+  let _filtSetor  = '';
   let _dtInicio   = '';
   let _nEqProp    = 1;
   let _nEqTerc    = 0;
@@ -41,8 +42,12 @@ window.Modulos.proj_caldeiraria = (() => {
     return _os.filter(o=>{
       if (_filtCrit.length && !_filtCrit.includes(o.proj_criticidade)) return false;
       if (_filtMO && o.proj_mo_tipo !== _filtMO) return false;
+      if (_filtSetor && o.setor !== _filtSetor) return false;
       return true;
     });
+  }
+  function setoresDistintos() {
+    return [...new Set(_os.map(o=>o.setor).filter(Boolean))].sort();
   }
   function osEnc(lista){ return lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')); }
 
@@ -99,7 +104,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
   async function carregarOS() {
     let q = getDB().from('ordens_servico')
-      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
+      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
       .eq('equipe',_filtEquipe).neq('tipo_atividade','MCU');
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
@@ -280,7 +285,153 @@ window.Modulos.proj_caldeiraria = (() => {
       <div class="ps-prev-grid">
         ${cardProp}${cardTerc}${cardCusto}
       </div>
+
+      <div class="ps-blocos-mo">
+        <!-- MO Própria -->
+        <div class="ps-bloco-mo">
+          <div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>
+          <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
+          ${htmlTabelaSetor(lista,'proprio')}
+          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês)</div>
+          <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
+          ${htmlCenarios(lista,'proprio',_nEqProp,hhMesProp)}
+        </div>
+
+        <!-- MO Terceiro -->
+        <div class="ps-bloco-mo">
+          <div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>
+          <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
+          ${htmlTabelaSetor(lista,'terceiro')}
+          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (${_nEqTerc} eq. · ${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes'})</div>
+          <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
+          ${htmlCenarios(lista,'terceiro',_nEqTerc,hhMesTerc)}
+        </div>
+      </div>
     </div>`;
+  }
+
+
+  /* ── Tabela Setor × Criticidade ── */
+  function htmlTabelaSetor(lista, moTipo) {
+    // Filtrar por MO tipo
+    const osMO = moTipo === 'proprio'
+      ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
+      : lista.filter(o => o.proj_mo_tipo === 'terceiro');
+
+    // Só OS com criticidade definida
+    const osValidas = osMO.filter(o => o.proj_criticidade && o.setor);
+    if (!osValidas.length) return '<div class="ps-tab-vazio">Sem dados com setor e criticidade definidos</div>';
+
+    const setores = [...new Set(osValidas.map(o=>o.setor))].sort();
+    const crits   = ['alta','media','baixa'].filter(cr => osValidas.some(o=>o.proj_criticidade===cr));
+    const nomeCrit = {alta:'Alta',media:'Média',baixa:'Baixa'};
+    const corCrit  = {alta:'#dc2626',media:'#d97706',baixa:'#16a34a'};
+
+    // Montar matriz
+    const matriz = {};
+    const totaisCrit = {};
+    const totaisSetor = {};
+    let totalGeral = 0;
+
+    setores.forEach(s => { matriz[s] = {}; totaisSetor[s] = 0; });
+    crits.forEach(cr => { totaisCrit[cr] = 0; });
+
+    osValidas.forEach(o => {
+      const hh = o.hh_prev_os || 0;
+      if (!matriz[o.setor][o.proj_criticidade]) matriz[o.setor][o.proj_criticidade] = 0;
+      matriz[o.setor][o.proj_criticidade] += hh;
+      totaisSetor[o.setor] += hh;
+      totaisCrit[o.proj_criticidade] = (totaisCrit[o.proj_criticidade]||0) + hh;
+      totalGeral += hh;
+    });
+
+    const thead = `<div class="ps-tab-row ps-tab-head">
+      <div class="ps-tab-cell ps-tab-setor-col">Setor</div>
+      ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
+      <div class="ps-tab-cell ps-tab-total">Total</div>
+    </div>`;
+
+    const rows = setores.map(s => {
+      const cells = crits.map(cr => {
+        const hh = matriz[s][cr] || 0;
+        return `<div class="ps-tab-cell">${hh>0?fmtNum(hh,0)+'h':'—'}</div>`;
+      }).join('');
+      return `<div class="ps-tab-row">
+        <div class="ps-tab-cell ps-tab-setor-col" title="${s}">${s}</div>
+        ${cells}
+        <div class="ps-tab-cell ps-tab-total">${fmtNum(totaisSetor[s],0)}h</div>
+      </div>`;
+    }).join('');
+
+    const tfoot = `<div class="ps-tab-row ps-tab-foot">
+      <div class="ps-tab-cell ps-tab-setor-col">Total</div>
+      ${crits.map(cr=>`<div class="ps-tab-cell">${fmtNum(totaisCrit[cr]||0,0)}h</div>`).join('')}
+      <div class="ps-tab-cell ps-tab-total">${fmtNum(totalGeral,0)}h</div>
+    </div>`;
+
+    return `<div class="ps-tabela-wrap">${thead}${rows}${tfoot}</div>`;
+  }
+
+  /* ── 3 Cenários de previsão ── */
+  function htmlCenarios(lista, moTipo, nEq, hhMesFn) {
+    const osMO = moTipo === 'proprio'
+      ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
+      : lista.filter(o => o.proj_mo_tipo === 'terceiro');
+
+    const cenarios = [
+      { label: 'Só Alta criticidade',    crits: ['alta'] },
+      { label: 'Alta + Média criticidade', crits: ['alta','media'] },
+      { label: 'Toda demanda',            crits: ['alta','media','baixa',null,''] },
+    ];
+
+    const hhMes = hhMesFn(nEq);
+
+    const rows = cenarios.map((cen, idx) => {
+      const osC = cen.crits.includes(null)
+        ? osMO
+        : osMO.filter(o => cen.crits.includes(o.proj_criticidade));
+      const hhTot = osC.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const hhEnc = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const hhRest = Math.max(0, hhTot - hhEnc);
+
+      // Previsão
+      let previsao = '—';
+      if (_dtInicio && hhMes > 0 && hhRest > 0) {
+        const meses = hhRest / hhMes;
+        const d = new Date(_dtInicio+'T12:00:00');
+        d.setDate(d.getDate() + Math.round(meses * 30));
+        previsao = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+      } else if (hhRest === 0 && hhTot > 0) {
+        previsao = 'Concluído';
+      } else if (nEq === 0) {
+        previsao = 'Sem equipes';
+      }
+
+      // Delta vs cenário anterior
+      let delta = '';
+      if (idx > 0) {
+        const cenAnt = cen.crits.includes(null)
+          ? osMO
+          : osMO.filter(o => cenarios[idx-1].crits.includes(o.proj_criticidade));
+        const hhAnt = cenAnt.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+        if (hhAnt > 0) {
+          const pct = Math.round((hhTot - hhAnt) / hhAnt * 100);
+          delta = pct > 0 ? `<span class="ps-delta">+${pct}% vs anterior</span>` : '';
+        }
+      }
+
+      const corLabel = ['#dc2626','#d97706','#6b7280'][idx];
+      return `<div class="ps-cen-row">
+        <div class="ps-cen-label" style="border-left:3px solid ${corLabel}">${cen.label}${delta}</div>
+        <div class="ps-cen-hh">${fmtNum(hhTot,0)}h</div>
+        <div class="ps-cen-prev">${previsao}</div>
+      </div>`;
+    }).join('');
+
+    if (!_dtInicio || nEq === 0) {
+      return `<div class="ps-cen-wrap">${rows}<div class="ps-cen-hint">${!_dtInicio?'Informe a data de início para ver previsões':'Configure equipes para ver previsões'}</div></div>`;
+    }
+    return `<div class="ps-cen-wrap">${rows}</div>`;
   }
 
   function htmlListaOS(lista) {
@@ -378,12 +529,15 @@ window.Modulos.proj_caldeiraria = (() => {
 
   function htmlFiltrosLista() {
     const critOpts=[['alta','Alta','#dc2626','#fee2e2'],['media','Média','#d97706','#fef3c7'],['baixa','Baixa','#16a34a','#dcfce7']];
+    const setores = setoresDistintos();
+    const setorOpts = setores.map(s=>`<option value="${s}"${s===_filtSetor?' selected':''}>${s}</option>`).join('');
     return `<div class="ps-lista-filtros">
       <span class="ps-flbl-inline">Filtrar:</span>
-      ${critOpts.map(([v,l,c,bg])=>`<span class="ps-chip${_filtCrit.includes(v)?' ativo':''}" data-crit="${v}" style="--chip-c:${c};--chip-bg:${bg}">${l}</span>`).join('')}
+      ${critOpts.map(([v,l,col,bg])=>`<span class="ps-chip${_filtCrit.includes(v)?' ativo':''}" data-crit="${v}" style="--chip-c:${col};--chip-bg:${bg}">${l}</span>`).join('')}
       <div class="ps-fsep"></div>
       <span class="ps-chip${_filtMO==='proprio'?' ativo':''}" data-mo="proprio">Próprio</span>
       <span class="ps-chip${_filtMO==='terceiro'?' ativo':''}" data-mo="terceiro">Terceiro</span>
+      ${setores.length?`<div class="ps-fsep"></div><select class="ps-sel-setor" id="ps-sel-setor"><option value="">Todos os setores</option>${setorOpts}</select>`:''}
     </div>`;
   }
 
@@ -396,6 +550,14 @@ window.Modulos.proj_caldeiraria = (() => {
       ${htmlFiltros()}
       ${htmlKPIs(lista)}
       ${htmlProjecao(lista)}
+      <div class="ps-aviso-terc">
+        <div class="ps-aviso-terc-inner">
+          <i class="ti ti-info-circle"></i>
+          <span>Custo total se 100% terceirizado:</span>
+          <strong>${fmtMoeda(lista.reduce((s,o)=>s+(o.hh_prev_os||0),0) * _valorHH)}</strong>
+          <span class="ps-aviso-sub">${fmtNum(lista.reduce((s,o)=>s+(o.hh_prev_os||0),0),0)} HH × R$${_valorHH}/HH</span>
+        </div>
+      </div>
       <div class="ps-card">
         <div class="ps-lista-hdr">
           <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
@@ -440,6 +602,10 @@ window.Modulos.proj_caldeiraria = (() => {
         renderizar();
       });
     });
+
+    /* Filtro setor */
+    const selSetor = c.querySelector('#ps-sel-setor');
+    if (selSetor) selSetor.addEventListener('change', e=>{ _filtSetor=e.target.value; renderizar(); });
 
     /* Chips MO */
     c.querySelectorAll('.ps-chip[data-mo]').forEach(chip=>{
@@ -721,6 +887,53 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-lightbox-nome{font-size:11px;color:rgba(255,255,255,.7);font-family:var(--font);}
 .ps-lightbox-close{position:absolute;top:-12px;right:-12px;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.15);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;backdrop-filter:blur(4px);}
 .ps-lightbox-close:hover{background:rgba(220,38,38,.8);}
+
+/* Blocos MO */
+.ps-blocos-mo{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid var(--border);}
+@media(max-width:700px){.ps-blocos-mo{grid-template-columns:1fr;}}
+.ps-bloco-mo{padding:14px 16px;border-right:1px solid var(--border);}
+.ps-bloco-mo:last-child{border-right:none;}
+.ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
+.ps-bloco-mo-titulo i{font-size:13px;}
+.ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;}
+
+/* Tabela setor x criticidade */
+.ps-tabela-wrap{overflow-x:auto;}
+.ps-tab-row{display:flex;border-bottom:1px solid var(--border);min-width:300px;}
+.ps-tab-row:last-child{border-bottom:none;}
+.ps-tab-head{background:#fafafa;}
+.ps-tab-foot{background:#f9fafb;font-weight:700;}
+.ps-tab-cell{padding:5px 8px;font-size:10px;color:#374151;flex:1;text-align:right;border-right:1px solid var(--border);}
+.ps-tab-cell:last-child{border-right:none;}
+.ps-tab-setor-col{flex:2;text-align:left;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;}
+.ps-tab-crit{font-weight:700;}
+.ps-tab-total{font-weight:700;color:#374151;}
+.ps-tab-vazio{font-size:10px;color:#9ca3af;padding:8px 0;}
+
+/* Cenários */
+.ps-cen-hdr{display:flex;gap:0;background:#fafafa;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;}
+.ps-cen-hdr span{flex:1;padding:5px 8px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;border-right:1px solid var(--border);}
+.ps-cen-hdr span:first-child{flex:2;}
+.ps-cen-hdr span:last-child{border-right:none;}
+.ps-cen-wrap{border:1px solid var(--border);border-radius:0 0 var(--radius-sm) var(--radius-sm);overflow:hidden;}
+.ps-cen-row{display:flex;align-items:center;border-bottom:1px solid var(--border);}
+.ps-cen-row:last-child{border-bottom:none;}
+.ps-cen-label{flex:2;padding:7px 8px;font-size:10px;font-weight:600;color:#374151;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:2px;}
+.ps-cen-hh{flex:1;padding:7px 8px;font-size:10px;font-weight:700;color:#374151;text-align:right;border-right:1px solid var(--border);}
+.ps-cen-prev{flex:1;padding:7px 8px;font-size:10px;color:#374151;text-align:right;}
+.ps-cen-hint{padding:6px 8px;font-size:9px;color:#9ca3af;background:#fafafa;border-top:1px solid var(--border);}
+.ps-delta{font-size:8px;font-weight:600;color:#d97706;background:#fef3c7;padding:1px 5px;border-radius:3px;width:fit-content;}
+
+/* Aviso custo terceirizado */
+.ps-aviso-terc{background:#fffbeb;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 16px;}
+.ps-aviso-terc-inner{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.ps-aviso-terc-inner i{font-size:16px;color:#d97706;flex-shrink:0;}
+.ps-aviso-terc-inner span{font-size:11px;color:#92400e;}
+.ps-aviso-terc-inner strong{font-size:16px;font-weight:700;color:#d97706;}
+.ps-aviso-sub{font-size:9px;color:#d97706;opacity:.7;}
+
+/* Filtro setor */
+.ps-sel-setor{height:26px;padding:0 7px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:10px;color:#374151;background:var(--bg);}
     `;
     document.head.appendChild(s);
   }
