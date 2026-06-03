@@ -54,6 +54,19 @@ window.Modulos.proj_caldeiraria = (() => {
   // (não afetados por criticidade, MO ou setor da lista)
   function osParaMetricas() { return _os; }
 
+  /* Calcula data de conclusão somando dias úteis (pula domingos) */
+  function calcDataConclusao(dtInicioStr, hhRest, hhDiario) {
+    if (!dtInicioStr || hhRest <= 0 || hhDiario <= 0) return null;
+    const diasUteis = Math.round(hhRest / hhDiario);
+    const d = new Date(dtInicioStr + 'T12:00:00');
+    let contados = 0;
+    while (contados < diasUteis) {
+      d.setDate(d.getDate() + 1);
+      if (d.getDay() !== 0) contados++; // pula domingo
+    }
+    return { data: d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}), dias: diasUteis };
+  }
+
   /* ── Previsão de conclusão ── */
   function calcPrevisao(lista) {
     if (!_dtInicio) return {prop:null,terc:null,custoTerc:null};
@@ -61,32 +74,21 @@ window.Modulos.proj_caldeiraria = (() => {
     const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro').reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-
     const hhRestProp = Math.max(0, hhTotProp - hhEncProp);
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
-
-    const mesesProp = _nEqProp>0 && hhMesProp(_nEqProp)>0 ? hhRestProp/hhMesProp(_nEqProp) : null;
-    const mesesTerc = _nEqTerc>0 && hhMesTerc(_nEqTerc)>0 ? hhRestTerc/hhMesTerc(_nEqTerc) : null;
-
-    function addMeses(dataStr, meses) {
-      if (!dataStr || meses===null) return null;
-      const d = new Date(dataStr+'T12:00:00');
-      const mesesInt = Math.floor(meses);
-      const diasFrac = Math.round((meses - mesesInt)*30);
-      d.setMonth(d.getMonth()+mesesInt);
-      d.setDate(d.getDate()+diasFrac);
-      return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
-    }
-
+    const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
+    const hhDiarioTerc = HH_DIA_COLAB * PESSOAS_EQ * _nEqTerc;
+    const resProp = _nEqProp>0 ? calcDataConclusao(_dtInicio, hhRestProp, hhDiarioProp) : null;
+    const resTerc = _nEqTerc>0 ? calcDataConclusao(_dtInicio, hhRestTerc, hhDiarioTerc) : null;
     const custoTerc = _nEqTerc>0 ? hhRestTerc * _valorHH : null;
-
     return {
-      prop:     addMeses(_dtInicio, mesesProp),
-      terc:     addMeses(_dtInicio, mesesTerc),
-      custoTerc,
-      hhRestTerc,
-      mesesProp: mesesProp!==null ? mesesProp.toFixed(1) : null,
-      mesesTerc: mesesTerc!==null ? mesesTerc.toFixed(1) : null,
+      prop:      resProp ? resProp.data : null,
+      terc:      resTerc ? resTerc.data : null,
+      diasProp:  resProp ? resProp.dias : null,
+      diasTerc:  resTerc ? resTerc.dias : null,
+      custoTerc, hhRestTerc,
+      mesesProp: resProp ? (resProp.dias/26).toFixed(1) : null,
+      mesesTerc: resTerc ? (resTerc.dias/26).toFixed(1) : null,
     };
   }
 
@@ -363,19 +365,20 @@ window.Modulos.proj_caldeiraria = (() => {
 
     const thead = `<div class="ps-tab-row ps-tab-head">
       <div class="ps-tab-cell ps-tab-setor-col">Setor</div>
-      ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
-      <div class="ps-tab-cell ps-tab-total">HH</div>
+      ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit ps-tab-crit-narrow" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
+      <div class="ps-tab-cell ps-tab-total">Total Setor</div>
     </div>`;
 
     const rows = setores.map(s => {
+      const pctSetor = totalGeral>0?Math.round(totaisSetor[s]/totalGeral*100):0;
       const cells = crits.map(cr => {
         const hh = matriz[s][cr] || 0;
-        return `<div class="ps-tab-cell">${hh>0?fmtNum(hh,0)+'h':'—'}</div>`;
+        return `<div class="ps-tab-cell ps-tab-crit-narrow">${hh>0?fmtNum(hh,0)+'h':'—'}</div>`;
       }).join('');
       return `<div class="ps-tab-row">
         <div class="ps-tab-cell ps-tab-setor-col" title="${s}">${s}</div>
         ${cells}
-        <div class="ps-tab-cell ps-tab-total">${fmtNum(totaisSetor[s],0)}h</div>
+        <div class="ps-tab-cell ps-tab-total">${fmtNum(totaisSetor[s],0)}h <span class="ps-tab-pct">(${pctSetor}%)</span></div>
       </div>`;
     }).join('');
 
@@ -425,14 +428,11 @@ window.Modulos.proj_caldeiraria = (() => {
       const hhEnc  = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
       const hhRest = Math.max(0, hhTot - hhEnc);
 
-      // Previsão + dias
+      // Previsão + dias — mesma lógica que calcPrevisao (pula domingos)
       let previsao = '—';
-      if (_dtInicio && hhMes > 0 && hhRest > 0) {
-        const diasUteis = hhDiario > 0 ? Math.round(hhRest / hhDiario) : 0;
-        const d = new Date(_dtInicio+'T12:00:00');
-        d.setDate(d.getDate() + diasUteis);
-        const dataFmt = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
-        previsao = diasUteis > 0 ? `${dataFmt} <span class="ps-cen-dias">(${diasUteis} dias)</span>` : dataFmt;
+      if (_dtInicio && hhDiario > 0 && hhRest > 0) {
+        const res = calcDataConclusao(_dtInicio, hhRest, hhDiario);
+        if (res) previsao = res.data + ' <span class="ps-cen-dias">('+res.dias+' dias)</span>';
       } else if (hhRest === 0 && hhTot > 0) {
         previsao = 'Concluído';
       } else if (nEq === 0) {
@@ -539,7 +539,7 @@ window.Modulos.proj_caldeiraria = (() => {
       return `<div class="ps-os-row${enc?' enc':''}" data-os="${o.os}">
         <div class="ps-os-head" data-action="toggle-os" data-os="${o.os}">
           <span class="ps-os-num">${o.os}</span>
-          <span class="ps-os-desc">${o.desc_servico||o.desc_os||'—'}</span>
+          <span class="ps-os-desc ps-os-desc-mob">${o.desc_servico||o.desc_os||'—'}</span>
           <span class="ps-os-hh">${o.hh_prev_os?fmtNum(o.hh_prev_os,0)+' HH':'—'}</span>
           <div class="ps-os-badges">
             ${tipoBadge(o.proj_tipo_intervencao)}
@@ -921,7 +921,18 @@ window.Modulos.proj_caldeiraria = (() => {
 
 /* Blocos MO */
 .ps-blocos-mo{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid var(--border);}
-@media(max-width:700px){.ps-blocos-mo{grid-template-columns:1fr;}}
+@media(max-width:700px){
+  .ps-blocos-mo{grid-template-columns:1fr;}
+  .ps-kpi-grid{grid-template-columns:repeat(2,1fr);}
+  .ps-prev-grid{grid-template-columns:1fr;}
+  .ps-prev-card{border-right:none;border-bottom:1px solid var(--border);}
+  .ps-prev-card:last-child{border-bottom:none;}
+  .ps-projecao-config{flex-direction:column;gap:10px;}
+  .ps-cap-sep{width:100%;height:1px;margin:0;}
+  .ps-filtro-row{flex-direction:column;gap:10px;}
+  .ps-filtro-sep-v{display:none;}
+  .ps-os-desc-mob{white-space:normal!important;overflow:visible!important;text-overflow:unset!important;}
+}
 .ps-bloco-mo{padding:14px 16px;border-right:1px solid var(--border);}
 .ps-bloco-mo:last-child{border-right:none;}
 .ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
@@ -936,10 +947,13 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-tab-foot{background:#f9fafb;font-weight:700;}
 .ps-tab-cell{padding:5px 8px;font-size:10px;color:#374151;flex:1;text-align:right;border-right:1px solid var(--border);}
 .ps-tab-cell:last-child{border-right:none;}
-.ps-tab-setor-col{flex:2;text-align:left;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;}
+.ps-tab-setor-col{flex:3;text-align:left;font-weight:600;min-width:140px;}
 .ps-tab-crit{font-weight:700;}
-.ps-tab-total{font-weight:700;color:#374151;}
+.ps-tab-crit-narrow{flex:0.6;min-width:44px;}
+.ps-tab-total{flex:1.2;font-weight:700;color:#374151;}
+.ps-tab-pct{font-size:9px;color:#9ca3af;font-weight:400;}
 .ps-tab-vazio{font-size:10px;color:#9ca3af;padding:8px 0;}
+.ps-tabela-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 
 /* Cenários */
 .ps-cen-hdr{display:flex;gap:0;background:#fafafa;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;}
