@@ -173,11 +173,12 @@ window.Modulos.proj_caldeiraria = (() => {
     }).join('');
     return `<div class="ps-filtros">
       <div class="ps-filtro-row">
-        <div class="ps-filtro-bloco">
+        <div class="ps-filtro-bloco ps-filtro-equipe">
           <label class="ps-flbl">Equipe</label>
           <select class="ps-sel" id="ps-sel-equipe">${eqOpts}</select>
         </div>
-        <div class="ps-filtro-bloco" style="flex:1;min-width:200px">
+        <div class="ps-filtro-sep-v"></div>
+        <div class="ps-filtro-bloco" style="flex:1;min-width:180px">
           <label class="ps-flbl">
             Tipo de Intervenção
             <button class="ps-btn-sm" id="btn-add-tipo" title="Adicionar tipo"><i class="ti ti-plus"></i></button>
@@ -236,7 +237,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const cardTerc = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-building-factory"></i> Previsão Conclusão — MO Terceiro</div>
       <div class="ps-prev-val${prev.terc?'':' vazio'}">${prev.terc||(_nEqTerc===0?'Sem equipes terceiras':'—')}</div>
-      ${prev.mesesTerc?`<div class="ps-prev-sub">${prev.mesesTerc} meses · ${_nEqTerc} eq. · ${fmtNum(hhMesTerc(_nEqTerc),0)}h/mês</div>`:'<div class="ps-prev-sub">${_nEqTerc===0?"Configure equipes terceiras":"Informe a data de início"}</div>'}
+      ${prev.mesesTerc?`<div class="ps-prev-sub">${prev.mesesTerc} meses · ${_nEqTerc} eq. · ${fmtNum(hhMesTerc(_nEqTerc),0)}h/mês</div>`:`<div class="ps-prev-sub">${_nEqTerc===0?'Configure equipes terceiras':'Informe a data de início'}</div>`}
     </div>`;
 
     const cardCusto = `<div class="ps-prev-card">
@@ -589,9 +590,11 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-card-titulo i{font-size:13px;}
 
 /* Filtros */
-.ps-filtros{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 14px;}
-.ps-filtro-row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;}
-.ps-filtro-bloco{display:flex;flex-direction:column;gap:6px;}
+.ps-filtros{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 16px;}
+.ps-filtro-row{display:flex;gap:0;flex-wrap:wrap;align-items:stretch;}
+.ps-filtro-bloco{display:flex;flex-direction:column;gap:6px;padding:0 16px 0 0;}
+.ps-filtro-equipe{min-width:120px;flex-shrink:0;}
+.ps-filtro-sep-v{width:1px;background:var(--border);flex-shrink:0;margin:0 16px;}
 .ps-flbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;display:flex;align-items:center;gap:5px;}
 .ps-flbl-inline{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;flex-shrink:0;}
 .ps-sel{height:30px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
