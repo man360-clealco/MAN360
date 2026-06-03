@@ -76,6 +76,26 @@ const MAN360_CONFIG = {
       ],
     },
     {
+      group: 'Projetos',
+      icon: 'folder-bolt',
+      items: [],
+      subgroups: [
+        {
+          label: 'Caldeiraria',
+          icon: 'flame',
+          items: [
+            {
+              label: 'Proj. Segurança',
+              page: 'proj_caldeiraria',
+              icon: 'shield-check',
+              status: 'active',
+              module: 'modules/proj_caldeiraria.js',
+            },
+          ],
+        },
+      ],
+    },
+    {
       group: 'Backlog',
       icon: 'list-details',
       items: [],
