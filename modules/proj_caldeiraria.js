@@ -232,6 +232,36 @@ window.Modulos.proj_caldeiraria = (() => {
     </div>`;
   }
 
+  /* ── Blocos MO Própria e Terceiro ── */
+  function htmlBlocosMO(lista) {
+    const temTerc = lista.some(o => o.proj_mo_tipo === 'terceiro');
+    const colClass = temTerc ? 'ps-blocos-mo' : 'ps-blocos-mo ps-bloco-unico';
+
+    const blocoProp = [
+      '<div class="ps-bloco-mo">',
+      '<div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>',
+      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      htmlTabelaSetor(lista, 'proprio'),
+      '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqProp+' eq. · '+fmtNum(hhMesProp(_nEqProp),0)+'h/mês)</div>',
+      '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
+      htmlCenarios(lista, 'proprio', _nEqProp, hhMesProp),
+      '</div>',
+    ].join('');
+
+    const blocoTerc = temTerc ? [
+      '<div class="ps-bloco-mo">',
+      '<div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>',
+      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      htmlTabelaSetor(lista, 'terceiro'),
+      '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqTerc+' eq. · '+(_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes')+')</div>',
+      '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
+      htmlCenarios(lista, 'terceiro', _nEqTerc, hhMesTerc),
+      '</div>',
+    ].join('') : '';
+
+    return '<div class="'+colClass+'">'+blocoProp+blocoTerc+'</div>';
+  }
+
   function htmlProjecao(lista) {
     const prev = calcPrevisao(lista);
     const valorOpts = VALORES_HH.map(v=>`<option value="${v}"${v===_valorHH?' selected':''}>R$ ${v}/HH</option>`).join('');
@@ -292,27 +322,7 @@ window.Modulos.proj_caldeiraria = (() => {
         ${cardProp}${cardTerc}${cardCusto}
       </div>
 
-      ${(()=>{
-        const temTerc = lista.some(o=>o.proj_mo_tipo==='terceiro');
-        const colClass = temTerc ? 'ps-blocos-mo' : 'ps-blocos-mo ps-bloco-unico';
-        const blocoProp = `<div class="ps-bloco-mo">
-          <div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>
-          <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
-          \${htmlTabelaSetor(lista,'proprio')}
-          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (\${_nEqProp} eq. · \${fmtNum(hhMesProp(_nEqProp),0)}h/mês)</div>
-          <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
-          \${htmlCenarios(lista,'proprio',_nEqProp,hhMesProp)}
-        </div>`;
-        const blocoTerc = temTerc ? `<div class="ps-bloco-mo">
-          <div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>
-          <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
-          \${htmlTabelaSetor(lista,'terceiro')}
-          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (\${_nEqTerc} eq. · \${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes'})</div>
-          <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
-          \${htmlCenarios(lista,'terceiro',_nEqTerc,hhMesTerc)}
-        </div>` : '';
-        return \`<div class="\${colClass}">\${blocoProp}\${blocoTerc}</div>\`;
-      })()}
+      ${htmlBlocosMO(lista)}
     </div>`;
   }
 
