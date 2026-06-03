@@ -348,7 +348,7 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-fotos-grid">
           ${fotosOS.map(f=>`
             <div class="ps-foto-item">
-              <img src="${f.url}" alt="${f.nome||''}" loading="lazy">
+              <img src="${f.url}" alt="${f.nome||''}" loading="lazy" data-action="ver-foto" data-url="${f.url}" data-nome="${(f.nome||'').replace(/"/g,'&quot;')}" style="cursor:zoom-in">
               <button class="ps-foto-del" data-action="del-foto" data-id="${f.id}" data-os="${o.os}" data-url="${f.url}" title="Remover"><i class="ti ti-x"></i></button>
             </div>`).join('')}
           ${!fotosOS.length?'<div style="font-size:10px;color:#9ca3af;padding:8px">Nenhuma foto adicionada</div>':''}
@@ -490,6 +490,8 @@ window.Modulos.proj_caldeiraria = (() => {
             renderizar(); break;
           case 'del-foto':
             await deletarFoto(parseInt(btn.dataset.id), os, btn.dataset.url); break;
+          case 'ver-foto':
+            abrirLightbox(btn.dataset.url, btn.dataset.nome); break;
         }
       });
     });
@@ -574,6 +576,24 @@ window.Modulos.proj_caldeiraria = (() => {
 
     o.querySelector('.ps-modal-cancel').addEventListener('click',()=>o.remove());
     o.addEventListener('click',e=>{if(e.target===o)o.remove();});
+    document.body.appendChild(o);
+  }
+
+  /* ── Lightbox ── */
+  function abrirLightbox(url, nome) {
+    const o = document.createElement('div');
+    o.className = 'ps-lightbox';
+    o.innerHTML = `
+      <div class="ps-lightbox-inner">
+        <button class="ps-lightbox-close" id="ps-lb-close"><i class="ti ti-x"></i></button>
+        ${nome ? `<div class="ps-lightbox-nome">${nome}</div>` : ''}
+        <img src="${url}" alt="${nome||''}">
+      </div>`;
+    o.addEventListener('click', e => { if (e.target === o) o.remove(); });
+    o.querySelector('#ps-lb-close').addEventListener('click', () => o.remove());
+    document.addEventListener('keydown', function esc(e) {
+      if (e.key === 'Escape') { o.remove(); document.removeEventListener('keydown', esc); }
+    });
     document.body.appendChild(o);
   }
 
@@ -695,6 +715,12 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-tipos-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;margin-bottom:4px;}
 .ps-tipo-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);}
 .ps-tipo-input{flex:1;height:28px;padding:0 7px;border:1px solid var(--border);border-radius:4px;font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
+.ps-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;cursor:zoom-out;}
+.ps-lightbox-inner{position:relative;max-width:90vw;max-height:90vh;display:flex;flex-direction:column;align-items:center;gap:8px;}
+.ps-lightbox-inner img{max-width:100%;max-height:82vh;object-fit:contain;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.5);cursor:default;}
+.ps-lightbox-nome{font-size:11px;color:rgba(255,255,255,.7);font-family:var(--font);}
+.ps-lightbox-close{position:absolute;top:-12px;right:-12px;width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.15);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;backdrop-filter:blur(4px);}
+.ps-lightbox-close:hover{background:rgba(220,38,38,.8);}
     `;
     document.head.appendChild(s);
   }
