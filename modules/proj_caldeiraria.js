@@ -42,14 +42,17 @@ window.Modulos.proj_caldeiraria = (() => {
     return _os.filter(o=>{
       if (_filtCrit.length && !_filtCrit.includes(o.proj_criticidade)) return false;
       if (_filtMO && o.proj_mo_tipo !== _filtMO) return false;
-      if (_filtSetor && o.setor !== _filtSetor) return false;
+      if (_filtSetor && (o.desc_setor||o.setor) !== _filtSetor) return false;
       return true;
     });
   }
   function setoresDistintos() {
-    return [...new Set(_os.map(o=>o.setor).filter(Boolean))].sort();
+    return [...new Set(_os.map(o=>o.desc_setor||o.setor).filter(Boolean))].sort();
   }
   function osEnc(lista){ return lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')); }
+  // OS para métricas globais — apenas filtros de equipe e tipo de intervenção
+  // (não afetados por criticidade, MO ou setor da lista)
+  function osParaMetricas() { return _os; }
 
   /* ── Previsão de conclusão ── */
   function calcPrevisao(lista) {
@@ -104,7 +107,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
   async function carregarOS() {
     let q = getDB().from('ordens_servico')
-      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
+      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
       .eq('equipe',_filtEquipe).neq('tipo_atividade','MCU');
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
@@ -236,7 +239,10 @@ window.Modulos.proj_caldeiraria = (() => {
     const cardProp = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-users"></i> Previsão Conclusão — MO Própria</div>
       <div class="ps-prev-val${prev.prop?'':' vazio'}">${prev.prop||'—'}</div>
-      ${prev.mesesProp?`<div class="ps-prev-sub">${prev.mesesProp} meses · ${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês</div>`:'<div class="ps-prev-sub">Informe a data de início</div>'}
+      ${prev.mesesProp
+        ?`<div class="ps-prev-sub">${prev.mesesProp} meses · ${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês</div>`
+        :'<div class="ps-prev-sub">Informe a data de início</div>'}
+      <div class="ps-prev-obs">* Considerando a execução de toda a matriz</div>
     </div>`;
 
     const cardTerc = `<div class="ps-prev-card">
@@ -286,69 +292,69 @@ window.Modulos.proj_caldeiraria = (() => {
         ${cardProp}${cardTerc}${cardCusto}
       </div>
 
-      <div class="ps-blocos-mo">
-        <!-- MO Própria -->
-        <div class="ps-bloco-mo">
+      ${(()=>{
+        const temTerc = lista.some(o=>o.proj_mo_tipo==='terceiro');
+        const colClass = temTerc ? 'ps-blocos-mo' : 'ps-blocos-mo ps-bloco-unico';
+        const blocoProp = `<div class="ps-bloco-mo">
           <div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>
           <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
-          ${htmlTabelaSetor(lista,'proprio')}
-          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês)</div>
+          \${htmlTabelaSetor(lista,'proprio')}
+          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (\${_nEqProp} eq. · \${fmtNum(hhMesProp(_nEqProp),0)}h/mês)</div>
           <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
-          ${htmlCenarios(lista,'proprio',_nEqProp,hhMesProp)}
-        </div>
-
-        <!-- MO Terceiro -->
-        <div class="ps-bloco-mo">
+          \${htmlCenarios(lista,'proprio',_nEqProp,hhMesProp)}
+        </div>`;
+        const blocoTerc = temTerc ? `<div class="ps-bloco-mo">
           <div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>
           <div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>
-          ${htmlTabelaSetor(lista,'terceiro')}
-          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (${_nEqTerc} eq. · ${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes'})</div>
+          \${htmlTabelaSetor(lista,'terceiro')}
+          <div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão (\${_nEqTerc} eq. · \${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes'})</div>
           <div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>
-          ${htmlCenarios(lista,'terceiro',_nEqTerc,hhMesTerc)}
-        </div>
-      </div>
+          \${htmlCenarios(lista,'terceiro',_nEqTerc,hhMesTerc)}
+        </div>` : '';
+        return \`<div class="\${colClass}">\${blocoProp}\${blocoTerc}</div>\`;
+      })()}
     </div>`;
   }
 
 
   /* ── Tabela Setor × Criticidade ── */
   function htmlTabelaSetor(lista, moTipo) {
-    // Filtrar por MO tipo
     const osMO = moTipo === 'proprio'
       ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
       : lista.filter(o => o.proj_mo_tipo === 'terceiro');
 
-    // Só OS com criticidade definida
-    const osValidas = osMO.filter(o => o.proj_criticidade && o.setor);
+    const osValidas = osMO.filter(o => o.proj_criticidade && (o.desc_setor||o.setor));
     if (!osValidas.length) return '<div class="ps-tab-vazio">Sem dados com setor e criticidade definidos</div>';
 
-    const setores = [...new Set(osValidas.map(o=>o.setor))].sort();
+    // Usar desc_setor como chave de agrupamento
+    const setores = [...new Set(osValidas.map(o=>o.desc_setor||o.setor))].sort();
     const crits   = ['alta','media','baixa'].filter(cr => osValidas.some(o=>o.proj_criticidade===cr));
     const nomeCrit = {alta:'Alta',media:'Média',baixa:'Baixa'};
     const corCrit  = {alta:'#dc2626',media:'#d97706',baixa:'#16a34a'};
 
-    // Montar matriz
-    const matriz = {};
-    const totaisCrit = {};
-    const totaisSetor = {};
+    const matriz = {}, totaisCrit = {}, totaisSetor = {};
     let totalGeral = 0;
-
     setores.forEach(s => { matriz[s] = {}; totaisSetor[s] = 0; });
     crits.forEach(cr => { totaisCrit[cr] = 0; });
 
     osValidas.forEach(o => {
+      const s  = o.desc_setor||o.setor;
       const hh = o.hh_prev_os || 0;
-      if (!matriz[o.setor][o.proj_criticidade]) matriz[o.setor][o.proj_criticidade] = 0;
-      matriz[o.setor][o.proj_criticidade] += hh;
-      totaisSetor[o.setor] += hh;
+      if (!matriz[s][o.proj_criticidade]) matriz[s][o.proj_criticidade] = 0;
+      matriz[s][o.proj_criticidade] += hh;
+      totaisSetor[s] += hh;
       totaisCrit[o.proj_criticidade] = (totaisCrit[o.proj_criticidade]||0) + hh;
       totalGeral += hh;
     });
 
+    // HH diário da equipe própria para calcular dias
+    const hhDiaEq = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
+    const diasTotal = hhDiaEq > 0 ? Math.round(totalGeral / hhDiaEq) : null;
+
     const thead = `<div class="ps-tab-row ps-tab-head">
       <div class="ps-tab-cell ps-tab-setor-col">Setor</div>
       ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
-      <div class="ps-tab-cell ps-tab-total">Total</div>
+      <div class="ps-tab-cell ps-tab-total">HH</div>
     </div>`;
 
     const rows = setores.map(s => {
@@ -363,11 +369,21 @@ window.Modulos.proj_caldeiraria = (() => {
       </div>`;
     }).join('');
 
-    const tfoot = `<div class="ps-tab-row ps-tab-foot">
-      <div class="ps-tab-cell ps-tab-setor-col">Total</div>
-      ${crits.map(cr=>`<div class="ps-tab-cell">${fmtNum(totaisCrit[cr]||0,0)}h</div>`).join('')}
-      <div class="ps-tab-cell ps-tab-total">${fmtNum(totalGeral,0)}h</div>
-    </div>`;
+    const tfoot = `
+      <div class="ps-tab-row ps-tab-foot">
+        <div class="ps-tab-cell ps-tab-setor-col">Total HH</div>
+        ${crits.map(cr=>`<div class="ps-tab-cell">${fmtNum(totaisCrit[cr]||0,0)}h</div>`).join('')}
+        <div class="ps-tab-cell ps-tab-total">${fmtNum(totalGeral,0)}h</div>
+      </div>
+      <div class="ps-tab-row ps-tab-foot" style="background:#f0fdf4">
+        <div class="ps-tab-cell ps-tab-setor-col" style="color:#16a34a">Total dias</div>
+        ${crits.map(cr=>{
+          const hhCr = totaisCrit[cr]||0;
+          const dias = hhDiaEq>0 ? Math.round(hhCr/hhDiaEq) : null;
+          return `<div class="ps-tab-cell" style="color:#16a34a">${dias!==null?dias+'d':'—'}</div>`;
+        }).join('')}
+        <div class="ps-tab-cell ps-tab-total" style="color:#16a34a">${diasTotal!==null?diasTotal+'d':'—'}</div>
+      </div>`;
 
     return `<div class="ps-tabela-wrap">${thead}${rows}${tfoot}</div>`;
   }
@@ -379,44 +395,47 @@ window.Modulos.proj_caldeiraria = (() => {
       : lista.filter(o => o.proj_mo_tipo === 'terceiro');
 
     const cenarios = [
-      { label: 'Só Alta criticidade',    crits: ['alta'] },
-      { label: 'Alta + Média criticidade', crits: ['alta','media'] },
-      { label: 'Toda demanda',            crits: ['alta','media','baixa',null,''] },
+      { label: 'Só Alta criticidade',      crits: ['alta'],                isTudo: false },
+      { label: 'Alta + Média criticidade', crits: ['alta','media'],        isTudo: false },
+      { label: 'Toda demanda',             crits: [],                      isTudo: true  },
     ];
 
-    const hhMes = hhMesFn(nEq);
+    const hhMes   = hhMesFn(nEq);
+    const hhDiario = HH_DIA_COLAB * PESSOAS_EQ * nEq;
+
+    // Calcular HH de cada cenário antecipadamente para delta
+    const hhCenarios = cenarios.map(cen =>
+      (cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade)))
+        .reduce((s,o)=>s+(o.hh_prev_os||0),0)
+    );
 
     const rows = cenarios.map((cen, idx) => {
-      const osC = cen.crits.includes(null)
-        ? osMO
-        : osMO.filter(o => cen.crits.includes(o.proj_criticidade));
-      const hhTot = osC.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-      const hhEnc = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const osC    = cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade));
+      const hhTot  = hhCenarios[idx];
+      const hhEnc  = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
       const hhRest = Math.max(0, hhTot - hhEnc);
 
-      // Previsão
+      // Previsão + dias
       let previsao = '—';
       if (_dtInicio && hhMes > 0 && hhRest > 0) {
-        const meses = hhRest / hhMes;
+        const diasUteis = hhDiario > 0 ? Math.round(hhRest / hhDiario) : 0;
         const d = new Date(_dtInicio+'T12:00:00');
-        d.setDate(d.getDate() + Math.round(meses * 30));
-        previsao = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+        d.setDate(d.getDate() + diasUteis);
+        const dataFmt = d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+        previsao = diasUteis > 0 ? `${dataFmt} <span class="ps-cen-dias">(${diasUteis} dias)</span>` : dataFmt;
       } else if (hhRest === 0 && hhTot > 0) {
         previsao = 'Concluído';
       } else if (nEq === 0) {
         previsao = 'Sem equipes';
       }
 
-      // Delta vs cenário anterior
+      // Delta — cenário 1 compara c/ 0, cenário 2 compara com cenário 1
       let delta = '';
       if (idx > 0) {
-        const cenAnt = cen.crits.includes(null)
-          ? osMO
-          : osMO.filter(o => cenarios[idx-1].crits.includes(o.proj_criticidade));
-        const hhAnt = cenAnt.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-        if (hhAnt > 0) {
+        const hhAnt = hhCenarios[idx - 1]; // sempre compara com anterior imediato
+        if (hhAnt > 0 && hhTot > hhAnt) {
           const pct = Math.round((hhTot - hhAnt) / hhAnt * 100);
-          delta = pct > 0 ? `<span class="ps-delta">+${pct}% vs anterior</span>` : '';
+          delta = `<span class="ps-delta">+${pct}% vs anterior</span>`;
         }
       }
 
@@ -428,10 +447,11 @@ window.Modulos.proj_caldeiraria = (() => {
       </div>`;
     }).join('');
 
-    if (!_dtInicio || nEq === 0) {
-      return `<div class="ps-cen-wrap">${rows}<div class="ps-cen-hint">${!_dtInicio?'Informe a data de início para ver previsões':'Configure equipes para ver previsões'}</div></div>`;
-    }
-    return `<div class="ps-cen-wrap">${rows}</div>`;
+    const hint = !_dtInicio
+      ? 'Informe a data de início para ver previsões'
+      : nEq === 0 ? 'Configure equipes para ver previsões' : '';
+
+    return `<div class="ps-cen-wrap">${rows}${hint?`<div class="ps-cen-hint">${hint}</div>`:''}</div>`;
   }
 
   function htmlListaOS(lista) {
@@ -545,17 +565,18 @@ window.Modulos.proj_caldeiraria = (() => {
      RENDERIZAR
   ══════════════════════════════════════ */
   function renderizar() {
-    const lista = osFiltradas();
+    const lista    = osFiltradas();
+    const metricas = osParaMetricas();
     _container.innerHTML = `<div class="ps-mod">
       ${htmlFiltros()}
-      ${htmlKPIs(lista)}
-      ${htmlProjecao(lista)}
+      ${htmlKPIs(metricas)}
+      ${htmlProjecao(metricas)}
       <div class="ps-aviso-terc">
         <div class="ps-aviso-terc-inner">
           <i class="ti ti-info-circle"></i>
           <span>Custo total se 100% terceirizado:</span>
-          <strong>${fmtMoeda(lista.reduce((s,o)=>s+(o.hh_prev_os||0),0) * _valorHH)}</strong>
-          <span class="ps-aviso-sub">${fmtNum(lista.reduce((s,o)=>s+(o.hh_prev_os||0),0),0)} HH × R$${_valorHH}/HH</span>
+          <strong>${fmtMoeda(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0) * _valorHH)}</strong>
+          <span class="ps-aviso-sub">${fmtNum(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0),0)} HH × R$${_valorHH}/HH</span>
         </div>
       </div>
       <div class="ps-card">
@@ -923,6 +944,9 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-cen-prev{flex:1;padding:7px 8px;font-size:10px;color:#374151;text-align:right;}
 .ps-cen-hint{padding:6px 8px;font-size:9px;color:#9ca3af;background:#fafafa;border-top:1px solid var(--border);}
 .ps-delta{font-size:8px;font-weight:600;color:#d97706;background:#fef3c7;padding:1px 5px;border-radius:3px;width:fit-content;}
+.ps-cen-dias{font-size:9px;color:#9ca3af;font-weight:400;}
+.ps-prev-obs{font-size:8px;color:#9ca3af;font-style:italic;margin-top:4px;}
+.ps-blocos-mo.ps-bloco-unico{grid-template-columns:1fr;}
 
 /* Aviso custo terceirizado */
 .ps-aviso-terc{background:#fffbeb;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 16px;}
