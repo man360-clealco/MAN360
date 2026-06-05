@@ -274,6 +274,8 @@ function parseProgSemanal(rows, wb, tabelaOS) {
       if (res.ano)      ctx.ano      = res.ano;
       if (res.dataIni)  ctx.dataIni  = res.dataIni;
       if (res.dataFim)  ctx.dataFim  = res.dataFim;
+      // Persistir equipe entre abas — OS podem continuar em aba separada
+      if (res.equipe)   ctx.equipe   = res.equipe;
     });
   } else {
     var res = _parseProgAba(rows, ctx, tabelaOS);
@@ -287,7 +289,7 @@ function parseProgSemanal(rows, wb, tabelaOS) {
 
 function _parseProgAba(rows, ctxIn, tabelaOS) {
   const registros = [];
-  let equipe = '', semana = ctxIn.semana, ano = ctxIn.ano;
+  let equipe = ctxIn.equipe || '', semana = ctxIn.semana, ano = ctxIn.ano;
   let dataIni = ctxIn.dataIni, dataFim = ctxIn.dataFim;
 
   // Normalizar cabeçalho para detectar semana/período
@@ -357,7 +359,7 @@ function _parseProgAba(rows, ctxIn, tabelaOS) {
     });
   });
 
-  return { registros, semana, ano, dataIni, dataFim };
+  return { registros, semana, ano, dataIni, dataFim, equipe };
 }
 
 /* ══════════════════════════════════════════════════════
