@@ -537,10 +537,10 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas"><span class="cd-dt-motivo">${item.obs||'—'}</span></div>
       </div>
-      ${String(_itemAberto)===String(item.id)?`<div class="cd-svc-acoes">
-        <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
+      <div class="cd-svc-acoes-inline">
+        <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Retomar</button>
         <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>
-      </div>`:''}
+      </div>
     </div>`).join('');
 
     return `<div class="cd-board cd-board-inter">
@@ -578,9 +578,9 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas">${htmlDtHora(item.encerrado_em,'fim')}</div>
       </div>
-      ${String(_itemAberto)===String(item.id)?`<div class="cd-svc-acoes">
-        <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
-      </div>`:''}
+      <div class="cd-svc-acoes-inline">
+        <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Retomar</button>
+      </div>
     </div>`).join('');
 
     return `<div class="cd-board cd-board-enc">
@@ -780,17 +780,15 @@ window.Modulos.cal_acomp = (() => {
      AÇÕES
   ══════════════════════════════════════ */
   async function acaoIniciar(id) {
-    const hora=await modalHora('Hora de início',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
+    const dh=await modalHora('Data e hora de início',horaAtual()); if(!dh)return;
+    await atualizarStatus(id,'em_execucao',{iniciado_em:dtHoraToISO(dh)});
     _itemAberto=null; await recarregarDados();
   }
 
   async function acaoEncerrar(id) {
-    const hora=await modalHora('Hora de encerramento',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'encerrado',{encerrado_em:dt.toISOString()});
-    // Perguntar se inicia o próximo
+    const dh=await modalHora('Data e hora de encerramento',horaAtual()); if(!dh)return;
+    const isoEnc=dtHoraToISO(dh);
+    await atualizarStatus(id,'encerrado',{encerrado_em:isoEnc});
     let equipeId=null;
     for(const eqId in _fila)if(_fila[eqId].some(i=>parseInt(i.id)===id)){equipeId=parseInt(eqId);break;}
     if(equipeId){
@@ -798,8 +796,7 @@ window.Modulos.cal_acomp = (() => {
       if(prox){
         const sim=await modalConfirm(`Iniciar próximo serviço?\n${prox.os||'S/N'} · ${prox.desc_servico||''}`);
         if(sim){
-          const dt2=new Date(); dt2.setHours(dt.getHours(),dt.getMinutes(),0,0);
-          await atualizarStatus(prox.id,'em_execucao',{iniciado_em:dt2.toISOString()});
+          await atualizarStatus(prox.id,'em_execucao',{iniciado_em:isoEnc});
         }
       }
     }
@@ -807,7 +804,7 @@ window.Modulos.cal_acomp = (() => {
   }
 
   async function acaoPausar(id,equipeId) {
-    await atualizarStatus(id,'pausado');
+    await atualizarStatus(id,'pausado',{});
     // Mover para posição 2 (logo após o em execução se houver, ou posição 1)
     const fila=_fila[equipeId]||[];
     const idx=fila.findIndex(i=>parseInt(i.id)===id);
@@ -821,9 +818,8 @@ window.Modulos.cal_acomp = (() => {
   }
 
   async function acaoRetomar(id) {
-    const hora=await modalHora('Hora de retomada',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
+    const dh=await modalHora('Data e hora de retomada',horaAtual()); if(!dh)return;
+    await atualizarStatus(id,'em_execucao',{iniciado_em:dtHoraToISO(dh)});
     _itemAberto=null; await recarregarDados();
   }
 
@@ -841,7 +837,7 @@ window.Modulos.cal_acomp = (() => {
     // Selecionar equipe destino
     const opcoes=_equipes.map(e=>e.nome);
     if(!opcoes.length){alert('Nenhuma equipe ativa.');return;}
-    const escolha=await modalOpcoes('Selecionar equipe destino',opcoes); if(!escolha)return;
+    const escolha=await modalOpcoes('Retomar em qual equipe?',opcoes); if(!escolha)return;
     const novaEq=_equipes.find(e=>e.nome===escolha); if(!novaEq)return;
     const db=getDB();
     const nova_ordem=(_fila[novaEq.id]||[]).length+1;
@@ -882,22 +878,45 @@ window.Modulos.cal_acomp = (() => {
   /* ══════════════════════════════════════
      MODAIS
   ══════════════════════════════════════ */
-  function modalHora(titulo,padrao) {
+  function modalHora(titulo, padraoHora) {
+    // Retorna objeto {data, hora} ou null
     return new Promise(resolve=>{
+      const agora = new Date();
+      const dataHoje = agora.getFullYear()+'-'+String(agora.getMonth()+1).padStart(2,'0')+'-'+String(agora.getDate()).padStart(2,'0');
       const o=document.createElement('div'); o.className='cd-overlay';
-      o.innerHTML=`<div class="cd-modal" style="width:260px">
+      o.innerHTML=`<div class="cd-modal" style="width:300px">
         <div class="cd-modal-titulo">${titulo}</div>
-        <input type="time" id="mh" class="cd-form-input" style="font-size:22px;height:48px;text-align:center" value="${padrao}">
-        <div style="display:flex;gap:8px;margin-top:12px">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div>
+            <label class="cd-form-lbl">Data</label>
+            <input type="date" id="mh-data" class="cd-form-input" style="height:40px;font-size:14px" value="${dataHoje}">
+          </div>
+          <div>
+            <label class="cd-form-lbl">Hora</label>
+            <input type="time" id="mh-hora" class="cd-form-input" style="height:40px;font-size:18px;text-align:center" value="${padraoHora}">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
           <button class="cd-modal-cancel" style="flex:1">Cancelar</button>
           <button class="cd-btn-primary" id="mh-ok" style="flex:2"><i class="ti ti-check"></i> Confirmar</button>
         </div>
       </div>`;
-      o.querySelector('#mh-ok').addEventListener('click',()=>{const v=o.querySelector('#mh').value;o.remove();resolve(v||null);});
+      o.querySelector('#mh-ok').addEventListener('click',()=>{
+        const data=o.querySelector('#mh-data').value;
+        const hora=o.querySelector('#mh-hora').value;
+        o.remove();
+        resolve((data&&hora)?{data,hora}:null);
+      });
       o.querySelector('.cd-modal-cancel').addEventListener('click',()=>{o.remove();resolve(null);});
       o.addEventListener('click',e=>{if(e.target===o){o.remove();resolve(null);}});
-      document.body.appendChild(o); o.querySelector('#mh').focus();
+      document.body.appendChild(o);
+      o.querySelector('#mh-hora').focus();
     });
+  }
+
+  function dtHoraToISO(dh) {
+    if(!dh) return null;
+    return new Date(dh.data+'T'+dh.hora+':00').toISOString();
   }
 
   function modalOpcoes(titulo,opcoes) {
@@ -1237,6 +1256,7 @@ window.Modulos.cal_acomp = (() => {
 .cd-add-os{display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:10px;color:#9ca3af;border-top:1px dashed var(--border);}
 .cd-add-os:hover{background:#fffbeb;color:#1a1a1a;}
 .cd-add-os i{font-size:13px;}
+.cd-svc-acoes-inline{display:flex;gap:5px;padding:4px 10px 7px 10px;border-top:1px solid var(--border);background:#f9fafb;flex-wrap:wrap;}
 
 /* Pontos de atenção */
 .cd-pontos{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
