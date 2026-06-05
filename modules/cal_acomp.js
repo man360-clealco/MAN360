@@ -137,20 +137,48 @@ window.Modulos.cal_acomp = (() => {
 
       // Ponto de partida
       if(idx===0) {
-        if(item.status==='em_execucao'&&item.iniciado_em) {
-          cursorDt=new Date(item.iniciado_em);
-        } else if(item.status==='pausado'&&item.iniciado_em) {
+        if((item.status==='em_execucao'||item.status==='pausado')&&item.iniciado_em) {
           cursorDt=new Date(item.iniciado_em);
         } else {
-          // Começa agora ou no início do próximo dia útil
-          cursorDt=new Date();
-          const hj=hoje(); const hhHj=hhEquipeDia(equipe,hj);
-          if(hhHj===0) {
-            // Hoje é folga, avança para próximo dia útil
+          // Calcular cursor correto: próximo horário de trabalho
+          const agora=new Date();
+          const hj=hoje();
+          const hhHj=hhEquipeDia(equipe,hj);
+          const entHj=entradaEquipeDia(equipe,hj); // minutos desde meia-noite
+          const agoraMin=agora.getHours()*60+agora.getMinutes();
+
+          if(hhHj>0 && entHj!==null && agoraMin<entHj) {
+            // Hoje é dia útil mas ainda não chegou a hora de entrada → usar entrada hoje
+            cursorDt=new Date(hj);
+            cursorDt.setHours(Math.floor(entHj/60),entHj%60,0,0);
+          } else if(hhHj>0 && entHj!==null) {
+            // Dentro ou após o turno hoje → usar agora (dentro) ou próximo dia (após)
+            // Encontrar saída do turno
+            let saidaHj=0;
+            for(const m of (equipe.membros||[])){
+              const cc=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
+              if(!cc||!cc.turno_id)continue;
+              const tt=_turnos[cc.turno_id]; if(!tt)continue;
+              const [sh,sm]=(tt.hora_saida||'17:00').split(':').map(Number);
+              const sMin=sh*60+sm;
+              if(sMin>saidaHj)saidaHj=sMin;
+            }
+            if(agoraMin<saidaHj) {
+              // Ainda dentro do turno → começa agora
+              cursorDt=new Date(agora);
+            } else {
+              // Passou do turno → próximo dia útil
+              cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
+              while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
+              const entP=entradaEquipeDia(equipe,cursorDt);
+              if(entP!==null){cursorDt.setHours(Math.floor(entP/60),entP%60,0,0);}
+            }
+          } else {
+            // Hoje é folga → próximo dia útil
             cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
             while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
-            const ent=entradaEquipeDia(equipe,cursorDt);
-            if(ent!==null){cursorDt.setHours(Math.floor(ent/60),ent%60,0,0);}
+            const entP=entradaEquipeDia(equipe,cursorDt);
+            if(entP!==null){cursorDt.setHours(Math.floor(entP/60),entP%60,0,0);}
           }
         }
       }
@@ -214,13 +242,14 @@ window.Modulos.cal_acomp = (() => {
   /* ── Tipo de OS ── */
   function tipoOS(item) {
     if(item.tipo==='mcu') return 'MCU';
+    if(item.tipo==='rep') return 'REP';
     // Verificar se está na prog da semana atual
     const naProgAtual=_progSem.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
     if(naProgAtual) return 'PRG';
     // Verificar se estava na prog da semana anterior
     const naProgAnt=_progAnt.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
     if(naProgAnt) return 'REP';
-    return item.tipo==='programado'?'PRG':'NPG';
+    return item.tipo==='programado'||item.tipo==='fora_prog'?'NPG':'NPG';
   }
 
   function badgeTipo(tipo) {
@@ -408,7 +437,7 @@ window.Modulos.cal_acomp = (() => {
     }
 
     return `<div class="${rowCls}" data-id="${item.id}">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
+      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
         ${posBtn}
         <div class="cd-svc-body">
           <span class="cd-svc-os">${item.os||'S/N'}</span>
@@ -480,7 +509,7 @@ window.Modulos.cal_acomp = (() => {
     if(!items.length) return '';
     const aberto=String(_itemAberto)==='grupo-inter';
     const rows=items.map(item=>`<div class="cd-svc-row interrompido">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
+      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
         <div class="cd-svc-body">
           <span class="cd-svc-os">${item.os||'S/N'}</span>
@@ -521,7 +550,7 @@ window.Modulos.cal_acomp = (() => {
     if(!items.length) return '';
     const aberto=String(_itemAberto)==='grupo-enc';
     const rows=items.map(item=>`<div class="cd-svc-row encerrado">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
+      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
         <div class="cd-svc-body">
           <span class="cd-svc-os">${item.os||'S/N'}</span>
@@ -618,7 +647,7 @@ window.Modulos.cal_acomp = (() => {
       }
     }
 
-    if(!pontos.length) return '';
+    if(!pontos.length) return ''; // Sem pontos no momento
 
     const titulo=semPassada()?'OS Pendentes de Execução':'Pontos de Atenção';
     const rows=pontos.map(p=>`<div class="cd-ponto">
@@ -696,6 +725,16 @@ window.Modulos.cal_acomp = (() => {
     const bv=c.querySelector('#btn-nova-equipe-vazio');
     if(bv)bv.addEventListener('click',()=>abrirModalEquipe(null));
 
+    // Toggle item — delegação separada para não interferir com toggle-eq
+    c.querySelectorAll('.cd-toggle-item').forEach(el=>{
+      el.addEventListener('click',e=>{
+        e.stopPropagation();
+        const iid=el.dataset.id?parseInt(el.dataset.id):null;
+        _itemAberto=String(_itemAberto)===String(iid)?null:iid;
+        renderizar();
+      });
+    });
+
     c.querySelectorAll('[data-action]').forEach(btn=>{
       btn.addEventListener('click',e=>{
         e.stopPropagation();
@@ -703,12 +742,9 @@ window.Modulos.cal_acomp = (() => {
         const iid=id?parseInt(id):null; const ieq=eq?parseInt(eq):null;
         switch(action){
           case 'toggle-eq':
-            // eq é string do dataset, comparar como string
             _itemAberto=String(_itemAberto)===String(eq)?null:eq;
             renderizar(); break;
-          case 'toggle-item':
-            _itemAberto=String(_itemAberto)===String(iid)?null:iid;
-            renderizar(); break;
+          case 'toggle-item': break; // tratado acima
           case 'iniciar':       acaoIniciar(iid); break;
           case 'encerrar':      acaoEncerrar(iid); break;
           case 'pausar':        acaoPausar(iid,ieq); break;
@@ -894,7 +930,7 @@ window.Modulos.cal_acomp = (() => {
         </select>
         <select class="cd-form-input cd-form-sel" id="mos-cart">
           <option value="">Todas as carteiras</option>
-          ${['CAL1','CAL2','CAL3','CAL4'].map(c=>`<option value="${c}">${c}</option>`).join('')}
+          ${[...new Set([..._progSem.map(p=>p.equipe),..._progAnt.map(p=>p.equipe)].filter(e=>e&&e.startsWith('CAL')))].sort().map(eq=>`<option value="${eq}">${eq}</option>`).join('')}
         </select>
         <input type="text" id="mos-busca" class="cd-form-input" placeholder="Pesquisar OS ou descrição...">
         <button class="cd-btn-primary" id="mos-buscar" style="width:100%"><i class="ti ti-search"></i> Buscar</button>
@@ -902,7 +938,7 @@ window.Modulos.cal_acomp = (() => {
       <div id="mos-resultados" style="margin-top:10px;max-height:280px;overflow-y:auto"></div>
       <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
         <div class="cd-modal-titulo" style="font-size:11px">Ou inserir sem número de OS:</div>
-        <input type="text" id="mos-desc-manual" class="cd-form-input" placeholder="Descrição do serviço" style="margin-top:6px">
+        <input type="text" id="mos-desc-manual" class="cd-form-input" placeholder="Descrição do serviço" style="margin-top:6px;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
         <input type="number" id="mos-hh-manual" class="cd-form-input" placeholder="HH estimado" style="margin-top:6px">
         <div class="cd-tipo-opts" style="margin-top:6px">
           <button class="cd-tipo-btn active" data-tipo="programado">Prog.</button>
@@ -927,7 +963,7 @@ window.Modulos.cal_acomp = (() => {
       const busca=o.querySelector('#mos-busca').value.trim();
       const ano=iniSem(sem).getFullYear();
 
-      let q=db.from('ordens_servico').select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe').limit(30);
+      let q=db.from('ordens_servico').select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe').like('equipe','CAL%').limit(50);
       if(cart) q=q.eq('equipe',cart);
       if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
       else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
@@ -948,7 +984,9 @@ window.Modulos.cal_acomp = (() => {
       res.querySelectorAll('.cd-os-result').forEach(row=>{
         row.addEventListener('click',async()=>{
           const {os,cod,desc,hh,tipo:t}=row.dataset;
-          await inserirNaFila(equipeId,{os,cod_servico:cod||null,desc_servico:desc,hh_previsto:parseFloat(hh)||null,tipo:t,status:'pendente',vinculado:true},'fim');
+          const semBuscada=parseInt(document.getElementById('mos-sem').value)||_sem;
+          const tipoFinal = semBuscada < _sem ? 'rep' : t;
+          await inserirNaFila(equipeId,{os,cod_servico:cod||null,desc_servico:desc,hh_previsto:parseFloat(hh)||null,tipo:tipoFinal,status:'pendente',vinculado:true},'fim');
           o.remove(); await recarregarDados();
         });
       });
@@ -1167,11 +1205,13 @@ window.Modulos.cal_acomp = (() => {
 /* Mobile */
 @media(max-width:600px){
   .cd-week-chip{display:none;}
-  .cd-svc-datas{min-width:100px;}
-  .cd-svc-os{width:48px;}
+  .cd-svc-datas{min-width:90px;}
+  .cd-svc-os{width:46px;font-size:8px;}
+  .cd-svc-desc{white-space:normal;word-break:break-word;font-size:10px;}
   .cd-resumo-body{flex-direction:column;}
   .cd-resumo-eq{border-right:none;border-bottom:1px solid var(--border);}
   .cd-resumo-eq:last-child{border-bottom:none;}
+  .cd-mod{padding-bottom:80px;}
 }
     `;
     document.head.appendChild(s);
