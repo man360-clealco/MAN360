@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório — Projetos de Segurança</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#f4f4f5}
+
+  /* Barra de controle — some ao imprimir */
+  #ctrl{
+    position:sticky;top:0;z-index:99;
+    background:#1a1a1a;padding:8px 20px;
+    display:flex;align-items:center;gap:10px;
+  }
+  #ctrl span{font-size:11px;font-weight:700;color:rgba(255,255,255,.5);letter-spacing:.06em;font-family:monospace}
+  #ctrl .btn-print{
+    margin-left:auto;height:30px;padding:0 16px;border:none;border-radius:5px;
+    background:#F8C100;color:#1a1a1a;font-size:11px;font-weight:700;cursor:pointer
+  }
+  #ctrl .btn-print:hover{background:#daa900}
+
+  /* Loading */
+  #loading{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    height:60vh;gap:12px;color:#6b7280;font-size:13px
+  }
+  .spinner{
+    width:32px;height:32px;border:3px solid #e5e7eb;
+    border-top-color:#F8C100;border-radius:50%;
+    animation:spin .7s linear infinite
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Página A4 */
+  #page{
+    width:794px;margin:20px auto;background:#fff;
+    box-shadow:0 2px 16px rgba(0,0,0,.12);
+    display:none; /* visível após carregar */
+  }
+
+  /* Cabeçalho */
+  .cab{display:flex;align-items:stretch;background:#1a1a1a}
+  .cab-logo{background:#F8C100;width:64px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:12px}
+  .cab-logo svg{width:34px;height:34px}
+  .cab-txt{flex:1;padding:13px 18px;display:flex;flex-direction:column;gap:3px}
+  .cab-emp{font-size:7px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.4)}
+  .cab-titulo{font-size:15px;font-weight:700;color:#fff}
+  .cab-sub{font-size:9px;color:rgba(255,255,255,.5)}
+  .cab-dir{padding:13px 18px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;border-left:1px solid rgba(255,255,255,.1);min-width:180px}
+  .cab-cod{font-family:monospace;font-size:11px;font-weight:700;color:#F8C100;letter-spacing:.06em}
+  .cab-data{font-size:8px;color:rgba(255,255,255,.35)}
+
+  /* Filtros */
+  .filtros{background:#f9fafb;border-bottom:2px solid #F8C100;padding:7px 18px;display:flex;gap:18px;flex-wrap:wrap}
+  .f-item{display:flex;flex-direction:column;gap:1px}
+  .f-lbl{font-size:6.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af}
+  .f-val{font-size:10px;font-weight:700;color:#1a1a1a}
+
+  /* Corpo */
+  .corpo{padding:16px 18px 8px}
+
+  /* Setor */
+  .setor{margin-bottom:22px}
+  .setor-hdr{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:5px;border-bottom:2px solid #1a1a1a;margin-bottom:8px}
+  .setor-nome{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  .setor-meta{font-size:9px;color:#6b7280}
+
+  /* Tabela */
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  col.c-os  {width:72px}
+  col.c-hh  {width:54px}
+  col.c-crit{width:72px}
+  col.c-desc{} /* flex */
+  thead tr{background:#1a1a1a}
+  thead th{padding:5px 8px;text-align:left;color:#fff;font-size:7.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;overflow:hidden}
+  thead th.r{text-align:right}
+  thead th.c{text-align:center}
+  tbody tr.data{border-bottom:1px solid #f3f4f6}
+  tbody tr.data:nth-child(4n+1),
+  tbody tr.data:nth-child(4n+2){background:#fafafa}
+  tbody td{padding:6px 8px;vertical-align:top;font-size:10px;overflow:hidden}
+  .os-num{font-family:monospace;font-weight:700;white-space:nowrap;font-size:10px}
+  .os-desc{line-height:1.45;word-break:break-word}
+  .os-hh{font-family:monospace;font-weight:700;text-align:right;white-space:nowrap}
+  .badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:8px;font-weight:700;white-space:nowrap}
+
+  /* Fotos */
+  tbody tr.fotos td{padding:5px 8px 10px;background:#fafafa;border-bottom:2px solid #e5e7eb}
+  .fotos-grid{display:flex;gap:8px;flex-wrap:wrap}
+  .fotos-grid img{width:148px;height:108px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb}
+  .sem-foto{font-size:8px;color:#d1d5db;font-style:italic}
+
+  /* Rodapé */
+  .rodape{padding:7px 18px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;margin-top:4px}
+  .rodape span{font-size:7.5px;color:#9ca3af}
+
+  /* Erro */
+  #erro{display:none;text-align:center;padding:40px;color:#dc2626}
+
+  /* Print */
+  @media print{
+    body{background:#fff}
+    #ctrl{display:none!important}
+    #page{display:block!important;width:100%;margin:0;box-shadow:none}
+    .setor{page-break-inside:avoid}
+    tbody tr.fotos{page-break-inside:avoid}
+    .fotos-grid img{width:130px;height:95px}
+  }
+</style>
+</head>
+<body>
+
+<div id="ctrl">
+  <span id="ctrl-cod">Carregando...</span>
+  <button class="btn-print" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+</div>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <span>Carregando dados...</span>
+</div>
+
+<div id="erro">Erro ao carregar. Verifique o console.</div>
+
+<div id="page"></div>
+
+<script>
+// ── Config Supabase ──
+const SUPA_URL = 'https://gwejwvsmmogzdpgyaggf.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3ZWp3dnNtbW9nemRwZ3lhZ2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1NTU0NjIsImV4cCI6MjA5NTEzMTQ2Mn0.HgsOjYyHTOiCtjblADpCcwi7SNkK17jjMTdG4Z7H8Uc';
+
+async function supa(table, params) {
+  let url = SUPA_URL + '/rest/v1/' + table + '?' + params;
+  const r = await fetch(url, {
+    headers: {
+      'apikey': SUPA_KEY,
+      'Authorization': 'Bearer ' + SUPA_KEY,
+      'Content-Type': 'application/json'
+    }
+  });
+  if (!r.ok) throw new Error('Supabase ' + r.status);
+  return r.json();
+}
+
+// ── Helpers ──
+const critCor = {
+  alta:  {bg:'#fee2e2', txt:'#dc2626'},
+  media: {bg:'#fef3c7', txt:'#d97706'},
+  baixa: {bg:'#dcfce7', txt:'#16a34a'},
+};
+
+function badge(label, bg, txt) {
+  return `<span class="badge" style="background:${bg};color:${txt}">${label}</span>`;
+}
+
+function critBadge(c) {
+  const m = critCor[c];
+  if (!m) return badge(c||'—', '#f3f4f6', '#6b7280');
+  const l = c.charAt(0).toUpperCase() + c.slice(1);
+  return badge(l, m.bg, m.txt);
+}
+
+// ── Ler parâmetros da URL ──
+function getParams() {
+  const p = new URLSearchParams(window.location.search);
+  return {
+    equipe:   p.get('equipe')  || '',
+    tipos:    p.get('tipos')   ? p.get('tipos').split('|').filter(Boolean) : [],
+    crits:    p.get('crits')   ? p.get('crits').split(',').filter(Boolean) : [],
+    mo:       p.get('mo')      || '',
+    status:   p.get('status')  ? p.get('status').split(',').filter(Boolean) : [],
+    codigo:   p.get('cod')     || 'MAN-CAL-PRJSEG',
+    dt:       p.get('dt')      || '',
+    totalHH:  p.get('hh')      || '0',
+  };
+}
+
+// ── Filtro de status ──
+function matchStatus(statusOS, filtros) {
+  if (!filtros.length) return true;
+  const sl = (statusOS||'').toLowerCase();
+  return filtros.some(fs => {
+    if (fs==='encerrada')  return sl.includes('encerr');
+    if (fs==='programada') return sl.includes('program')||sl.includes('gerada')||sl===''||!sl;
+    if (fs==='andamento')  return sl.includes('andamento')||sl.includes('execu');
+    if (fs==='cancelada')  return sl.includes('cancel')||sl.includes('suspend');
+    return false;
+  });
+}
+
+// ── Carregar dados e renderizar ──
+async function main() {
+  const params = getParams();
+
+  try {
+    // Buscar OS
+    let qParams = 'select=os,desc_os,desc_servico,hh_prev_os,status_os,setor,desc_setor,proj_criticidade,proj_mo_tipo,proj_tipo_intervencao';
+    qParams += '&equipe=eq.' + encodeURIComponent(params.equipe);
+    qParams += '&tipo_atividade=neq.MCU';
+    if (params.tipos.length)
+      qParams += '&proj_tipo_intervencao=in.(' + params.tipos.map(t => '"'+t+'"').join(',') + ')';
+
+    const os = await supa('ordens_servico', qParams);
+
+    // Filtrar criticidade e MO no cliente (mais simples)
+    let lista = os.filter(o => {
+      if (params.crits.length && !params.crits.includes(o.proj_criticidade)) return false;
+      if (params.mo && o.proj_mo_tipo !== params.mo) return false;
+      if (!matchStatus(o.status_os, params.status)) return false;
+      return true;
+    });
+
+    if (!lista.length) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('erro').textContent = 'Nenhuma OS encontrada com os filtros aplicados.';
+      document.getElementById('erro').style.display = 'block';
+      return;
+    }
+
+    // Buscar fotos de todas as OS de uma vez
+    const osNums = lista.map(o => o.os).filter(Boolean);
+    let fotosMap = {};
+    if (osNums.length) {
+      const fotos = await supa('proj_os_fotos', 'select=os,url&os=in.(' + osNums.join(',') + ')');
+      fotos.forEach(f => {
+        if (!fotosMap[f.os]) fotosMap[f.os] = [];
+        fotosMap[f.os].push(f.url);
+      });
+    }
+
+    // Agrupar por setor, ordenar por criticidade
+    const critOrdem = {alta:0, media:1, baixa:2};
+    const setores = {};
+    lista.forEach(o => {
+      const s = o.desc_setor || o.setor || 'Setor não informado';
+      if (!setores[s]) setores[s] = [];
+      setores[s].push(o);
+    });
+    Object.values(setores).forEach(arr =>
+      arr.sort((a,b) => (critOrdem[a.proj_criticidade]??9) - (critOrdem[b.proj_criticidade]??9))
+    );
+
+    // Render setores
+    const setoresHTML = Object.entries(setores).map(([setor, oss]) => {
+      const hhSetor = oss.reduce((s,o) => s+(o.hh_prev_os||0), 0);
+      const rows = oss.map((o, i) => {
+        const fotos = fotosMap[o.os] || [];
+        const fotosHTML = fotos.length
+          ? `<div class="fotos-grid">${fotos.map(u=>`<img src="${u}" loading="lazy">`).join('')}</div>`
+          : `<span class="sem-foto">Nenhuma foto anexada</span>`;
+        return `
+          <tr class="data">
+            <td><span class="os-num">${o.os||'—'}</span></td>
+            <td><span class="os-desc">${o.desc_servico||o.desc_os||'—'}</span></td>
+            <td class="os-hh">${o.hh_prev_os?o.hh_prev_os+'h':'—'}</td>
+            <td style="text-align:center">${critBadge(o.proj_criticidade)}</td>
+          </tr>
+          <tr class="fotos"><td colspan="4">${fotosHTML}</td></tr>`;
+      }).join('');
+
+      return `
+        <div class="setor">
+          <div class="setor-hdr">
+            <span class="setor-nome">${setor}</span>
+            <span class="setor-meta">${oss.length} OS &nbsp;·&nbsp; ${hhSetor}h</span>
+          </div>
+          <table>
+            <colgroup>
+              <col class="c-os"><col class="c-desc"><col class="c-hh"><col class="c-crit">
+            </colgroup>
+            <thead><tr>
+              <th>OS</th><th>Descrição do Serviço</th>
+              <th class="r">HH Prev.</th><th class="c">Criticidade</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    const tiposStr  = params.tipos.length  ? params.tipos.join(', ')  : 'Todos';
+    const critsStr  = params.crits.length  ? params.crits.join(', ')  : 'Todas';
+
+    const html = `
+      <div class="cab">
+        <div class="cab-logo">
+          <svg viewBox="0 0 36 36" fill="none">
+            <circle cx="18" cy="18" r="18" fill="#1a1a1a"/>
+            <path d="M18 6C18 6 24 12 24 18C24 22 21.5 25 18 26C14.5 25 12 22 12 18C12 12 18 6 18 6Z" fill="#F8C100"/>
+            <path d="M18 14C18 14 21 17 21 20C21 22 19.8 23.5 18 24C16.2 23.5 15 22 15 20C15 17 18 14 18 14Z" fill="#fff" opacity=".25"/>
+          </svg>
+        </div>
+        <div class="cab-txt">
+          <div class="cab-emp">Clealco Açúcar e Álcool · Manutenção Industrial</div>
+          <div class="cab-titulo">Projetos de Segurança — Caldeiraria</div>
+          <div class="cab-sub">Lista de Ordens de Serviço por Setor e Criticidade</div>
+        </div>
+        <div class="cab-dir">
+          <div class="cab-cod">${params.codigo}</div>
+          <div class="cab-data">Gerado em ${params.dt}</div>
+        </div>
+      </div>
+      <div class="filtros">
+        <div class="f-item"><div class="f-lbl">Equipe</div><div class="f-val">${params.equipe}</div></div>
+        <div class="f-item"><div class="f-lbl">Tipo de Intervenção</div><div class="f-val">${tiposStr}</div></div>
+        <div class="f-item"><div class="f-lbl">Criticidade</div><div class="f-val">${critsStr}</div></div>
+        <div class="f-item" style="margin-left:auto">
+          <div class="f-lbl">Total</div>
+          <div class="f-val">${lista.length} OS · ${params.totalHH}h</div>
+        </div>
+      </div>
+      <div class="corpo">${setoresHTML}</div>
+      <div class="rodape">
+        <span>MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria</span>
+        <span style="font-family:monospace">${params.codigo}</span>
+      </div>`;
+
+    document.getElementById('page').innerHTML = html;
+    document.getElementById('page').style.display = 'block';
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('ctrl-cod').textContent = params.codigo;
+
+  } catch(e) {
+    console.error(e);
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('erro').textContent = 'Erro: ' + e.message;
+    document.getElementById('erro').style.display = 'block';
+  }
+}
+
+main();
+</script>
+</body>
+</html>
