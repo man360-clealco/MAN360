@@ -393,7 +393,6 @@ window.Modulos.cal_acomp = (() => {
     const p       = prev[item.id];
     const inicioDt= isExec||isPause ? item.iniciado_em : (p?p.inicioCalc:null);
     const fimDt   = isEnc ? item.encerrado_em : (p?p.fimCalc:null);
-    const aberto  = String(_itemAberto)===String(item.id);
 
     let rowCls='cd-svc-row';
     if(isExec)  rowCls+=' exec';
@@ -402,60 +401,75 @@ window.Modulos.cal_acomp = (() => {
     if(isInter) rowCls+=' interrompido';
     if(semPassada()) rowCls+=' sempassada';
 
-    // Setas de posição — só para ativos não encerrados
+    // Setas de posição
     const podeMover = !isEnc && !isExec;
-    const posBtn = podeMover ? `<div class="cd-pos">
-      <button class="cd-pos-btn" data-action="mover-cima" data-id="${item.id}" data-eq="${equipeId}" ${pos===0?'disabled':''}title="Subir">▲</button>
-      <button class="cd-pos-btn" data-action="mover-baixo" data-id="${item.id}" data-eq="${equipeId}" ${pos===total-1?'disabled':''}title="Descer">▼</button>
-    </div>` : `<div class="cd-pos cd-pos-empty"></div>`;
+    const posBtn = podeMover
+      ? `<div class="cd-pos">
+          <button class="cd-pos-btn" data-action="mover-cima" data-id="${item.id}" data-eq="${equipeId}" ${pos===0?'disabled':''}>▲</button>
+          <button class="cd-pos-btn" data-action="mover-baixo" data-id="${item.id}" data-eq="${equipeId}" ${pos===total-1?'disabled':''}>▼</button>
+        </div>`
+      : `<div class="cd-pos-empty"></div>`;
 
     // Datas
     const dtInicio = htmlDtHora(inicioDt, isExec||isPause?'exec':'inicio');
     const dtFim    = htmlDtHora(fimDt, 'fim');
 
-    // Ações
+    // Ações compactas — sempre visíveis
     let acoes='';
     if(isExec) {
-      acoes=`<button class="cd-act green" data-action="encerrar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-check"></i> Encerrar</button>
-        <button class="cd-act amber" data-action="pausar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-pause"></i> Pausar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
+      acoes=`
+        <button class="cd-ia green" data-action="encerrar" data-id="${item.id}" data-eq="${equipeId}" title="Encerrar"><i class="ti ti-check"></i></button>
+        <button class="cd-ia amber" data-action="pausar" data-id="${item.id}" data-eq="${equipeId}" title="Pausar"><i class="ti ti-player-pause"></i></button>
+        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
+        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>`;
     } else if(isPause) {
-      acoes=`<button class="cd-act green" data-action="retomar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Retomar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
+      acoes=`
+        <button class="cd-ia green" data-action="retomar" data-id="${item.id}" data-eq="${equipeId}" title="Retomar"><i class="ti ti-player-play"></i></button>
+        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
+        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>`;
     } else if(isEnc) {
-      if(semPassada()) acoes=`<button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>`;
+      acoes=`
+        <button class="cd-ia blue" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}" title="Reabrir"><i class="ti ti-rotate-clockwise"></i></button>`;
     } else if(isInter) {
-      acoes=`<button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
-        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
+      acoes=`
+        <button class="cd-ia green" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}" title="Reabrir"><i class="ti ti-rotate-clockwise"></i></button>
+        <button class="cd-ia ghost" data-action="remover" data-id="${item.id}" title="Remover"><i class="ti ti-x"></i></button>`;
     } else {
-      acoes=`<button class="cd-act green" data-action="iniciar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Iniciar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>
-        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
+      acoes=`
+        <button class="cd-ia green" data-action="iniciar" data-id="${item.id}" data-eq="${equipeId}" title="Iniciar"><i class="ti ti-player-play"></i></button>
+        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
+        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>
+        <button class="cd-ia ghost" data-action="remover" data-id="${item.id}" title="Remover"><i class="ti ti-x"></i></button>`;
     }
 
-    const btnAcoes = acoes
-      ? `<button class="cd-btn-acoes" onclick="(function(e){e.stopPropagation();window._manToggleItem(${item.id});})(event)" title="Ações"><i class="ti ti-chevron-down" style="font-size:11px;transition:transform .2s${aberto?';transform:rotate(180deg)':''}"></i></button>`
-      : '';
+    // Badge status inline
+    let statusBadge='';
+    if(isExec)  statusBadge='<span class="cd-st-badge exec"><span class="cd-exec-dot"></span>Em exec.</span>';
+    if(isPause) statusBadge='<span class="cd-st-badge pause">⏸ Pausado</span>';
+    if(isInter) statusBadge='<span class="cd-st-badge inter">⚠ '+( item.obs||'Interrompido')+'</span>';
+
     return `<div class="${rowCls}" data-id="${item.id}">
       <div class="cd-svc-row-inner">
         ${posBtn}
         <div class="cd-svc-body">
-          <span class="cd-svc-os">${item.os||'S/N'}</span>
-          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-          ${badgeTipo(tipo)}
+          ${statusBadge}
+          <div class="cd-svc-line1">
+            <span class="cd-svc-os">${item.os||'S/N'}</span>
+            <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
+            ${badgeTipo(tipo)}
+          </div>
+          <div class="cd-svc-line2">
+            <div class="cd-svc-datas-inline">
+              ${dtInicio}
+              ${dtFim}
+            </div>
+            <div class="cd-ia-row">${acoes}</div>
+          </div>
         </div>
-        <div class="cd-svc-datas">
-          ${dtInicio}
-          ${dtFim}
-        </div>
-        ${btnAcoes}
       </div>
-      ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
     </div>`;
   }
+
 
   /* ── Fila de uma equipe ── */
   function htmlFila(equipe) {
@@ -1186,16 +1200,33 @@ window.Modulos.cal_acomp = (() => {
 .cd-pos-btn:disabled{opacity:.2;cursor:not-allowed;}
 .cd-btn-acoes{height:32px;width:32px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#9ca3af;flex-shrink:0;border-left:1px solid var(--border);}
 .cd-btn-acoes:hover{background:#f3f4f6;color:var(--dark1,#1e1e1e);}
-.cd-svc-body{display:flex;align-items:center;gap:7px;padding:8px 10px;flex:1;min-width:0;}
-.cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:58px;font-variant-numeric:tabular-nums;}
-.cd-svc-desc{font-size:10px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cd-svc-body{display:flex;flex-direction:column;gap:3px;padding:7px 10px;flex:1;min-width:0;}
+.cd-svc-line1{display:flex;align-items:center;gap:6px;}
+.cd-svc-line2{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:54px;font-variant-numeric:tabular-nums;}
+.cd-svc-desc{font-size:10px;color:#6b7280;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cd-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;flex-shrink:0;}
 .cd-eq-tag{font-size:8px;padding:1px 5px;border-radius:3px;background:#f3f4f6;color:#9ca3af;flex-shrink:0;}
-.cd-svc-datas{display:flex;flex-direction:column;gap:2px;align-items:flex-end;padding:6px 10px;flex-shrink:0;min-width:120px;}
+.cd-svc-datas-inline{display:flex;gap:8px;align-items:center;flex-shrink:0;}
 .cd-dt{font-size:9px;color:#374151;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .cd-dt-vazio{font-size:9px;color:#d1d5db;}
-.cd-dt-motivo{font-size:8px;color:var(--amber);max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cd-svc-acoes{display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px 8px 36px;border-top:1px solid var(--border);background:#f9fafb;}
+.cd-dt-motivo{font-size:8px;color:var(--amber);}
+/* Badges de status inline */
+.cd-st-badge{font-size:8px;font-weight:600;display:flex;align-items:center;gap:3px;margin-bottom:1px;}
+.cd-st-badge.exec{color:#0891b2;}
+.cd-st-badge.pause{color:var(--amber);}
+.cd-st-badge.inter{color:var(--amber);}
+.cd-exec-dot{width:5px;height:5px;border-radius:50%;background:#0891b2;animation:cd-pulse 1.5s infinite;}
+/* Botões de ação inline compactos */
+.cd-ia-row{display:flex;gap:3px;flex-shrink:0;}
+.cd-ia{width:28px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;padding:0;flex-shrink:0;}
+.cd-ia i{font-size:13px;}
+.cd-ia.green{background:#dcfce7;border-color:#86efac;color:#16a34a;}
+.cd-ia.amber{background:#fef3c7;border-color:#fcd34d;color:#d97706;}
+.cd-ia.blue{background:#dbeafe;border-color:#93c5fd;color:#2563eb;}
+.cd-ia.red{background:#fee2e2;border-color:#fca5a5;color:#dc2626;}
+.cd-ia.ghost{background:transparent;border-color:var(--border);color:#9ca3af;}
+/* Compatibilidade — manter .cd-act para grupos */
 .cd-act{height:24px;padding:0 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg);font-family:var(--font);font-size:9px;font-weight:600;color:#374151;cursor:pointer;display:flex;align-items:center;gap:3px;white-space:nowrap;}
 .cd-act i{font-size:10px;}
 .cd-act.green{background:#dcfce7;border-color:#86efac;color:#16a34a;}
