@@ -437,16 +437,18 @@ window.Modulos.cal_acomp = (() => {
     }
 
     return `<div class="${rowCls}" data-id="${item.id}">
-      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
+      <div class="cd-svc-row-inner">
         ${posBtn}
-        <div class="cd-svc-body">
-          <span class="cd-svc-os">${item.os||'S/N'}</span>
-          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-          ${badgeTipo(tipo)}
-        </div>
-        <div class="cd-svc-datas">
-          ${dtInicio}
-          ${dtFim}
+        <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
+          <div class="cd-svc-body">
+            <span class="cd-svc-os">${item.os||'S/N'}</span>
+            <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
+            ${badgeTipo(tipo)}
+          </div>
+          <div class="cd-svc-datas">
+            ${dtInicio}
+            ${dtFim}
+          </div>
         </div>
       </div>
       ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
@@ -962,31 +964,70 @@ window.Modulos.cal_acomp = (() => {
       const cart=o.querySelector('#mos-cart').value;
       const busca=o.querySelector('#mos-busca').value.trim();
       const ano=iniSem(sem).getFullYear();
+      const res=o.querySelector('#mos-resultados');
+      res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Buscando...</div>';
 
-      let q=db.from('ordens_servico').select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe').like('equipe','CAL%').limit(50);
-      if(cart) q=q.eq('equipe',cart);
-      if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
-      else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
-      if(busca) {
-        const num=busca.replace(/^0+/,'');
-        if(/^\d+$/.test(num)) q=q.eq('os',num);
-        else q=q.ilike('desc_servico','%'+busca+'%');
+      let dados=[];
+      const numBusca = busca.replace(/^0+/,'');
+      const ehNumero = busca && /^[0-9]+$/.test(numBusca);
+
+      if(ehNumero) {
+        // Busca por número de OS — geral em todas as CAL
+        const {data}=await db.from('ordens_servico')
+          .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
+          .like('equipe','CAL%').eq('os',numBusca).limit(20);
+        dados=data||[];
+      } else if(busca) {
+        // Busca por texto parcial — geral em todas as CAL
+        let q=db.from('ordens_servico')
+          .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
+          .like('equipe','CAL%').ilike('desc_servico','%'+busca+'%').limit(30);
+        if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
+        else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
+        const {data}=await q;
+        dados=data||[];
+      } else {
+        // Sem texto — usa programação da semana+carteira selecionada
+        let q=db.from('programacao_semanal')
+          .select('os,cod_servico,desc_servico,hh_previsto,equipe')
+          .eq('semana',sem).eq('ano',ano).like('equipe','CAL%');
+        if(cart) q=q.eq('equipe',cart);
+        const {data:progData}=await q.limit(100);
+        dados=(progData||[]).map(p=>({
+          os:p.os, cod_servico:p.cod_servico,
+          desc_servico:p.desc_servico,
+          hh_prev_servico:p.hh_previsto,
+          tipo_atividade:'PRG', equipe:p.equipe
+        }));
       }
 
-      const {data}=await q;
-      const res=o.querySelector('#mos-resultados');
-      if(!data||!data.length){res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Nenhuma OS encontrada</div>';return;}
-      res.innerHTML=data.map(r=>`<div class="cd-os-result" data-os="${r.os}" data-cod="${r.cod_servico||''}" data-desc="${(r.desc_servico||'').replace(/"/g,'&quot;')}" data-hh="${r.hh_prev_servico||0}" data-tipo="${r.tipo_atividade==='MCU'?'mcu':'programado'}">
-        <span class="cd-os-result-num">${r.os}</span>
+      if(!dados.length){
+        res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Nenhuma OS encontrada</div>';
+        return;
+      }
+
+      res.innerHTML=dados.map(r=>`<div class="cd-os-result"
+        data-os="${r.os||''}"
+        data-cod="${r.cod_servico||''}"
+        data-desc="${(r.desc_servico||'').replace(/"/g,'&quot;')}"
+        data-hh="${r.hh_prev_servico||0}"
+        data-tipo="${r.tipo_atividade==='MCU'?'mcu':'programado'}"
+        data-semana="${sem}">
+        <span class="cd-os-result-num">${r.os||'—'}</span>
         <span class="cd-os-result-desc">${r.desc_servico||'—'}</span>
         <span class="cd-os-result-hh">${r.hh_prev_servico||0}h</span>
       </div>`).join('');
+
       res.querySelectorAll('.cd-os-result').forEach(row=>{
         row.addEventListener('click',async()=>{
-          const {os,cod,desc,hh,tipo:t}=row.dataset;
-          const semBuscada=parseInt(document.getElementById('mos-sem').value)||_sem;
-          const tipoFinal = semBuscada < _sem ? 'rep' : t;
-          await inserirNaFila(equipeId,{os,cod_servico:cod||null,desc_servico:desc,hh_previsto:parseFloat(hh)||null,tipo:tipoFinal,status:'pendente',vinculado:true},'fim');
+          const rds=row.dataset;
+          const semBuscada=parseInt(rds.semana);
+          const tipoFinal=semBuscada<_sem?'rep':rds.tipo;
+          await inserirNaFila(equipeId,{
+            os:rds.os||null, cod_servico:rds.cod||null,
+            desc_servico:rds.desc, hh_previsto:parseFloat(rds.hh)||null,
+            tipo:tipoFinal, status:'pendente', vinculado:!!rds.os
+          },'fim');
           o.remove(); await recarregarDados();
         });
       });
@@ -1135,7 +1176,8 @@ window.Modulos.cal_acomp = (() => {
 .cd-svc-row.encerrado{background:#f0fdf4;opacity:.65;}
 .cd-svc-row.interrompido{background:#fef9ee;}
 .cd-svc-row.sempassada{filter:grayscale(.4);}
-.cd-svc-main{display:flex;align-items:stretch;cursor:pointer;}
+.cd-svc-row-inner{display:flex;align-items:stretch;}
+.cd-svc-main{display:flex;align-items:stretch;cursor:pointer;flex:1;}
 .cd-svc-main:hover{background:rgba(0,0,0,.02);}
 .cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 6px;border-right:1px solid var(--border);justify-content:center;background:#fafafa;flex-shrink:0;}
 .cd-pos-empty{width:32px;background:#fafafa;border-right:1px solid var(--border);}
@@ -1196,7 +1238,7 @@ window.Modulos.cal_acomp = (() => {
 .cd-os-result:hover{background:#fffbeb;}
 .cd-os-result:last-child{border-bottom:none;}
 .cd-os-result-num{font-weight:700;color:#374151;flex-shrink:0;width:70px;}
-.cd-os-result-desc{flex:1;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cd-os-result-desc{flex:1;color:#6b7280;white-space:normal;line-height:1.3;word-break:break-word;}
 .cd-os-result-hh{font-size:10px;color:#9ca3af;flex-shrink:0;}
 .cd-tipo-opts{display:flex;gap:4px;}
 .cd-tipo-btn{flex:1;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
