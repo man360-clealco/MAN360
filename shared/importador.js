@@ -158,6 +158,42 @@ async function importarProgSemanal(rows, wb) {
   };
 }
 
+/* ── Importar registros já parseados (PDF ou outro formato) ── */
+async function importarRegistrosProgSemanal(registros, semana, ano, dataIni, dataFim) {
+  if (!registros.length) return { ok: false, msg: '0 serviços encontrados no PDF' };
+  if (!semana || !ano)   return { ok: false, msg: 'Semana/ano não identificados no PDF' };
+
+  const db = getDB();
+
+  // Verificar duplicidade
+  const { count: jaExiste } = await dbCount('programacao_semanal', [
+    ['semana', 'eq', semana], ['ano', 'eq', ano],
+  ]);
+  if (jaExiste > 0) {
+    const ok = confirm(
+      'Semana ' + semana + '/' + ano + ' já importada (' + jaExiste + ' registros).\nSubstituir?'
+    );
+    if (!ok) return { ok: false, msg: 'Cancelado' };
+    await dbDelete('programacao_semanal', [['semana', semana], ['ano', ano]]);
+  }
+
+  const limpos = registros.map(r => ({
+    ...r,
+    cod_servico:  r.cod_servico || '?',
+    desc_servico: r.desc_servico || '',
+  }));
+
+  const { count, error } = await dbUpsert('programacao_semanal', limpos, 'os,desc_servico,equipe,semana,ano');
+  if (error) return { ok: false, msg: 'Erro: ' + error.message };
+
+  const pendentes = limpos.filter(r => r.cod_servico === '?').length;
+  return {
+    ok: true,
+    msg: 'OK (PDF) . ' + count + ' serviços (Sem ' + semana + '/' + ano + ') . ' + pendentes + ' aguardando importação de OS',
+    semana, ano, dataIni, dataFim,
+  };
+}
+
 /* ── Apontamentos ────────────────────────────────────── */
 async function importarApontamento(rows) {
   const regs = Parsers.parseApontamento(rows);
