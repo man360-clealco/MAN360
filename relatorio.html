@@ -6,47 +6,19 @@
 <title>Relatório — Projetos de Segurança</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#f4f4f5;min-height:100vh}
-
-  /* Barra de controle — some ao imprimir */
-  #ctrl{
-    position:fixed;top:0;left:0;right:0;z-index:99;
-    background:#1a1a1a;padding:8px 20px;
-    display:flex;align-items:center;gap:10px;
-    height:46px;
-  }
-  /* Empurrar conteúdo abaixo da barra fixa */
-  #page-wrap{margin-top:46px;}
+  body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#f4f4f5}
+  #ctrl{position:fixed;top:0;left:0;right:0;z-index:99;background:#1a1a1a;padding:8px 20px;display:flex;align-items:center;gap:10px;height:46px}
   #ctrl span{font-size:11px;font-weight:700;color:rgba(255,255,255,.5);letter-spacing:.06em;font-family:monospace}
-  #ctrl .btn-print{
-    margin-left:auto;height:30px;padding:0 16px;border:none;border-radius:5px;
-    background:#F8C100;color:#1a1a1a;font-size:11px;font-weight:700;cursor:pointer
-  }
-  #ctrl .btn-print:hover{background:#daa900}
-
-  /* Loading */
-  #loading{
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    height:60vh;gap:12px;color:#6b7280;font-size:13px
-  }
-  .spinner{
-    width:32px;height:32px;border:3px solid #e5e7eb;
-    border-top-color:#F8C100;border-radius:50%;
-    animation:spin .7s linear infinite
-  }
+  #ctrl .btn-print{height:30px;padding:0 16px;border:none;border-radius:5px;background:#F8C100;color:#1a1a1a;font-size:11px;font-weight:700;cursor:pointer;display:none}
+  #page-wrap{margin-top:46px}
+  #loading{display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;gap:12px;color:#6b7280;font-size:13px}
+  .spinner{width:32px;height:32px;border:3px solid #e5e7eb;border-top-color:#F8C100;border-radius:50%;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
-
-  /* Página A4 */
-  #page{
-    width:794px;margin:20px auto 40px;background:#fff;
-    box-shadow:0 2px 16px rgba(0,0,0,.12);
-    display:none;
-  }
-
-  /* Cabeçalho */
+  #page{width:794px;margin:20px auto 40px;background:#fff;box-shadow:0 2px 16px rgba(0,0,0,.12);display:none}
+  #erro{display:none;text-align:center;padding:40px;color:#dc2626;font-size:14px}
   .cab{display:flex;align-items:stretch;background:#1a1a1a}
-  .cab-logo{background:#F8C100;width:64px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:12px}
-  .cab-logo svg{width:34px;height:34px}
+  .cab-logo{background:#F8C100;width:64px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:10px}
+  .cab-logo img{width:44px;height:44px;object-fit:contain}
   .cab-txt{flex:1;padding:13px 18px;display:flex;flex-direction:column;gap:3px}
   .cab-emp{font-size:7px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.4)}
   .cab-titulo{font-size:15px;font-weight:700;color:#fff}
@@ -54,71 +26,56 @@
   .cab-dir{padding:13px 18px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;border-left:1px solid rgba(255,255,255,.1);min-width:180px}
   .cab-cod{font-family:monospace;font-size:11px;font-weight:700;color:#F8C100;letter-spacing:.06em}
   .cab-data{font-size:8px;color:rgba(255,255,255,.35)}
-
-  /* Filtros */
   .filtros{background:#f9fafb;border-bottom:2px solid #F8C100;padding:7px 18px;display:flex;gap:18px;flex-wrap:wrap}
   .f-item{display:flex;flex-direction:column;gap:1px}
   .f-lbl{font-size:6.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af}
   .f-val{font-size:10px;font-weight:700;color:#1a1a1a}
-
-  /* Corpo */
   .corpo{padding:16px 18px 8px}
-
-  /* Setor */
   .setor{margin-bottom:22px}
   .setor-hdr{display:flex;align-items:baseline;justify-content:space-between;padding-bottom:5px;border-bottom:2px solid #1a1a1a;margin-bottom:8px}
   .setor-nome{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
   .setor-meta{font-size:9px;color:#6b7280}
-
-  /* Tabela */
   table{width:100%;border-collapse:collapse;table-layout:fixed}
-  col.c-os  {width:72px}
-  col.c-hh  {width:54px}
-  col.c-crit{width:72px}
-  col.c-desc{} /* flex */
+  col.c-os{width:72px} col.c-hh{width:54px} col.c-crit{width:72px}
   thead tr{background:#1a1a1a}
   thead th{padding:5px 8px;text-align:left;color:#fff;font-size:7.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;overflow:hidden}
-  thead th.r{text-align:right}
-  thead th.c{text-align:center}
+  thead th.r{text-align:right} thead th.c{text-align:center}
   tbody tr.data{border-bottom:1px solid #f3f4f6}
-  tbody tr.data:nth-child(4n+1),
-  tbody tr.data:nth-child(4n+2){background:#fafafa}
+  tbody tr.data:nth-child(4n+1),tbody tr.data:nth-child(4n+2){background:#fafafa}
   tbody td{padding:6px 8px;vertical-align:top;font-size:10px;overflow:hidden}
   .os-num{font-family:monospace;font-weight:700;white-space:nowrap;font-size:10px}
   .os-desc{line-height:1.45;word-break:break-word}
   .os-hh{font-family:monospace;font-weight:700;text-align:right;white-space:nowrap}
   .badge{display:inline-block;padding:2px 7px;border-radius:3px;font-size:8px;font-weight:700;white-space:nowrap}
-
-  /* Fotos */
   tbody tr.fotos td{padding:5px 8px 10px;background:#fafafa;border-bottom:2px solid #e5e7eb}
   .fotos-grid{display:flex;gap:8px;flex-wrap:wrap}
-  .fotos-grid img{width:148px;height:108px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb;background:#f3f4f6}
-  .fotos-grid img.erro{display:flex;align-items:center;justify-content:center;background:#f3f4f6;border:1px dashed #d1d5db}
+  .fotos-grid img{width:148px;height:108px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb}
   .sem-foto{font-size:8px;color:#d1d5db;font-style:italic}
-
-  /* Rodapé */
   .rodape{padding:7px 18px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;margin-top:4px}
   .rodape span{font-size:7.5px;color:#9ca3af}
-
-  /* Erro */
-  #erro{display:none;text-align:center;padding:40px;color:#dc2626}
-
-  /* Print */
   @media print{
-    html,body{background:#fff!important;margin:0!important;padding:0!important;height:auto!important}
-    #ctrl,#loading,#erro{display:none!important}
+    body{background:#fff!important;margin:0!important;padding:0!important}
+    #ctrl{display:none!important}
     #page-wrap{margin-top:0!important;padding:0!important}
-    #page{
-      display:block!important;
-      width:100%!important;
-      margin:0!important;
-      padding:0!important;
-      box-shadow:none!important;
-      position:static!important;
-      top:0!important;left:0!important;
-    }
+    #loading,#erro{display:none!important}
+    #page{display:block!important;width:100%!important;margin:0!important;padding:0!important;box-shadow:none!important}
     .setor{page-break-inside:avoid}
     tbody tr.fotos{page-break-inside:avoid}
     .fotos-grid img{width:130px;height:95px}
     @page{size:A4;margin:8mm}
   }
+</style>
+</head>
+<body>
+<div id="ctrl">
+  <span id="ctrl-cod">Carregando...</span>
+  <button class="btn-print" id="btn-print" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+</div>
+<div id="page-wrap">
+  <div id="loading"><div class="spinner"></div><span>Carregando dados...</span></div>
+  <div id="erro"></div>
+  <div id="page"></div>
+</div>
+<script src="relatorio.js"></script>
+</body>
+</html>
