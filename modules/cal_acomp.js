@@ -449,6 +449,7 @@ window.Modulos.cal_acomp = (() => {
             ${dtInicio}
             ${dtFim}
           </div>
+          <div class="cd-svc-more" title="Opções">⋯</div>
         </div>
       </div>
       ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
@@ -727,16 +728,6 @@ window.Modulos.cal_acomp = (() => {
     const bv=c.querySelector('#btn-nova-equipe-vazio');
     if(bv)bv.addEventListener('click',()=>abrirModalEquipe(null));
 
-    // Toggle item — delegação separada para não interferir com toggle-eq
-    c.querySelectorAll('.cd-toggle-item').forEach(el=>{
-      el.addEventListener('click',e=>{
-        e.stopPropagation();
-        const iid=el.dataset.id?parseInt(el.dataset.id):null;
-        _itemAberto=String(_itemAberto)===String(iid)?null:iid;
-        renderizar();
-      });
-    });
-
     c.querySelectorAll('[data-action]').forEach(btn=>{
       btn.addEventListener('click',e=>{
         e.stopPropagation();
@@ -972,16 +963,18 @@ window.Modulos.cal_acomp = (() => {
       const ehNumero = busca && /^[0-9]+$/.test(numBusca);
 
       if(ehNumero) {
-        // Busca por número de OS — geral em todas as CAL
+        // Busca por número de OS — geral em todas as CAL, ignora filtros de semana/carteira
         const {data}=await db.from('ordens_servico')
           .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
-          .like('equipe','CAL%').eq('os',numBusca).limit(20);
+          .like('equipe','CAL%').eq('os',numBusca)
+          .not('status_os','ilike','%encerr%').limit(20);
         dados=data||[];
       } else if(busca) {
-        // Busca por texto parcial — geral em todas as CAL
+        // Busca por texto — geral em todas as CAL, ignora filtros de semana/carteira
         let q=db.from('ordens_servico')
           .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
-          .like('equipe','CAL%').ilike('desc_servico','%'+busca+'%').limit(30);
+          .like('equipe','CAL%').ilike('desc_servico','%'+busca+'%')
+          .not('status_os','ilike','%encerr%').limit(30);
         if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
         else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
         const {data}=await q;
@@ -1177,13 +1170,15 @@ window.Modulos.cal_acomp = (() => {
 .cd-svc-row.interrompido{background:#fef9ee;}
 .cd-svc-row.sempassada{filter:grayscale(.4);}
 .cd-svc-row-inner{display:flex;align-items:stretch;}
-.cd-svc-main{display:flex;align-items:stretch;cursor:pointer;flex:1;}
+.cd-svc-main{display:flex;align-items:center;cursor:pointer;flex:1;min-width:0;}
 .cd-svc-main:hover{background:rgba(0,0,0,.02);}
-.cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 6px;border-right:1px solid var(--border);justify-content:center;background:#fafafa;flex-shrink:0;}
-.cd-pos-empty{width:32px;background:#fafafa;border-right:1px solid var(--border);}
-.cd-pos-btn{width:18px;height:13px;border:1px solid var(--border);border-radius:2px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;padding:0;}
-.cd-pos-btn:not(:disabled):hover{background:var(--dark1,#1e1e1e);color:#fff;border-color:var(--dark1,#1e1e1e);}
-.cd-pos-btn:disabled{opacity:.3;cursor:not-allowed;}
+.cd-svc-main:hover .cd-svc-more{opacity:1;}
+.cd-pos{display:flex;flex-direction:column;gap:2px;padding:0 5px;justify-content:center;flex-shrink:0;border-right:1px solid var(--border);background:#fafafa;}
+.cd-pos-empty{width:28px;background:#fafafa;border-right:1px solid var(--border);}
+.cd-pos-btn{width:20px;height:16px;border:none;border-radius:3px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;color:#d1d5db;padding:0;}
+.cd-pos-btn:not(:disabled):hover{background:#e5e7eb;color:#374151;}
+.cd-pos-btn:disabled{opacity:.2;cursor:not-allowed;}
+.cd-svc-more{flex-shrink:0;width:24px;height:100%;display:flex;align-items:center;justify-content:center;font-size:16px;color:#9ca3af;opacity:0;transition:opacity .15s;cursor:pointer;padding:0 4px;}
 .cd-svc-body{display:flex;align-items:center;gap:7px;padding:8px 10px;flex:1;min-width:0;}
 .cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:58px;font-variant-numeric:tabular-nums;}
 .cd-svc-desc{font-size:10px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1261,6 +1256,19 @@ window.Modulos.cal_acomp = (() => {
 
   async function init(container) {
     _container=container; injetarCSS();
+
+    // ── Delegação permanente de eventos — roda uma vez, nunca perde com rerenders ──
+    _container.addEventListener('click', function(e) {
+      // Toggle item (área clicável da linha de serviço)
+      const svcMain = e.target.closest('.cd-toggle-item');
+      if (svcMain && !e.target.closest('[data-action]')) {
+        e.stopPropagation();
+        const iid = svcMain.dataset.id ? parseInt(svcMain.dataset.id) : null;
+        _itemAberto = String(_itemAberto) === String(iid) ? null : iid;
+        renderizar();
+        return;
+      }
+    });
     _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
     try { await carregarTudo(); renderizar(); }
     catch(e) {
