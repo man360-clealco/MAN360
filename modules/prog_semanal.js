@@ -998,7 +998,7 @@ window.Modulos.prog_semanal = {
           const tC2 = r.nSems>=3?'#dc2626':r.nSems===2?'#92400e':'#6b7280';
           html += '<div style="display:grid;grid-template-columns:56px 1fr auto auto;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px">';
           html += '<span style="font-weight:700;color:#374151">'+r.os+'</span>';
-          html += '<span style="color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+r.desc+'">'+r.desc+'</span>';
+          html += '<span style="color:#6b7280;word-break:break-word;white-space:normal;line-height:1.4">'+r.desc+'</span>';
           html += '<span style="color:#9ca3af;font-size:10px;white-space:nowrap">'+r.hh+'h</span>';
           html += '<span style="padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;white-space:nowrap;background:'+bgC+';color:'+tC2+'">Desde Sem '+r.desde+' ('+r.nSems+' sem.)</span>';
           html += '</div>';
@@ -1183,11 +1183,11 @@ window.Modulos.prog_semanal = {
         const pct = tipo === 'mcu' ? null : (r.hhPrev > 0 ? Math.round(r.hhReal/r.hhPrev*100) : (r.hhReal > 0 ? null : 0));
         const pctColor = pct === null ? '#9ca3af' : pct >= 75 ? G : R;
         const pctTxt   = pct === null ? '—' : pct + '%';
-        const descCurta = r.desc.length > 35 ? r.desc.slice(0,34)+'…' : r.desc;
+        const descCurta = r.desc; // Mostrar descrição completa
         const bg = i % 2 === 0 ? '' : 'background:#f9fafb';
         html += '<tr style="border-bottom:1px solid var(--border);'+bg+'">';
         html += '<td style="padding:6px 6px;font-weight:700;color:#374151">'+r.os+'</td>';
-        html += '<td style="padding:6px 6px;color:#6b7280;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+r.desc+'">'+descCurta+'</td>';
+        html += '<td style="padding:6px 6px;color:#6b7280;word-break:break-word;white-space:normal;line-height:1.4">'+descCurta+'</td>';
         html += '<td style="padding:6px 6px;text-align:right;color:#374151;white-space:nowrap">'+( r.hhReal ? Math.round(r.hhReal*10)/10 : '0' )+'h</td>';
         html += '<td style="padding:6px 6px;text-align:right;font-weight:700;color:'+pctColor+';white-space:nowrap">'+pctTxt+'</td>';
         html += '</tr>';
