@@ -742,6 +742,10 @@ window.Modulos.proj_caldeiraria = (() => {
         for (const f of files) await uploadFoto(os,f);
       });
     });
+
+    /* Relatório PDF */
+    const btnRel = c.querySelector('#btn-relatorio');
+    if (btnRel) btnRel.addEventListener('click', ()=>gerarRelatorio());
   }
 
   /* ══════════════════════════════════════
