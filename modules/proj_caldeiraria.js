@@ -878,7 +878,7 @@ window.Modulos.proj_caldeiraria = (() => {
       status: _filtStatus.join(','),
       cod:    codigo,
       dt:     dtStr,
-      hh:     totalHH,
+      hh:     Math.round(totalHH),
     });
 
     window.open('relatorio.html?' + params.toString(), '_blank');
