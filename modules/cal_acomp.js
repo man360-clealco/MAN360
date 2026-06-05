@@ -735,9 +735,15 @@ window.Modulos.cal_acomp = (() => {
         const {action,id,eq}=btn.dataset;
         const iid=id?parseInt(id):null; const ieq=eq?parseInt(eq):null;
         switch(action){
-          case 'toggle-eq':
-            _itemAberto=String(_itemAberto)===String(eq)?null:eq;
-            renderizar(); break;
+          case 'toggle-eq': {
+            // Só fechar/abrir o board se o clique NÃO veio de dentro do cd-board-fila
+            const dentroDaFila = e.target.closest('.cd-board-fila');
+            if(!dentroDaFila) {
+              _itemAberto=String(_itemAberto)===String(eq)?null:eq;
+              renderizar();
+            }
+            break;
+          }
 
           case 'iniciar':       acaoIniciar(iid); break;
           case 'encerrar':      acaoEncerrar(iid); break;
