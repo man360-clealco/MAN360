@@ -48,11 +48,10 @@ window.Modulos.proj_caldeiraria = (() => {
         const sl = (o.status_os||'').toLowerCase();
         const match = _filtStatus.some(fs=>{
           if (fs==='encerrada')    return sl.includes('encerr');
-          if (fs==='aberta')       return sl.includes('gerada')||sl.includes('aberta');
-          if (fs==='andamento')    return sl.includes('andamento');
-          if (fs==='cancelada')    return sl.includes('cancel');
-          if (fs==='suspensa')     return sl.includes('suspend');
-          return false;
+          if (fs==='programada')   return sl.includes('program')||sl.includes('gerada')||sl.includes('aberta')||sl===''||!sl;
+          if (fs==='andamento')    return sl.includes('andamento')||sl.includes('execu');
+          if (fs==='cancelada')    return sl.includes('cancel')||sl.includes('suspend');
+          return sl.includes(fs);
         });
         if (!match) return false;
       }
@@ -574,7 +573,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const critOpts=[['alta','Alta','#dc2626','#fee2e2'],['media','Média','#d97706','#fef3c7'],['baixa','Baixa','#16a34a','#dcfce7']];
     const statusOpts=[
       ['encerrada','Encerrada','#16a34a','#dcfce7'],
-      ['aberta','Aberta','#d97706','#fef3c7'],
+      ['programada','Programada','#d97706','#fef3c7'],
       ['andamento','Em andamento','#2563eb','#dbeafe'],
       ['cancelada','Cancelada','#dc2626','#fee2e2'],
     ];
@@ -842,13 +841,12 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   function statusLabel(s) {
-    if (!s) return {l:'—',c:'#9ca3af',b:'#f3f4f6'};
+    if (!s) return {l:'Programada',c:'#d97706',b:'#fef3c7'};
     const sl = s.toLowerCase();
-    if (sl.includes('encerr'))    return {l:'Encerrada',  c:'#16a34a',b:'#dcfce7'};
-    if (sl.includes('andamento')) return {l:'Em andamento',c:'#2563eb',b:'#dbeafe'};
-    if (sl.includes('gerada')||sl.includes('aberta')) return {l:'Aberta',c:'#d97706',b:'#fef3c7'};
-    if (sl.includes('cancel'))    return {l:'Cancelada',  c:'#dc2626',b:'#fee2e2'};
-    if (sl.includes('suspend'))   return {l:'Suspensa',   c:'#7c3aed',b:'#ede9fe'};
+    if (sl.includes('encerr'))                              return {l:'Encerrada',    c:'#16a34a',b:'#dcfce7'};
+    if (sl.includes('andamento')||sl.includes('execu'))     return {l:'Em andamento', c:'#2563eb',b:'#dbeafe'};
+    if (sl.includes('program')||sl.includes('gerada')||sl.includes('aberta')) return {l:'Programada',c:'#d97706',b:'#fef3c7'};
+    if (sl.includes('cancel')||sl.includes('suspend'))      return {l:'Cancelada',    c:'#dc2626',b:'#fee2e2'};
     return {l:s,c:'#6b7280',b:'#f3f4f6'};
   }
 
@@ -1027,12 +1025,32 @@ window.Modulos.proj_caldeiraria = (() => {
 </body>
 </html>`;
 
-    // Abrir em nova aba via document.write (evita CSP do GitHub Pages)
-    const win = window.open('', '_blank');
-    if (!win) { alert('Popup bloqueado. Permita popups para este site.'); return; }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+    // Criar iframe oculto na própria página e imprimir — evita CSP
+    let frame = document.getElementById('_relatorio_frame');
+    if (frame) frame.remove();
+    frame = document.createElement('iframe');
+    frame.id = '_relatorio_frame';
+    frame.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:99999;background:#fff';
+    document.body.appendChild(frame);
+
+    // Botão fechar no topo do frame
+    const fechar = document.createElement('div');
+    fechar.style.cssText = 'position:fixed;top:10px;right:16px;z-index:100000;display:flex;gap:8px';
+    fechar.innerHTML = `
+      <button onclick="document.getElementById('_relatorio_frame').remove();this.parentNode.remove()"
+        style="height:34px;padding:0 14px;border:none;border-radius:6px;background:#6b7280;color:#fff;font-size:12px;font-weight:700;cursor:pointer">
+        ✕ Fechar
+      </button>
+      <button onclick="document.getElementById('_relatorio_frame').contentWindow.print()"
+        style="height:34px;padding:0 16px;border:none;border-radius:6px;background:#F8C100;color:#1a1a1a;font-size:12px;font-weight:700;cursor:pointer">
+        🖨 Imprimir / Salvar PDF
+      </button>`;
+    document.body.appendChild(fechar);
+
+    const doc = frame.contentDocument || frame.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
   }
 
   /* ══════════════════════════════════════
