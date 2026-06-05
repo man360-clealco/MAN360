@@ -27,6 +27,7 @@ window.Modulos.proj_caldeiraria = (() => {
   let _filtCrit   = [];
   let _filtMO     = '';
   let _filtSetor  = '';
+  let _filtStatus = [];  // [] = todos
   let _dtInicio   = '';
   let _nEqProp    = 1;
   let _nEqTerc    = 0;
@@ -43,6 +44,18 @@ window.Modulos.proj_caldeiraria = (() => {
       if (_filtCrit.length && !_filtCrit.includes(o.proj_criticidade)) return false;
       if (_filtMO && o.proj_mo_tipo !== _filtMO) return false;
       if (_filtSetor && (o.desc_setor||o.setor) !== _filtSetor) return false;
+      if (_filtStatus.length) {
+        const sl = (o.status_os||'').toLowerCase();
+        const match = _filtStatus.some(fs=>{
+          if (fs==='encerrada')    return sl.includes('encerr');
+          if (fs==='aberta')       return sl.includes('gerada')||sl.includes('aberta');
+          if (fs==='andamento')    return sl.includes('andamento');
+          if (fs==='cancelada')    return sl.includes('cancel');
+          if (fs==='suspensa')     return sl.includes('suspend');
+          return false;
+        });
+        if (!match) return false;
+      }
       return true;
     });
   }
@@ -559,14 +572,24 @@ window.Modulos.proj_caldeiraria = (() => {
 
   function htmlFiltrosLista() {
     const critOpts=[['alta','Alta','#dc2626','#fee2e2'],['media','Média','#d97706','#fef3c7'],['baixa','Baixa','#16a34a','#dcfce7']];
+    const statusOpts=[
+      ['encerrada','Encerrada','#16a34a','#dcfce7'],
+      ['aberta','Aberta','#d97706','#fef3c7'],
+      ['andamento','Em andamento','#2563eb','#dbeafe'],
+      ['cancelada','Cancelada','#dc2626','#fee2e2'],
+    ];
     const setores = setoresDistintos();
     const setorOpts = setores.map(s=>`<option value="${s}"${s===_filtSetor?' selected':''}>${s}</option>`).join('');
     return `<div class="ps-lista-filtros">
-      <span class="ps-flbl-inline">Filtrar:</span>
+      <span class="ps-flbl-inline">Criticidade:</span>
       ${critOpts.map(([v,l,col,bg])=>`<span class="ps-chip${_filtCrit.includes(v)?' ativo':''}" data-crit="${v}" style="--chip-c:${col};--chip-bg:${bg}">${l}</span>`).join('')}
       <div class="ps-fsep"></div>
+      <span class="ps-flbl-inline">MO:</span>
       <span class="ps-chip${_filtMO==='proprio'?' ativo':''}" data-mo="proprio">Próprio</span>
       <span class="ps-chip${_filtMO==='terceiro'?' ativo':''}" data-mo="terceiro">Terceiro</span>
+      <div class="ps-fsep"></div>
+      <span class="ps-flbl-inline">Status:</span>
+      ${statusOpts.map(([v,l,col,bg])=>`<span class="ps-chip${_filtStatus.includes(v)?' ativo':''}" data-status="${v}" style="--chip-c:${col};--chip-bg:${bg}">${l}</span>`).join('')}
       ${setores.length?`<div class="ps-fsep"></div><select class="ps-sel-setor" id="ps-sel-setor"><option value="">Todos os setores</option>${setorOpts}</select>`:''}
     </div>`;
   }
@@ -631,6 +654,17 @@ window.Modulos.proj_caldeiraria = (() => {
         const v=chip.dataset.crit;
         if (_filtCrit.includes(v)) _filtCrit=_filtCrit.filter(x=>x!==v);
         else _filtCrit.push(v);
+        renderizar();
+      });
+    });
+
+    /* Filtro status */
+    c.querySelectorAll('.ps-chip[data-status]').forEach(chip=>{
+      chip.addEventListener('mousedown', e=>{
+        e.preventDefault();
+        const v=chip.dataset.status;
+        if (_filtStatus.includes(v)) _filtStatus=_filtStatus.filter(x=>x!==v);
+        else _filtStatus.push(v);
         renderizar();
       });
     });
@@ -825,7 +859,9 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   async function gerarRelatorio() {
-    const lista = osParaMetricas(); // usa filtro de equipe+tipo, não filtros da lista
+    // Usa osFiltradas() para respeitar status, criticidade e MO selecionados
+    // mas o relatório não mostra a coluna de MO
+    const lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
     // Carregar fotos de todas as OS
@@ -991,10 +1027,12 @@ window.Modulos.proj_caldeiraria = (() => {
 </body>
 </html>`;
 
-    // Abrir em nova aba
-    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
-    const url  = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+    // Abrir em nova aba via document.write (evita CSP do GitHub Pages)
+    const win = window.open('', '_blank');
+    if (!win) { alert('Popup bloqueado. Permita popups para este site.'); return; }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
   }
 
   /* ══════════════════════════════════════
