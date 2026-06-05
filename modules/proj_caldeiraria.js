@@ -860,289 +860,219 @@ window.Modulos.proj_caldeiraria = (() => {
     const lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
-    // Carregar jsPDF do CDN se ainda não carregado
-    if (!window.jspdf) {
-      await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        s.onload = res; s.onerror = rej;
-        document.head.appendChild(s);
-      });
-    }
-
     // Carregar fotos
     const osNums = lista.map(o => o.os).filter(Boolean);
     let fotosMap = {};
     if (osNums.length) {
       const { data: fotos } = await getDB().from('proj_os_fotos').select('*').in('os', osNums);
-      (fotos || []).forEach(f => {
-        if (!fotosMap[f.os]) fotosMap[f.os] = [];
-        fotosMap[f.os].push(f);
-      });
+      (fotos||[]).forEach(f => { if(!fotosMap[f.os]) fotosMap[f.os]=[]; fotosMap[f.os].push(f); });
     }
-
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-
-    // ── Constantes de layout ──
-    const PW = 210, PH = 297;
-    const ML = 12, MR = 12, MT = 10;
-    const CW = PW - ML - MR; // largura útil = 186mm
-    let y = MT;
-
-    const AMARELO  = [248, 193, 0];
-    const ESCURO   = [26, 26, 26];
-    const CINZA1   = [107, 114, 128];
-    const CINZA2   = [229, 231, 235];
-    const CINZA3   = [249, 250, 251];
-    const BRANCO   = [255, 255, 255];
 
     const critCor = {
-      alta:  { bg: [254,226,226], txt: [220,38,38]  },
-      media: { bg: [254,243,199], txt: [217,119,6]  },
-      baixa: { bg: [220,252,231], txt: [22,163,74]  },
+      alta:  { bg:'#fee2e2', txt:'#dc2626' },
+      media: { bg:'#fef3c7', txt:'#d97706' },
+      baixa: { bg:'#dcfce7', txt:'#16a34a' },
     };
-    const statusCor = (s) => {
-      if (!s) return { bg:[254,243,199], txt:[217,119,6], l:'Programada' };
+    const stCor = s => {
+      if (!s) return { bg:'#fef3c7', txt:'#d97706', l:'Programada' };
       const sl = s.toLowerCase();
-      if (sl.includes('encerr'))                           return { bg:[220,252,231], txt:[22,163,74],  l:'Encerrada' };
-      if (sl.includes('andamento')||sl.includes('execu'))  return { bg:[219,234,254], txt:[37,99,235],  l:'Em andamento' };
-      if (sl.includes('program')||sl.includes('gerada'))   return { bg:[254,243,199], txt:[217,119,6],  l:'Programada' };
-      if (sl.includes('cancel')||sl.includes('suspend'))   return { bg:[254,226,226], txt:[220,38,38],  l:'Cancelada' };
-      return { bg:[243,244,246], txt:[107,114,128], l:s };
+      if (sl.includes('encerr'))                          return { bg:'#dcfce7', txt:'#16a34a', l:'Encerrada' };
+      if (sl.includes('andamento')||sl.includes('execu')) return { bg:'#dbeafe', txt:'#2563eb', l:'Em andamento' };
+      if (sl.includes('program')||sl.includes('gerada'))  return { bg:'#fef3c7', txt:'#d97706', l:'Programada' };
+      if (sl.includes('cancel')||sl.includes('suspend'))  return { bg:'#fee2e2', txt:'#dc2626', l:'Cancelada' };
+      return { bg:'#f3f4f6', txt:'#6b7280', l:s };
     };
 
-    // ── Helper: nova página se necessário ──
-    function checkPage(needed) {
-      if (y + needed > PH - 12) {
-        doc.addPage();
-        y = MT;
-        desenharRodape();
-        return true;
-      }
-      return false;
-    }
-
-    // ── Rodapé ──
-    function desenharRodape() {
-      doc.setFontSize(7);
-      doc.setTextColor(...CINZA1);
-      doc.text('MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria', ML, PH - 6);
-      doc.text(codigo, PW - MR, PH - 6, { align: 'right' });
-      doc.setDrawColor(...CINZA2);
-      doc.setLineWidth(0.2);
-      doc.line(ML, PH - 9, PW - MR, PH - 9);
-    }
-
-    // ── Badge colorido ──
-    function badge(txt, bg, txtCor, x, yy, w) {
-      doc.setFillColor(...bg);
-      doc.roundedRect(x, yy - 3.5, w, 5, 1, 1, 'F');
-      doc.setFontSize(7);
-      doc.setTextColor(...txtCor);
-      doc.setFont('helvetica', 'bold');
-      doc.text(txt, x + w / 2, yy, { align: 'center' });
-      doc.setFont('helvetica', 'normal');
-    }
-
-    // ── Código e data ──
-    const codigo = gerarCodigoRelatorio();
-    const agora  = new Date();
-    const dtStr  = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-    const tiposStr = _filtTipos.length ? _filtTipos.join(', ') : 'Todos';
-    const totalHH  = lista.reduce((s, o) => s + (o.hh_prev_os || 0), 0);
-
-    // ══ CABEÇALHO ══
-    // Fundo escuro
-    doc.setFillColor(...ESCURO);
-    doc.rect(0, 0, PW, 22, 'F');
-    // Faixa amarela esquerda
-    doc.setFillColor(...AMARELO);
-    doc.rect(0, 0, 16, 22, 'F');
-    // Ícone chama (simplificado como triângulo)
-    doc.setFillColor(...ESCURO);
-    doc.triangle(8, 18, 5, 10, 11, 10, 'F');
-    doc.setFillColor(...AMARELO);
-    doc.triangle(8, 16, 6.5, 12, 9.5, 12, 'F');
-
-    // Textos cabeçalho
-    doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
-    doc.text('Clealco Açúcar e Álcool · Manutenção Industrial', 19, 7);
-    doc.setFontSize(13); doc.setTextColor(...BRANCO); doc.setFont('helvetica', 'bold');
-    doc.text('Projetos de Segurança — Caldeiraria', 19, 14);
-    doc.setFontSize(8); doc.setTextColor(180, 180, 180); doc.setFont('helvetica', 'normal');
-    doc.text('Lista de Ordens de Serviço por Setor e Criticidade', 19, 19.5);
-    // Código e data à direita
-    doc.setFontSize(9); doc.setTextColor(...AMARELO); doc.setFont('helvetica', 'bold');
-    doc.text(codigo, PW - MR, 10, { align: 'right' });
-    doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
-    doc.text('Gerado em ' + dtStr, PW - MR, 15, { align: 'right' });
-
-    y = 25;
-
-    // ══ FAIXA DE FILTROS ══
-    doc.setFillColor(...CINZA3);
-    doc.rect(0, y, PW, 12, 'F');
-    doc.setFillColor(...AMARELO);
-    doc.rect(0, y + 11.5, PW, 0.8, 'F'); // linha amarela
-    const filtros = [
-      ['Equipe', _filtEquipe],
-      ['Tipo de Intervenção', tiposStr],
-      ['Criticidade', _filtCrit.length ? _filtCrit.join(', ') : 'Todas'],
-      ['Status', _filtStatus.length ? _filtStatus.join(', ') : 'Todos'],
-      ['Total', lista.length + ' OS · ' + totalHH + 'h'],
-    ];
-    let fx = ML;
-    filtros.forEach(([lbl, val]) => {
-      doc.setFontSize(6); doc.setTextColor(...CINZA1); doc.setFont('helvetica', 'bold');
-      doc.text(lbl.toUpperCase(), fx, y + 5);
-      doc.setFontSize(8.5); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
-      doc.text(val, fx, y + 10.5);
-      fx += CW / filtros.length;
-    });
-    y += 16;
-
-    // ══ SETORES ══
-    const critOrdem = { alta: 0, media: 1, baixa: 2 };
+    const critOrdem = { alta:0, media:1, baixa:2 };
     const setores = {};
     lista.forEach(o => {
-      const s = o.desc_setor || o.setor || 'Setor não informado';
+      const s = o.desc_setor||o.setor||'Setor não informado';
       if (!setores[s]) setores[s] = [];
       setores[s].push(o);
     });
-    Object.values(setores).forEach(arr => {
-      arr.sort((a, b) => (critOrdem[a.proj_criticidade] ?? 9) - (critOrdem[b.proj_criticidade] ?? 9));
-    });
+    Object.values(setores).forEach(arr =>
+      arr.sort((a,b) => (critOrdem[a.proj_criticidade]??9)-(critOrdem[b.proj_criticidade]??9))
+    );
 
-    // Colunas: OS(20) | Descrição(flex) | HH(18) | Criticidade(24) | Status(28)
-    const COL = { os: ML, desc: ML+20, hh: ML+20+96, crit: ML+20+96+18, st: ML+20+96+18+24 };
+    const codigo  = gerarCodigoRelatorio();
+    const agora   = new Date();
+    const dtStr   = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const tiposStr = _filtTipos.length ? _filtTipos.join(', ') : 'Todos';
+    const totalHH  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
 
-    for (const [setor, oss] of Object.entries(setores)) {
-      checkPage(18);
-
-      // ── Cabeçalho do setor ──
-      doc.setFontSize(9); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
-      doc.text(setor.toUpperCase(), ML, y);
-      const hhSetor = oss.reduce((s, o) => s + (o.hh_prev_os || 0), 0);
-      doc.setFontSize(8); doc.setTextColor(...CINZA1); doc.setFont('helvetica', 'normal');
-      doc.text(oss.length + ' OS · ' + hhSetor + 'h', PW - MR, y, { align: 'right' });
-      doc.setDrawColor(...ESCURO); doc.setLineWidth(0.5);
-      doc.line(ML, y + 1.5, PW - MR, y + 1.5);
-      y += 5;
-
-      // ── Cabeçalho da tabela ──
-      doc.setFillColor(...ESCURO);
-      doc.rect(ML, y, CW, 6, 'F');
-      doc.setFontSize(6.5); doc.setTextColor(...BRANCO); doc.setFont('helvetica', 'bold');
-      doc.text('OS',          COL.os   + 1, y + 4);
-      doc.text('DESCRIÇÃO',   COL.desc + 1, y + 4);
-      doc.text('HH',          COL.hh,       y + 4, { align: 'right' });
-      doc.text('CRITICIDADE', COL.crit + 12, y + 4, { align: 'center' });
-      doc.text('STATUS',      COL.st   + 14, y + 4, { align: 'center' });
-      y += 8;
-
-      // ── Linhas de OS ──
-      for (const o of oss) {
-        const fts    = fotosMap[o.os] || [];
-        const cr     = critCor[o.proj_criticidade] || { bg: [243,244,246], txt: [107,114,128] };
-        const crLbl  = o.proj_criticidade ? (o.proj_criticidade.charAt(0).toUpperCase()+o.proj_criticidade.slice(1)) : '—';
-        const st     = statusCor(o.status_os);
-        const desc   = o.desc_servico || o.desc_os || '—';
-        const descWrapped = doc.splitTextToSize(desc, 94);
-        const linhasTexto = descWrapped.length;
-        const hLinha  = Math.max(8, linhasTexto * 4 + 4);
-
-        // Calcular altura das fotos (3 por linha, 35mm cada)
-        let hFotos = 0;
-        if (fts.length) {
-          const nLinhasFotos = Math.ceil(fts.length / 3);
-          hFotos = nLinhasFotos * 38 + 4;
-        }
-        const hTotal = hLinha + hFotos + 2;
-        checkPage(hTotal + 2);
-
-        // Fundo alternado
-        if (oss.indexOf(o) % 2 === 0) {
-          doc.setFillColor(...CINZA3);
-          doc.rect(ML, y - 1, CW, hLinha, 'F');
-        }
-
-        // Número OS
-        doc.setFontSize(8); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
-        doc.text(String(o.os || '—'), COL.os + 1, y + 3);
-
-        // Descrição
-        doc.setFontSize(8); doc.setTextColor(55,65,81); doc.setFont('helvetica', 'normal');
-        doc.text(descWrapped, COL.desc + 1, y + 3);
-
-        // HH
-        doc.setFontSize(8); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
-        doc.text(o.hh_prev_os ? o.hh_prev_os + 'h' : '—', COL.hh, y + 3, { align: 'right' });
-
-        // Badge criticidade
-        badge(crLbl, cr.bg, cr.txt, COL.crit, y + 3.5, 23);
-
-        // Badge status
-        badge(st.l, st.bg, st.txt, COL.st, y + 3.5, 27);
-
-        y += hLinha;
-
-        // ── Fotos ──
-        if (fts.length) {
-          const fotoW = 58, fotoH = 35, gap = 5;
-          checkPage(fotoH + 8);
-
-          // Fundo cinza claro para a área de fotos
-          doc.setFillColor(245, 245, 245);
-          doc.rect(ML, y, CW, hFotos, 'F');
-
-          let fx2 = ML + 3, fy2 = y + 3;
-          for (let fi = 0; fi < fts.length; fi++) {
-            if (fi > 0 && fi % 3 === 0) {
-              fx2 = ML + 3;
-              fy2 += fotoH + gap;
-              checkPage(fotoH + 5);
-            }
-            try {
-              // Converter URL para base64 via fetch
-              const resp = await fetch(fts[fi].url);
-              const blob = await resp.blob();
-              const b64  = await new Promise(res => {
-                const reader = new FileReader();
-                reader.onload = () => res(reader.result);
-                reader.readAsDataURL(blob);
-              });
-              const fmt = b64.startsWith('data:image/png') ? 'PNG' : 'JPEG';
-              doc.addImage(b64, fmt, fx2, fy2, fotoW, fotoH);
-            } catch(_) {
-              // Se falhar, desenhar placeholder
-              doc.setFillColor(...CINZA2);
-              doc.rect(fx2, fy2, fotoW, fotoH, 'F');
-              doc.setFontSize(7); doc.setTextColor(...CINZA1);
-              doc.text('Foto indisponível', fx2 + fotoW/2, fy2 + fotoH/2, { align: 'center' });
-            }
-            fx2 += fotoW + gap;
-          }
-          y += hFotos;
-        } else {
-          // Linha "sem fotos"
-          doc.setFontSize(7); doc.setTextColor(209,213,219); doc.setFont('helvetica', 'italic');
-          doc.text('Nenhuma foto anexada', ML + 2, y + 3);
-          y += 6;
-        }
-
-        // Linha divisória
-        doc.setDrawColor(...CINZA2); doc.setLineWidth(0.2);
-        doc.line(ML, y, PW - MR, y);
-        y += 3;
-      }
-
-      y += 6; // espaço entre setores
+    // ── Converter fotos para base64 para ficarem embutidas no HTML ──
+    async function toBase64(url) {
+      try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        return await new Promise(res => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.readAsDataURL(blob);
+        });
+      } catch(_) { return null; }
     }
 
-    desenharRodape();
-    doc.save(codigo + '.pdf');
+    // Pré-carregar todas as fotos como base64
+    const fotasB64 = {};
+    for (const [os, fts] of Object.entries(fotosMap)) {
+      fotasB64[os] = await Promise.all(fts.map(f => toBase64(f.url)));
+    }
+
+    // ── Gerar HTML dos setores ──
+    const setoresHTML = Object.entries(setores).map(([setor, oss]) => {
+      const hhSetor = oss.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const rows = oss.map((o,idx) => {
+        const cr  = critCor[o.proj_criticidade] || { bg:'#f3f4f6', txt:'#6b7280' };
+        const crL = o.proj_criticidade ? o.proj_criticidade.charAt(0).toUpperCase()+o.proj_criticidade.slice(1) : '—';
+        const st  = stCor(o.status_os);
+        const b64s = fotasB64[o.os] || [];
+        const fotosHtml = b64s.filter(Boolean).length
+          ? `<div class="fotos">${b64s.filter(Boolean).map(b=>`<img src="${b}">`).join('')}</div>`
+          : `<div class="sem-foto">Nenhuma foto anexada</div>`;
+        return `
+        <tr class="${idx%2===0?'par':''}">
+          <td class="os-num">${o.os||'—'}</td>
+          <td class="os-desc">${o.desc_servico||o.desc_os||'—'}</td>
+          <td class="os-hh">${o.hh_prev_os?o.hh_prev_os+'h':'—'}</td>
+          <td><span class="badge" style="background:${cr.bg};color:${cr.txt}">${crL}</span></td>
+          <td><span class="badge" style="background:${st.bg};color:${st.txt}">${st.l}</span></td>
+        </tr>
+        <tr class="fotos-row">
+          <td colspan="5">${fotosHtml}</td>
+        </tr>`;
+      }).join('');
+      return `
+      <div class="setor-bloco">
+        <div class="setor-hdr">
+          <span class="setor-nome">${setor}</span>
+          <span class="setor-meta">${oss.length} OS &nbsp;·&nbsp; ${hhSetor}h</span>
+        </div>
+        <table>
+          <thead><tr>
+            <th style="width:72px">OS</th>
+            <th>Descrição do Serviço</th>
+            <th style="width:58px;text-align:right">HH Prev.</th>
+            <th style="width:76px;text-align:center">Criticidade</th>
+            <th style="width:90px;text-align:center">Status</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>${codigo}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:11px;color:#1a1a1a;background:#fff}
+  .no-print{background:#f3f4f6;padding:10px 20px;display:flex;align-items:center;gap:10px;border-bottom:2px solid #F8C100;position:sticky;top:0;z-index:99}
+  .no-print span{font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.06em}
+  .no-print button{height:30px;padding:0 16px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer}
+  .btn-print{background:#F8C100;color:#1a1a1a}
+  .btn-fechar{background:#e5e7eb;color:#374151}
+  .page{max-width:794px;margin:0 auto;padding-bottom:40px}
+  /* Cabeçalho */
+  .cab{display:flex;align-items:stretch;background:#1a1a1a;page-break-inside:avoid}
+  .cab-logo{background:#F8C100;width:64px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:12px}
+  .cab-logo svg{width:32px;height:32px}
+  .cab-txt{flex:1;padding:12px 18px;display:flex;flex-direction:column;gap:3px}
+  .cab-emp{font-size:7px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.4)}
+  .cab-titulo{font-size:15px;font-weight:700;color:#fff}
+  .cab-sub{font-size:9px;color:rgba(255,255,255,.5)}
+  .cab-dir{padding:12px 18px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:3px;border-left:1px solid rgba(255,255,255,.1)}
+  .cab-cod{font-family:monospace;font-size:11px;font-weight:700;color:#F8C100;letter-spacing:.06em}
+  .cab-data{font-size:8px;color:rgba(255,255,255,.4)}
+  /* Filtros */
+  .filtros{background:#f9fafb;border-bottom:2px solid #F8C100;padding:7px 18px;display:flex;gap:18px;flex-wrap:wrap}
+  .f-item{display:flex;flex-direction:column;gap:1px}
+  .f-lbl{font-size:6.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af}
+  .f-val{font-size:10px;font-weight:700;color:#1a1a1a}
+  /* Setores */
+  .body-rel{padding:16px 18px}
+  .setor-bloco{margin-bottom:24px;page-break-inside:avoid}
+  .setor-hdr{display:flex;align-items:center;justify-content:space-between;padding-bottom:5px;border-bottom:2px solid #1a1a1a;margin-bottom:8px}
+  .setor-nome{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+  .setor-meta{font-size:9px;color:#6b7280}
+  table{width:100%;border-collapse:collapse}
+  thead tr{background:#1a1a1a}
+  thead th{padding:5px 8px;text-align:left;color:#fff;font-size:7.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+  tbody tr.par td{background:#fafafa}
+  tbody td{padding:6px 8px;font-size:10px;vertical-align:top;border-bottom:1px solid #f3f4f6}
+  .os-num{font-family:monospace;font-weight:700;white-space:nowrap}
+  .os-desc{line-height:1.4}
+  .os-hh{font-family:monospace;font-weight:700;text-align:right;white-space:nowrap}
+  .badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;white-space:nowrap}
+  .fotos-row td{background:#f9fafb;padding:6px 8px 10px;border-bottom:2px solid #e5e7eb}
+  .fotos{display:flex;gap:8px;flex-wrap:wrap}
+  .fotos img{width:150px;height:110px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb}
+  .sem-foto{font-size:8px;color:#d1d5db;font-style:italic}
+  /* Rodapé */
+  .rodape{padding:7px 18px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;margin-top:8px}
+  .rodape span{font-size:8px;color:#9ca3af}
+  @media print{
+    .no-print{display:none!important}
+    body{font-size:10px}
+    .fotos img{width:140px;height:100px}
+    .setor-bloco{page-break-inside:avoid}
+    .fotos-row{page-break-inside:avoid}
   }
+</style>
+</head>
+<body>
+<div class="no-print">
+  <span>${codigo}</span>
+  <button class="btn-print" onclick="window.print()">🖨 Imprimir / Salvar como PDF</button>
+</div>
+<div class="page">
+  <div class="cab">
+    <div class="cab-logo">
+      <svg viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="18" fill="#1a1a1a"/>
+        <path d="M18 6C18 6 24 12 24 18C24 22 21.5 25 18 26C14.5 25 12 22 12 18C12 12 18 6 18 6Z" fill="#F8C100"/>
+        <path d="M18 14C18 14 21 17 21 20C21 22 19.8 23.5 18 24C16.2 23.5 15 22 15 20C15 17 18 14 18 14Z" fill="#fff" opacity=".25"/>
+      </svg>
+    </div>
+    <div class="cab-txt">
+      <div class="cab-emp">Clealco Açúcar e Álcool · Manutenção Industrial</div>
+      <div class="cab-titulo">Projetos de Segurança — Caldeiraria</div>
+      <div class="cab-sub">Lista de Ordens de Serviço por Setor e Criticidade</div>
+    </div>
+    <div class="cab-dir">
+      <div class="cab-cod">${codigo}</div>
+      <div class="cab-data">Gerado em ${dtStr}</div>
+    </div>
+  </div>
+  <div class="filtros">
+    <div class="f-item"><div class="f-lbl">Equipe</div><div class="f-val">${_filtEquipe}</div></div>
+    <div class="f-item"><div class="f-lbl">Tipo de Intervenção</div><div class="f-val">${tiposStr}</div></div>
+    <div class="f-item"><div class="f-lbl">Criticidade</div><div class="f-val">${_filtCrit.length?_filtCrit.join(', '):'Todas'}</div></div>
+    <div class="f-item"><div class="f-lbl">Status</div><div class="f-val">${_filtStatus.length?_filtStatus.join(', '):'Todos'}</div></div>
+    <div class="f-item" style="margin-left:auto"><div class="f-lbl">Total</div><div class="f-val">${lista.length} OS · ${totalHH}h</div></div>
+  </div>
+  <div class="body-rel">${setoresHTML}</div>
+  <div class="rodape">
+    <span>MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria</span>
+    <span style="font-family:monospace">${codigo}</span>
+  </div>
+</div>
+</body>
+</html>`;
+
+    // Download via Blob — funciona no GitHub Pages sem violar CSP
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = codigo + '.html';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+
 
 
   /* ══════════════════════════════════════
