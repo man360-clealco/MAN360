@@ -422,9 +422,98 @@ function parseApontamento(rows) {
   return registros;
 }
 
+
+/* ══════════════════════════════════════════════════════
+   PARSER: PROGRAMAÇÃO SEMANAL — PDF (PIMS FMIREL140)
+   Lê texto extraído do PDF linha a linha
+   ══════════════════════════════════════════════════════ */
+function parseProgSemanalPDF(textoCompleto, ctxIn) {
+  const registros = [];
+  let equipe = '', semana = ctxIn.semana||null, ano = ctxIn.ano||null;
+  let dataIni = null, dataFim = null;
+
+  const linhas = textoCompleto.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+  for (let i = 0; i < linhas.length; i++) {
+    const linha = linhas[i];
+    const lNorm = linha.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+
+    // Detectar semana/período no cabeçalho
+    const mSem = linha.match(/SEM\s*(\d+)\s+/i);
+    if (mSem && !semana) semana = parseInt(mSem[1]);
+
+    const mIni = linha.match(/In[ií]cio\s*:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (mIni) {
+      const parts = mIni[1].split('/');
+      ano = parseInt(parts[2]);
+      dataIni = parts[2]+'-'+parts[1]+'-'+parts[0];
+    }
+    const mFim = linha.match(/Fim\s*:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (mFim) {
+      const parts = mFim[1].split('/');
+      dataFim = parts[2]+'-'+parts[1]+'-'+parts[0];
+    }
+
+    // Detectar linha de equipe: "Equipe: CAL1 - CALDEIRARIA..."
+    const mEq = linha.match(/^Equipe:\s*([A-Z0-9]{2,8})\s*[-–]\s*(.+)/i);
+    if (mEq) {
+      equipe = mEq[1].trim().toUpperCase();
+      continue;
+    }
+
+    // Detectar linha de OS: começa com número de 5+ dígitos
+    const mOS = linha.match(/^(\d{5,8})\s+(.+)/);
+    if (!mOS || !equipe) continue;
+
+    const os = mOS[1];
+    const resto = mOS[2].trim();
+
+    // Extrair H-h (último número da linha, formato XX.XX)
+    const mHH = resto.match(/(\d+[.,]\d{2})\s*$/);
+    const hh = mHH ? parseFloat(mHH[1].replace(',', '.')) : null;
+
+    // Extrair MIS (código de equipamento — padrão LETRAS+NÚMEROS antes das datas)
+    const mMIS = resto.match(/([A-Z]{2,6}\d{4,})\s/);
+    const mis = mMIS ? mMIS[1] : null;
+
+    // Descrição: tudo que não é MIS nem datas nem H-h
+    let desc = resto
+      .replace(/(\d{2}\/\d{2}\s+\d{2}:\d{2})/g, '')  // datas
+      .replace(/\d+[.,]\d{2}\s*$/, '')                    // H-h final
+      .replace(/[A-Z]{2,6}\d{4,}\s*/, '')                  // MIS
+      .replace(/\s{2,}/g, ' ').trim();
+
+    // Se descrição ficou muito curta, pode ter continuação na linha seguinte
+    // (PDF quebra linhas longas)
+    if (desc.length < 10 && i+1 < linhas.length) {
+      const prox = linhas[i+1];
+      if (!/^\d{5,}/.test(prox) && !/^Equipe:/i.test(prox) && !/^Total/.test(prox)) {
+        desc = (desc + ' ' + prox).trim();
+        i++; // pular linha de continuação
+      }
+    }
+
+    if (!desc || desc.length < 3) continue;
+
+    registros.push({
+      semana, ano,
+      data_inicio_semana: dataIni,
+      data_fim_semana:    dataFim,
+      equipe,
+      os,
+      cod_servico:  null,
+      desc_servico: desc.slice(0, 500),
+      mis:          mis ? mis.slice(0, 20) : null,
+      hh_previsto:  hh,
+    });
+  }
+
+  return { registros, semana, ano, dataIni, dataFim };
+}
+
 /* Exportar */
 window.Parsers = {
   detectarTipo, parseOS, parsePreOS,
-  parseProgSemanal, parseApontamento,
+  parseProgSemanal, parseProgSemanalPDF, parseApontamento,
   normNum, normStr, normData, normHora, extrairCod,
 };
