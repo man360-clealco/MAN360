@@ -857,201 +857,293 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   async function gerarRelatorio() {
-    // Usa osFiltradas() para respeitar status, criticidade e MO selecionados
-    // mas o relatório não mostra a coluna de MO
     const lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
-    // Carregar fotos de todas as OS
-    const osNums = lista.map(o=>o.os).filter(Boolean);
-    let fotosMap = {};
-    if (osNums.length) {
-      const {data:fotos} = await getDB().from('proj_os_fotos').select('*').in('os',osNums);
-      (fotos||[]).forEach(f=>{ if(!fotosMap[f.os]) fotosMap[f.os]=[]; fotosMap[f.os].push(f); });
+    // Carregar jsPDF do CDN se ainda não carregado
+    if (!window.jspdf) {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
     }
 
-    // Agrupar por desc_setor, ordenar por criticidade dentro de cada setor
-    const critOrdem = {alta:0,media:1,baixa:2};
-    const setores = {};
-    lista.forEach(o=>{
-      const s = o.desc_setor||o.setor||'Setor não informado';
-      if (!setores[s]) setores[s]=[];
-      setores[s].push(o);
-    });
-    Object.values(setores).forEach(arr=>{
-      arr.sort((a,b)=>(critOrdem[a.proj_criticidade]??9)-(critOrdem[b.proj_criticidade]??9));
-    });
+    // Carregar fotos
+    const osNums = lista.map(o => o.os).filter(Boolean);
+    let fotosMap = {};
+    if (osNums.length) {
+      const { data: fotos } = await getDB().from('proj_os_fotos').select('*').in('os', osNums);
+      (fotos || []).forEach(f => {
+        if (!fotosMap[f.os]) fotosMap[f.os] = [];
+        fotosMap[f.os].push(f);
+      });
+    }
 
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    // ── Constantes de layout ──
+    const PW = 210, PH = 297;
+    const ML = 12, MR = 12, MT = 10;
+    const CW = PW - ML - MR; // largura útil = 186mm
+    let y = MT;
+
+    const AMARELO  = [248, 193, 0];
+    const ESCURO   = [26, 26, 26];
+    const CINZA1   = [107, 114, 128];
+    const CINZA2   = [229, 231, 235];
+    const CINZA3   = [249, 250, 251];
+    const BRANCO   = [255, 255, 255];
+
+    const critCor = {
+      alta:  { bg: [254,226,226], txt: [220,38,38]  },
+      media: { bg: [254,243,199], txt: [217,119,6]  },
+      baixa: { bg: [220,252,231], txt: [22,163,74]  },
+    };
+    const statusCor = (s) => {
+      if (!s) return { bg:[254,243,199], txt:[217,119,6], l:'Programada' };
+      const sl = s.toLowerCase();
+      if (sl.includes('encerr'))                           return { bg:[220,252,231], txt:[22,163,74],  l:'Encerrada' };
+      if (sl.includes('andamento')||sl.includes('execu'))  return { bg:[219,234,254], txt:[37,99,235],  l:'Em andamento' };
+      if (sl.includes('program')||sl.includes('gerada'))   return { bg:[254,243,199], txt:[217,119,6],  l:'Programada' };
+      if (sl.includes('cancel')||sl.includes('suspend'))   return { bg:[254,226,226], txt:[220,38,38],  l:'Cancelada' };
+      return { bg:[243,244,246], txt:[107,114,128], l:s };
+    };
+
+    // ── Helper: nova página se necessário ──
+    function checkPage(needed) {
+      if (y + needed > PH - 12) {
+        doc.addPage();
+        y = MT;
+        desenharRodape();
+        return true;
+      }
+      return false;
+    }
+
+    // ── Rodapé ──
+    function desenharRodape() {
+      doc.setFontSize(7);
+      doc.setTextColor(...CINZA1);
+      doc.text('MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria', ML, PH - 6);
+      doc.text(codigo, PW - MR, PH - 6, { align: 'right' });
+      doc.setDrawColor(...CINZA2);
+      doc.setLineWidth(0.2);
+      doc.line(ML, PH - 9, PW - MR, PH - 9);
+    }
+
+    // ── Badge colorido ──
+    function badge(txt, bg, txtCor, x, yy, w) {
+      doc.setFillColor(...bg);
+      doc.roundedRect(x, yy - 3.5, w, 5, 1, 1, 'F');
+      doc.setFontSize(7);
+      doc.setTextColor(...txtCor);
+      doc.setFont('helvetica', 'bold');
+      doc.text(txt, x + w / 2, yy, { align: 'center' });
+      doc.setFont('helvetica', 'normal');
+    }
+
+    // ── Código e data ──
     const codigo = gerarCodigoRelatorio();
     const agora  = new Date();
-    const dtStr  = agora.toLocaleDateString('pt-BR')+' às '+agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const dtStr  = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     const tiposStr = _filtTipos.length ? _filtTipos.join(', ') : 'Todos';
-    const totalHH  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const totalHH  = lista.reduce((s, o) => s + (o.hh_prev_os || 0), 0);
 
-    // Montar HTML dos setores
-    const setoresHTML = Object.entries(setores).map(([setor,oss])=>{
-      const hhSetor = oss.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-      const linhas  = oss.map(o=>{
-        const st  = statusLabel(o.status_os);
-        const cr  = critLabel(o.proj_criticidade);
-        const fts = fotosMap[o.os]||[];
-        const fotosHTML = fts.length
-          ? fts.map(f=>`<img src="${f.url}" style="width:150px;height:110px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb" loading="lazy">`).join('')
-          : '<span style="font-size:8px;color:#d1d5db;font-style:italic">Nenhuma foto anexada</span>';
+    // ══ CABEÇALHO ══
+    // Fundo escuro
+    doc.setFillColor(...ESCURO);
+    doc.rect(0, 0, PW, 22, 'F');
+    // Faixa amarela esquerda
+    doc.setFillColor(...AMARELO);
+    doc.rect(0, 0, 16, 22, 'F');
+    // Ícone chama (simplificado como triângulo)
+    doc.setFillColor(...ESCURO);
+    doc.triangle(8, 18, 5, 10, 11, 10, 'F');
+    doc.setFillColor(...AMARELO);
+    doc.triangle(8, 16, 6.5, 12, 9.5, 12, 'F');
 
-        return `
-          <tr style="border-bottom:1px solid #e5e7eb">
-            <td style="padding:7px 10px;font-family:monospace;font-size:10px;font-weight:600;vertical-align:top;white-space:nowrap">${o.os||'—'}</td>
-            <td style="padding:7px 10px;font-size:10px;color:#374151;line-height:1.4;vertical-align:top">${o.desc_servico||o.desc_os||'—'}</td>
-            <td style="padding:7px 10px;font-size:10px;font-weight:600;text-align:right;vertical-align:top;white-space:nowrap;font-family:monospace">${o.hh_prev_os?o.hh_prev_os+'h':'—'}</td>
-            <td style="padding:7px 10px;text-align:center;vertical-align:top">
-              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;background:${cr.bg};color:${cr.cor}">${cr.l}</span>
-            </td>
-            <td style="padding:7px 10px;text-align:center;vertical-align:top">
-              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;background:${st.b};color:${st.c}">${st.l}</span>
-            </td>
-          </tr>
-          <tr style="border-bottom:2px solid #e5e7eb">
-            <td colspan="5" style="padding:6px 10px 10px;background:#fafafa">
-              <div style="display:flex;gap:8px;flex-wrap:wrap">${fotosHTML}</div>
-            </td>
-          </tr>`;
-      }).join('');
+    // Textos cabeçalho
+    doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
+    doc.text('Clealco Açúcar e Álcool · Manutenção Industrial', 19, 7);
+    doc.setFontSize(13); doc.setTextColor(...BRANCO); doc.setFont('helvetica', 'bold');
+    doc.text('Projetos de Segurança — Caldeiraria', 19, 14);
+    doc.setFontSize(8); doc.setTextColor(180, 180, 180); doc.setFont('helvetica', 'normal');
+    doc.text('Lista de Ordens de Serviço por Setor e Criticidade', 19, 19.5);
+    // Código e data à direita
+    doc.setFontSize(9); doc.setTextColor(...AMARELO); doc.setFont('helvetica', 'bold');
+    doc.text(codigo, PW - MR, 10, { align: 'right' });
+    doc.setFontSize(7); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal');
+    doc.text('Gerado em ' + dtStr, PW - MR, 15, { align: 'right' });
 
-      return `
-        <div style="margin-bottom:28px;break-inside:avoid">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #1a1a1a">
-            <span style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;flex:1">${setor}</span>
-            <span style="font-size:9px;color:#6b7280">${oss.length} OS &nbsp;·&nbsp; ${hhSetor}h</span>
-          </div>
-          <table style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr style="background:#1a1a1a">
-                <th style="padding:6px 10px;text-align:left;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:72px">OS</th>
-                <th style="padding:6px 10px;text-align:left;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Descrição do Serviço</th>
-                <th style="padding:6px 10px;text-align:right;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:62px">HH Prev.</th>
-                <th style="padding:6px 10px;text-align:center;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:74px">Criticidade</th>
-                <th style="padding:6px 10px;text-align:center;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:90px">Status</th>
-              </tr>
-            </thead>
-            <tbody>${linhas}</tbody>
-          </table>
-        </div>`;
-    }).join('');
+    y = 25;
 
-    const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title>Relatório ${codigo}</title>
-<style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:'Segoe UI',Arial,sans-serif; background:#fff; color:#1a1a1a; }
-  @media print {
-    @page { size:A4; margin:0; }
-    body { margin:0; }
-    .no-print { display:none !important; }
+    // ══ FAIXA DE FILTROS ══
+    doc.setFillColor(...CINZA3);
+    doc.rect(0, y, PW, 12, 'F');
+    doc.setFillColor(...AMARELO);
+    doc.rect(0, y + 11.5, PW, 0.8, 'F'); // linha amarela
+    const filtros = [
+      ['Equipe', _filtEquipe],
+      ['Tipo de Intervenção', tiposStr],
+      ['Criticidade', _filtCrit.length ? _filtCrit.join(', ') : 'Todas'],
+      ['Status', _filtStatus.length ? _filtStatus.join(', ') : 'Todos'],
+      ['Total', lista.length + ' OS · ' + totalHH + 'h'],
+    ];
+    let fx = ML;
+    filtros.forEach(([lbl, val]) => {
+      doc.setFontSize(6); doc.setTextColor(...CINZA1); doc.setFont('helvetica', 'bold');
+      doc.text(lbl.toUpperCase(), fx, y + 5);
+      doc.setFontSize(8.5); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
+      doc.text(val, fx, y + 10.5);
+      fx += CW / filtros.length;
+    });
+    y += 16;
+
+    // ══ SETORES ══
+    const critOrdem = { alta: 0, media: 1, baixa: 2 };
+    const setores = {};
+    lista.forEach(o => {
+      const s = o.desc_setor || o.setor || 'Setor não informado';
+      if (!setores[s]) setores[s] = [];
+      setores[s].push(o);
+    });
+    Object.values(setores).forEach(arr => {
+      arr.sort((a, b) => (critOrdem[a.proj_criticidade] ?? 9) - (critOrdem[b.proj_criticidade] ?? 9));
+    });
+
+    // Colunas: OS(20) | Descrição(flex) | HH(18) | Criticidade(24) | Status(28)
+    const COL = { os: ML, desc: ML+20, hh: ML+20+96, crit: ML+20+96+18, st: ML+20+96+18+24 };
+
+    for (const [setor, oss] of Object.entries(setores)) {
+      checkPage(18);
+
+      // ── Cabeçalho do setor ──
+      doc.setFontSize(9); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
+      doc.text(setor.toUpperCase(), ML, y);
+      const hhSetor = oss.reduce((s, o) => s + (o.hh_prev_os || 0), 0);
+      doc.setFontSize(8); doc.setTextColor(...CINZA1); doc.setFont('helvetica', 'normal');
+      doc.text(oss.length + ' OS · ' + hhSetor + 'h', PW - MR, y, { align: 'right' });
+      doc.setDrawColor(...ESCURO); doc.setLineWidth(0.5);
+      doc.line(ML, y + 1.5, PW - MR, y + 1.5);
+      y += 5;
+
+      // ── Cabeçalho da tabela ──
+      doc.setFillColor(...ESCURO);
+      doc.rect(ML, y, CW, 6, 'F');
+      doc.setFontSize(6.5); doc.setTextColor(...BRANCO); doc.setFont('helvetica', 'bold');
+      doc.text('OS',          COL.os   + 1, y + 4);
+      doc.text('DESCRIÇÃO',   COL.desc + 1, y + 4);
+      doc.text('HH',          COL.hh,       y + 4, { align: 'right' });
+      doc.text('CRITICIDADE', COL.crit + 12, y + 4, { align: 'center' });
+      doc.text('STATUS',      COL.st   + 14, y + 4, { align: 'center' });
+      y += 8;
+
+      // ── Linhas de OS ──
+      for (const o of oss) {
+        const fts    = fotosMap[o.os] || [];
+        const cr     = critCor[o.proj_criticidade] || { bg: [243,244,246], txt: [107,114,128] };
+        const crLbl  = o.proj_criticidade ? (o.proj_criticidade.charAt(0).toUpperCase()+o.proj_criticidade.slice(1)) : '—';
+        const st     = statusCor(o.status_os);
+        const desc   = o.desc_servico || o.desc_os || '—';
+        const descWrapped = doc.splitTextToSize(desc, 94);
+        const linhasTexto = descWrapped.length;
+        const hLinha  = Math.max(8, linhasTexto * 4 + 4);
+
+        // Calcular altura das fotos (3 por linha, 35mm cada)
+        let hFotos = 0;
+        if (fts.length) {
+          const nLinhasFotos = Math.ceil(fts.length / 3);
+          hFotos = nLinhasFotos * 38 + 4;
+        }
+        const hTotal = hLinha + hFotos + 2;
+        checkPage(hTotal + 2);
+
+        // Fundo alternado
+        if (oss.indexOf(o) % 2 === 0) {
+          doc.setFillColor(...CINZA3);
+          doc.rect(ML, y - 1, CW, hLinha, 'F');
+        }
+
+        // Número OS
+        doc.setFontSize(8); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
+        doc.text(String(o.os || '—'), COL.os + 1, y + 3);
+
+        // Descrição
+        doc.setFontSize(8); doc.setTextColor(55,65,81); doc.setFont('helvetica', 'normal');
+        doc.text(descWrapped, COL.desc + 1, y + 3);
+
+        // HH
+        doc.setFontSize(8); doc.setTextColor(...ESCURO); doc.setFont('helvetica', 'bold');
+        doc.text(o.hh_prev_os ? o.hh_prev_os + 'h' : '—', COL.hh, y + 3, { align: 'right' });
+
+        // Badge criticidade
+        badge(crLbl, cr.bg, cr.txt, COL.crit, y + 3.5, 23);
+
+        // Badge status
+        badge(st.l, st.bg, st.txt, COL.st, y + 3.5, 27);
+
+        y += hLinha;
+
+        // ── Fotos ──
+        if (fts.length) {
+          const fotoW = 58, fotoH = 35, gap = 5;
+          checkPage(fotoH + 8);
+
+          // Fundo cinza claro para a área de fotos
+          doc.setFillColor(245, 245, 245);
+          doc.rect(ML, y, CW, hFotos, 'F');
+
+          let fx2 = ML + 3, fy2 = y + 3;
+          for (let fi = 0; fi < fts.length; fi++) {
+            if (fi > 0 && fi % 3 === 0) {
+              fx2 = ML + 3;
+              fy2 += fotoH + gap;
+              checkPage(fotoH + 5);
+            }
+            try {
+              // Converter URL para base64 via fetch
+              const resp = await fetch(fts[fi].url);
+              const blob = await resp.blob();
+              const b64  = await new Promise(res => {
+                const reader = new FileReader();
+                reader.onload = () => res(reader.result);
+                reader.readAsDataURL(blob);
+              });
+              const fmt = b64.startsWith('data:image/png') ? 'PNG' : 'JPEG';
+              doc.addImage(b64, fmt, fx2, fy2, fotoW, fotoH);
+            } catch(_) {
+              // Se falhar, desenhar placeholder
+              doc.setFillColor(...CINZA2);
+              doc.rect(fx2, fy2, fotoW, fotoH, 'F');
+              doc.setFontSize(7); doc.setTextColor(...CINZA1);
+              doc.text('Foto indisponível', fx2 + fotoW/2, fy2 + fotoH/2, { align: 'center' });
+            }
+            fx2 += fotoW + gap;
+          }
+          y += hFotos;
+        } else {
+          // Linha "sem fotos"
+          doc.setFontSize(7); doc.setTextColor(209,213,219); doc.setFont('helvetica', 'italic');
+          doc.text('Nenhuma foto anexada', ML + 2, y + 3);
+          y += 6;
+        }
+
+        // Linha divisória
+        doc.setDrawColor(...CINZA2); doc.setLineWidth(0.2);
+        doc.line(ML, y, PW - MR, y);
+        y += 3;
+      }
+
+      y += 6; // espaço entre setores
+    }
+
+    desenharRodape();
+    doc.save(codigo + '.pdf');
   }
-</style>
-</head>
-<body>
 
-<!-- Botão imprimir -->
-<div class="no-print" style="background:#f3f4f6;padding:10px 20px;display:flex;gap:10px;align-items:center;border-bottom:1px solid #e5e7eb">
-  <span style="font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.08em;text-transform:uppercase">Relatório gerado — ${codigo}</span>
-  <button onclick="window.print()" style="height:28px;padding:0 14px;border:none;border-radius:6px;background:#F8C100;font-size:11px;font-weight:700;cursor:pointer;margin-left:auto">🖨 Imprimir / Salvar PDF</button>
-</div>
-
-<!-- PÁGINA -->
-<div style="width:794px;margin:0 auto;padding:0 0 60px">
-
-  <!-- CABEÇALHO -->
-  <div style="display:flex;align-items:stretch;background:#1a1a1a">
-    <div style="background:#F8C100;width:68px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:14px">
-      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
-        <circle cx="18" cy="18" r="18" fill="#1a1a1a"/>
-        <path d="M18 6C18 6 24 12 24 18C24 22 21.5 25 18 26C14.5 25 12 22 12 18C12 12 18 6 18 6Z" fill="#F8C100"/>
-        <path d="M18 14C18 14 21 17 21 20C21 22 19.8 23.5 18 24C16.2 23.5 15 22 15 20C15 17 18 14 18 14Z" fill="#fff" opacity=".25"/>
-        <path d="M18 18C18 18 19.5 19.5 19.5 21C19.5 22 18.9 22.8 18 23C17.1 22.8 16.5 22 16.5 21C16.5 19.5 18 18 18 18Z" fill="#fff" opacity=".5"/>
-      </svg>
-    </div>
-    <div style="flex:1;padding:14px 20px;display:flex;flex-direction:column;gap:3px">
-      <div style="font-size:8px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.4)">Clealco Açúcar e Álcool · Manutenção Industrial</div>
-      <div style="font-size:14px;font-weight:700;color:#fff">Projetos de Segurança — Caldeiraria</div>
-      <div style="font-size:10px;color:rgba(255,255,255,.55)">Lista de Ordens de Serviço por Setor e Criticidade</div>
-    </div>
-    <div style="padding:14px 20px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;border-left:1px solid rgba(255,255,255,.1);min-width:185px">
-      <span style="font-family:monospace;font-size:11px;font-weight:600;color:#F8C100;letter-spacing:.06em">${codigo}</span>
-      <span style="font-size:9px;color:rgba(255,255,255,.4)">Gerado em ${dtStr}</span>
-    </div>
-  </div>
-
-  <!-- FILTROS -->
-  <div style="background:#f9fafb;border-bottom:2px solid #F8C100;padding:8px 20px;display:flex;gap:20px;flex-wrap:wrap">
-    <div style="display:flex;flex-direction:column;gap:1px">
-      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Equipe</div>
-      <div style="font-size:10px;font-weight:600">${_filtEquipe}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:1px">
-      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Tipo de Intervenção</div>
-      <div style="font-size:10px;font-weight:600">${tiposStr}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:1px">
-      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Criticidade</div>
-      <div style="font-size:10px;font-weight:600">${_filtCrit.length?_filtCrit.join(', '):'Todas'}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:1px">
-      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">MO</div>
-      <div style="font-size:10px;font-weight:600">${_filtMO||'Todas'}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:1px;margin-left:auto">
-      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Total</div>
-      <div style="font-size:10px;font-weight:600">${lista.length} OS · ${totalHH}h</div>
-    </div>
-  </div>
-
-  <!-- SETORES -->
-  <div style="padding:20px">
-    ${setoresHTML}
-  </div>
-
-  <!-- RODAPÉ -->
-  <div style="padding:8px 20px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;margin-top:20px">
-    <span style="font-size:8px;color:#9ca3af">MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria</span>
-    <span style="font-family:monospace;font-size:8px;color:#d1d5db">${codigo}</span>
-  </div>
-
-</div>
-</body>
-</html>`;
-
-    // Criar iframe oculto na própria página e imprimir — evita CSP
-    let frame = document.getElementById('_relatorio_frame');
-    if (frame) frame.remove();
-    frame = document.createElement('iframe');
-    frame.id = '_relatorio_frame';
-    frame.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;border:none;z-index:99999;background:#fff';
-    document.body.appendChild(frame);
-
-    // Botão fechar no topo do frame
-    const fechar = document.createElement('div');
-    fechar.style.cssText = 'position:fixed;top:10px;right:16px;z-index:100000;display:flex;gap:8px';
-    fechar.innerHTML = `
-      <button onclick="document.getElementById('_relatorio_frame').remove();this.parentNode.remove()"
-        style="height:34px;padding:0 14px;border:none;border-radius:6px;background:#6b7280;color:#fff;font-size:12px;font-weight:700;cursor:pointer">
-        ✕ Fechar
-      </button>
-      <button onclick="document.getElementById('_relatorio_frame').contentWindow.print()"
-        style="height:34px;padding:0 16px;border:none;border-radius:6px;background:#F8C100;color:#1a1a1a;font-size:12px;font-weight:700;cursor:pointer">
-        🖨 Imprimir / Salvar PDF
-      </button>`;
-    document.body.appendChild(fechar);
-
-    const doc = frame.contentDocument || frame.contentWindow.document;
-    doc.open();
-    doc.write(html);
-    doc.close();
-  }
 
   /* ══════════════════════════════════════
      CSS
