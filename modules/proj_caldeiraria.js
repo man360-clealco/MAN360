@@ -593,6 +593,7 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-lista-hdr">
           <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
           ${htmlFiltrosLista()}
+          <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-file-description"></i> Relatório PDF</button>
         </div>
         <div class="ps-lista">${htmlListaOS(lista)}</div>
       </div>
@@ -792,6 +793,208 @@ window.Modulos.proj_caldeiraria = (() => {
       if (e.key === 'Escape') { o.remove(); document.removeEventListener('keydown', esc); }
     });
     document.body.appendChild(o);
+  }
+
+
+  /* ══════════════════════════════════════
+     RELATÓRIO PDF
+  ══════════════════════════════════════ */
+  function gerarCodigoRelatorio() {
+    const agora = new Date();
+    const dd = String(agora.getDate()).padStart(2,'0');
+    const mm = String(agora.getMonth()+1).padStart(2,'0');
+    const seq = String(Math.floor(Math.random()*99)+1).padStart(2,'0');
+    return `MAN-CAL-PRJSEG.${mm}${dd}.${seq}`;
+  }
+
+  function statusLabel(s) {
+    if (!s) return {l:'—',c:'#9ca3af',b:'#f3f4f6'};
+    const sl = s.toLowerCase();
+    if (sl.includes('encerr'))    return {l:'Encerrada',  c:'#16a34a',b:'#dcfce7'};
+    if (sl.includes('andamento')) return {l:'Em andamento',c:'#2563eb',b:'#dbeafe'};
+    if (sl.includes('gerada')||sl.includes('aberta')) return {l:'Aberta',c:'#d97706',b:'#fef3c7'};
+    if (sl.includes('cancel'))    return {l:'Cancelada',  c:'#dc2626',b:'#fee2e2'};
+    if (sl.includes('suspend'))   return {l:'Suspensa',   c:'#7c3aed',b:'#ede9fe'};
+    return {l:s,c:'#6b7280',b:'#f3f4f6'};
+  }
+
+  function critLabel(c) {
+    if (!c) return {l:'—',cor:'#9ca3af',bg:'#f3f4f6'};
+    const m={alta:{l:'Alta',cor:'#dc2626',bg:'#fee2e2'},media:{l:'Média',cor:'#d97706',bg:'#fef3c7'},baixa:{l:'Baixa',cor:'#16a34a',bg:'#dcfce7'}};
+    return m[c]||{l:c,cor:'#6b7280',bg:'#f3f4f6'};
+  }
+
+  async function gerarRelatorio() {
+    const lista = osParaMetricas(); // usa filtro de equipe+tipo, não filtros da lista
+    if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
+
+    // Carregar fotos de todas as OS
+    const osNums = lista.map(o=>o.os).filter(Boolean);
+    let fotosMap = {};
+    if (osNums.length) {
+      const {data:fotos} = await getDB().from('proj_os_fotos').select('*').in('os',osNums);
+      (fotos||[]).forEach(f=>{ if(!fotosMap[f.os]) fotosMap[f.os]=[]; fotosMap[f.os].push(f); });
+    }
+
+    // Agrupar por desc_setor, ordenar por criticidade dentro de cada setor
+    const critOrdem = {alta:0,media:1,baixa:2};
+    const setores = {};
+    lista.forEach(o=>{
+      const s = o.desc_setor||o.setor||'Setor não informado';
+      if (!setores[s]) setores[s]=[];
+      setores[s].push(o);
+    });
+    Object.values(setores).forEach(arr=>{
+      arr.sort((a,b)=>(critOrdem[a.proj_criticidade]??9)-(critOrdem[b.proj_criticidade]??9));
+    });
+
+    const codigo = gerarCodigoRelatorio();
+    const agora  = new Date();
+    const dtStr  = agora.toLocaleDateString('pt-BR')+' às '+agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const tiposStr = _filtTipos.length ? _filtTipos.join(', ') : 'Todos';
+    const totalHH  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+
+    // Montar HTML dos setores
+    const setoresHTML = Object.entries(setores).map(([setor,oss])=>{
+      const hhSetor = oss.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const linhas  = oss.map(o=>{
+        const st  = statusLabel(o.status_os);
+        const cr  = critLabel(o.proj_criticidade);
+        const fts = fotosMap[o.os]||[];
+        const fotosHTML = fts.length
+          ? fts.map(f=>`<img src="${f.url}" style="width:150px;height:110px;object-fit:cover;border-radius:4px;border:1px solid #e5e7eb" loading="lazy">`).join('')
+          : '<span style="font-size:8px;color:#d1d5db;font-style:italic">Nenhuma foto anexada</span>';
+
+        return `
+          <tr style="border-bottom:1px solid #e5e7eb">
+            <td style="padding:7px 10px;font-family:monospace;font-size:10px;font-weight:600;vertical-align:top;white-space:nowrap">${o.os||'—'}</td>
+            <td style="padding:7px 10px;font-size:10px;color:#374151;line-height:1.4;vertical-align:top">${o.desc_servico||o.desc_os||'—'}</td>
+            <td style="padding:7px 10px;font-size:10px;font-weight:600;text-align:right;vertical-align:top;white-space:nowrap;font-family:monospace">${o.hh_prev_os?o.hh_prev_os+'h':'—'}</td>
+            <td style="padding:7px 10px;text-align:center;vertical-align:top">
+              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;background:${cr.bg};color:${cr.cor}">${cr.l}</span>
+            </td>
+            <td style="padding:7px 10px;text-align:center;vertical-align:top">
+              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:8px;font-weight:700;background:${st.b};color:${st.c}">${st.l}</span>
+            </td>
+          </tr>
+          <tr style="border-bottom:2px solid #e5e7eb">
+            <td colspan="5" style="padding:6px 10px 10px;background:#fafafa">
+              <div style="display:flex;gap:8px;flex-wrap:wrap">${fotosHTML}</div>
+            </td>
+          </tr>`;
+      }).join('');
+
+      return `
+        <div style="margin-bottom:28px;break-inside:avoid">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #1a1a1a">
+            <span style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;flex:1">${setor}</span>
+            <span style="font-size:9px;color:#6b7280">${oss.length} OS &nbsp;·&nbsp; ${hhSetor}h</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="background:#1a1a1a">
+                <th style="padding:6px 10px;text-align:left;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:72px">OS</th>
+                <th style="padding:6px 10px;text-align:left;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase">Descrição do Serviço</th>
+                <th style="padding:6px 10px;text-align:right;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:62px">HH Prev.</th>
+                <th style="padding:6px 10px;text-align:center;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:74px">Criticidade</th>
+                <th style="padding:6px 10px;text-align:center;color:#fff;font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;width:90px">Status</th>
+              </tr>
+            </thead>
+            <tbody>${linhas}</tbody>
+          </table>
+        </div>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Relatório ${codigo}</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:'Segoe UI',Arial,sans-serif; background:#fff; color:#1a1a1a; }
+  @media print {
+    @page { size:A4; margin:0; }
+    body { margin:0; }
+    .no-print { display:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Botão imprimir -->
+<div class="no-print" style="background:#f3f4f6;padding:10px 20px;display:flex;gap:10px;align-items:center;border-bottom:1px solid #e5e7eb">
+  <span style="font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.08em;text-transform:uppercase">Relatório gerado — ${codigo}</span>
+  <button onclick="window.print()" style="height:28px;padding:0 14px;border:none;border-radius:6px;background:#F8C100;font-size:11px;font-weight:700;cursor:pointer;margin-left:auto">🖨 Imprimir / Salvar PDF</button>
+</div>
+
+<!-- PÁGINA -->
+<div style="width:794px;margin:0 auto;padding:0 0 60px">
+
+  <!-- CABEÇALHO -->
+  <div style="display:flex;align-items:stretch;background:#1a1a1a">
+    <div style="background:#F8C100;width:68px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:14px">
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <circle cx="18" cy="18" r="18" fill="#1a1a1a"/>
+        <path d="M18 6C18 6 24 12 24 18C24 22 21.5 25 18 26C14.5 25 12 22 12 18C12 12 18 6 18 6Z" fill="#F8C100"/>
+        <path d="M18 14C18 14 21 17 21 20C21 22 19.8 23.5 18 24C16.2 23.5 15 22 15 20C15 17 18 14 18 14Z" fill="#fff" opacity=".25"/>
+        <path d="M18 18C18 18 19.5 19.5 19.5 21C19.5 22 18.9 22.8 18 23C17.1 22.8 16.5 22 16.5 21C16.5 19.5 18 18 18 18Z" fill="#fff" opacity=".5"/>
+      </svg>
+    </div>
+    <div style="flex:1;padding:14px 20px;display:flex;flex-direction:column;gap:3px">
+      <div style="font-size:8px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:rgba(255,255,255,.4)">Clealco Açúcar e Álcool · Manutenção Industrial</div>
+      <div style="font-size:14px;font-weight:700;color:#fff">Projetos de Segurança — Caldeiraria</div>
+      <div style="font-size:10px;color:rgba(255,255,255,.55)">Lista de Ordens de Serviço por Setor e Criticidade</div>
+    </div>
+    <div style="padding:14px 20px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:4px;border-left:1px solid rgba(255,255,255,.1);min-width:185px">
+      <span style="font-family:monospace;font-size:11px;font-weight:600;color:#F8C100;letter-spacing:.06em">${codigo}</span>
+      <span style="font-size:9px;color:rgba(255,255,255,.4)">Gerado em ${dtStr}</span>
+    </div>
+  </div>
+
+  <!-- FILTROS -->
+  <div style="background:#f9fafb;border-bottom:2px solid #F8C100;padding:8px 20px;display:flex;gap:20px;flex-wrap:wrap">
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Equipe</div>
+      <div style="font-size:10px;font-weight:600">${_filtEquipe}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Tipo de Intervenção</div>
+      <div style="font-size:10px;font-weight:600">${tiposStr}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Criticidade</div>
+      <div style="font-size:10px;font-weight:600">${_filtCrit.length?_filtCrit.join(', '):'Todas'}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:1px">
+      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">MO</div>
+      <div style="font-size:10px;font-weight:600">${_filtMO||'Todas'}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:1px;margin-left:auto">
+      <div style="font-size:7px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af">Total</div>
+      <div style="font-size:10px;font-weight:600">${lista.length} OS · ${totalHH}h</div>
+    </div>
+  </div>
+
+  <!-- SETORES -->
+  <div style="padding:20px">
+    ${setoresHTML}
+  </div>
+
+  <!-- RODAPÉ -->
+  <div style="padding:8px 20px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;margin-top:20px">
+    <span style="font-size:8px;color:#9ca3af">MAN360 · Clealco Açúcar e Álcool · Projetos de Segurança Caldeiraria</span>
+    <span style="font-family:monospace;font-size:8px;color:#d1d5db">${codigo}</span>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    // Abrir em nova aba
+    const blob = new Blob([html], {type:'text/html;charset=utf-8'});
+    const url  = URL.createObjectURL(blob);
+    window.open(url, '_blank');
   }
 
   /* ══════════════════════════════════════
