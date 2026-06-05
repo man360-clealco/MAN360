@@ -364,7 +364,7 @@ window.Modulos.cal_acomp = (() => {
     const p       = prev[item.id];
     const inicioDt= isExec||isPause ? item.iniciado_em : (p?p.inicioCalc:null);
     const fimDt   = isEnc ? item.encerrado_em : (p?p.fimCalc:null);
-    const aberto  = _itemAberto===item.id;
+    const aberto  = String(_itemAberto)===String(item.id);
 
     let rowCls='cd-svc-row';
     if(isExec)  rowCls+=' exec';
@@ -445,7 +445,7 @@ window.Modulos.cal_acomp = (() => {
     const estouro=hhAloc>hhDisp;
     const prev=prevConclusaoEquipe(equipe);
     const prevStr=prev?`${String(prev.getDate()).padStart(2,'0')}/${String(prev.getMonth()+1).padStart(2,'0')}`:'—';
-    const aberto=_itemAberto===`eq-${equipe.id}`;
+    const aberto=String(_itemAberto)===String(equipe.id);
 
     const hhCls=estouro?'over':hhAloc>hhDisp*0.85?'warn':'ok';
     const membros=(equipe.membros||[]).map(m=>`<span class="cd-membro">${(m.nome||m.chapa||'').split(' ')[0]}</span>`).join('');
@@ -459,7 +459,7 @@ window.Modulos.cal_acomp = (() => {
         <div class="cd-board-meta">
           <span class="cd-board-hh ${hhCls}">${hhAloc.toFixed(0)}h / ${hhDisp.toFixed(0)}h</span>
           <span class="cd-board-prev"><i class="ti ti-calendar-due"></i> ${prevStr}</span>
-          <button class="cd-cfg-btn" data-action="config-equipe" data-eq="${equipe.id}"><i class="ti ti-settings"></i></button>
+          <button class="cd-cfg-btn" data-action="config-equipe" data-eq="${equipe.id}" onclick="event.stopPropagation()"><i class="ti ti-settings"></i></button>
           <i class="ti ti-chevron-down cd-board-chev${aberto?' rot':''}"></i>
         </div>
       </div>
@@ -478,7 +478,7 @@ window.Modulos.cal_acomp = (() => {
       }
     }
     if(!items.length) return '';
-    const aberto=_itemAberto==='grupo-inter';
+    const aberto=String(_itemAberto)==='grupo-inter';
     const rows=items.map(item=>`<div class="cd-svc-row interrompido">
       <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
@@ -490,7 +490,7 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas"><span class="cd-dt-motivo">${item.obs||'—'}</span></div>
       </div>
-      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
+      ${String(_itemAberto)===String(item.id)?`<div class="cd-svc-acoes">
         <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
         <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>
       </div>`:''}
@@ -519,7 +519,7 @@ window.Modulos.cal_acomp = (() => {
       }
     }
     if(!items.length) return '';
-    const aberto=_itemAberto==='grupo-enc';
+    const aberto=String(_itemAberto)==='grupo-enc';
     const rows=items.map(item=>`<div class="cd-svc-row encerrado">
       <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
@@ -531,7 +531,7 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas">${htmlDtHora(item.encerrado_em,'fim')}</div>
       </div>
-      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
+      ${String(_itemAberto)===String(item.id)?`<div class="cd-svc-acoes">
         <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
       </div>`:''}
     </div>`).join('');
@@ -703,9 +703,12 @@ window.Modulos.cal_acomp = (() => {
         const iid=id?parseInt(id):null; const ieq=eq?parseInt(eq):null;
         switch(action){
           case 'toggle-eq':
-            _itemAberto=_itemAberto===eq?null:eq; renderizar(); break;
+            // eq é string do dataset, comparar como string
+            _itemAberto=String(_itemAberto)===String(eq)?null:eq;
+            renderizar(); break;
           case 'toggle-item':
-            _itemAberto=_itemAberto===iid?null:iid; renderizar(); break;
+            _itemAberto=String(_itemAberto)===String(iid)?null:iid;
+            renderizar(); break;
           case 'iniciar':       acaoIniciar(iid); break;
           case 'encerrar':      acaoEncerrar(iid); break;
           case 'pausar':        acaoPausar(iid,ieq); break;
