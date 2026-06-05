@@ -436,21 +436,22 @@ window.Modulos.cal_acomp = (() => {
         <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
     }
 
+    const btnAcoes = acoes
+      ? `<button class="cd-btn-acoes" onclick="(function(e){e.stopPropagation();window._manToggleItem(${item.id});})(event)" title="Ações"><i class="ti ti-chevron-down" style="font-size:11px;transition:transform .2s${aberto?';transform:rotate(180deg)':''}"></i></button>`
+      : '';
     return `<div class="${rowCls}" data-id="${item.id}">
       <div class="cd-svc-row-inner">
         ${posBtn}
-        <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
-          <div class="cd-svc-body">
-            <span class="cd-svc-os">${item.os||'S/N'}</span>
-            <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-            ${badgeTipo(tipo)}
-          </div>
-          <div class="cd-svc-datas">
-            ${dtInicio}
-            ${dtFim}
-          </div>
-          <div class="cd-svc-more" title="Opções">⋯</div>
+        <div class="cd-svc-body">
+          <span class="cd-svc-os">${item.os||'S/N'}</span>
+          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
+          ${badgeTipo(tipo)}
         </div>
+        <div class="cd-svc-datas">
+          ${dtInicio}
+          ${dtFim}
+        </div>
+        ${btnAcoes}
       </div>
       ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
     </div>`;
@@ -737,7 +738,7 @@ window.Modulos.cal_acomp = (() => {
           case 'toggle-eq':
             _itemAberto=String(_itemAberto)===String(eq)?null:eq;
             renderizar(); break;
-          case 'toggle-item': break; // tratado acima
+
           case 'iniciar':       acaoIniciar(iid); break;
           case 'encerrar':      acaoEncerrar(iid); break;
           case 'pausar':        acaoPausar(iid,ieq); break;
@@ -1170,15 +1171,15 @@ window.Modulos.cal_acomp = (() => {
 .cd-svc-row.interrompido{background:#fef9ee;}
 .cd-svc-row.sempassada{filter:grayscale(.4);}
 .cd-svc-row-inner{display:flex;align-items:stretch;}
-.cd-svc-main{display:flex;align-items:center;cursor:pointer;flex:1;min-width:0;}
-.cd-svc-main:hover{background:rgba(0,0,0,.02);}
-.cd-svc-main:hover .cd-svc-more{opacity:1;}
-.cd-pos{display:flex;flex-direction:column;gap:2px;padding:0 5px;justify-content:center;flex-shrink:0;border-right:1px solid var(--border);background:#fafafa;}
-.cd-pos-empty{width:28px;background:#fafafa;border-right:1px solid var(--border);}
-.cd-pos-btn{width:20px;height:16px;border:none;border-radius:3px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;color:#d1d5db;padding:0;}
-.cd-pos-btn:not(:disabled):hover{background:#e5e7eb;color:#374151;}
+.cd-svc-row-inner{display:flex;align-items:stretch;}
+
+.cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 4px;justify-content:center;flex-shrink:0;border-right:1px solid var(--border);background:#fafafa;min-width:26px;}
+.cd-pos-empty{width:26px;min-width:26px;background:#fafafa;border-right:1px solid var(--border);}
+.cd-pos-btn{width:18px;height:15px;border:1px solid #e5e7eb;border-radius:2px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;padding:0;line-height:1;}
+.cd-pos-btn:not(:disabled):hover{background:#374151;color:#fff;border-color:#374151;}
 .cd-pos-btn:disabled{opacity:.2;cursor:not-allowed;}
-.cd-svc-more{flex-shrink:0;width:24px;height:100%;display:flex;align-items:center;justify-content:center;font-size:16px;color:#9ca3af;opacity:0;transition:opacity .15s;cursor:pointer;padding:0 4px;}
+.cd-btn-acoes{height:32px;width:32px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#9ca3af;flex-shrink:0;border-left:1px solid var(--border);}
+.cd-btn-acoes:hover{background:#f3f4f6;color:var(--dark1,#1e1e1e);}
 .cd-svc-body{display:flex;align-items:center;gap:7px;padding:8px 10px;flex:1;min-width:0;}
 .cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:58px;font-variant-numeric:tabular-nums;}
 .cd-svc-desc{font-size:10px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1256,19 +1257,13 @@ window.Modulos.cal_acomp = (() => {
 
   async function init(container) {
     _container=container; injetarCSS();
+    // Expor toggle global para onclick inline
+    window._manToggleItem = function(iid) {
+      _itemAberto = String(_itemAberto)===String(iid) ? null : iid;
+      renderizar();
+    };
 
-    // ── Delegação permanente de eventos — roda uma vez, nunca perde com rerenders ──
-    _container.addEventListener('click', function(e) {
-      // Toggle item (área clicável da linha de serviço)
-      const svcMain = e.target.closest('.cd-toggle-item');
-      if (svcMain && !e.target.closest('[data-action]')) {
-        e.stopPropagation();
-        const iid = svcMain.dataset.id ? parseInt(svcMain.dataset.id) : null;
-        _itemAberto = String(_itemAberto) === String(iid) ? null : iid;
-        renderizar();
-        return;
-      }
-    });
+
     _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
     try { await carregarTudo(); renderizar(); }
     catch(e) {
