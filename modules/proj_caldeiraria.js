@@ -927,7 +927,14 @@ window.Modulos.proj_caldeiraria = (() => {
       fotos:  escolha,
     });
 
-    window.open('relatorio.html?' + params.toString(), '_blank');
+    // Usar <a> em vez de window.open — não é bloqueado como popup após await
+    const a = document.createElement('a');
+    a.href = 'relatorio.html?' + params.toString();
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => a.remove(), 100);
   }
 
 
