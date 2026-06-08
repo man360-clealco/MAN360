@@ -864,77 +864,63 @@ window.Modulos.proj_caldeiraria = (() => {
     const lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
-    // Modal de escolha de fotos
-    const escolha = await new Promise(resolve => {
-      const o = document.createElement('div');
-      o.className = 'cd-overlay';
-      o.innerHTML = `<div class="cd-modal" style="width:320px">
-        <div class="cd-modal-titulo" style="font-size:14px;margin-bottom:4px">
-          <i class="ti ti-external-link"></i> Abrir Relatório
-        </div>
-        <div style="font-size:11px;color:#6b7280;margin-bottom:16px">
-          Como deseja exibir as fotos?
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <button class="ps-rel-opt" data-val="none">
-            <div class="ps-rel-opt-icone">📄</div>
-            <div class="ps-rel-opt-info">
-              <div class="ps-rel-opt-titulo">Sem fotos</div>
-              <div class="ps-rel-opt-sub">Leve e rápido · ideal para e-mail</div>
-            </div>
-          </button>
-          <button class="ps-rel-opt" data-val="compressed">
-            <div class="ps-rel-opt-icone">🗜</div>
-            <div class="ps-rel-opt-info">
-              <div class="ps-rel-opt-titulo">Fotos comprimidas</div>
-              <div class="ps-rel-opt-sub">Equilibrado · ~5MB estimado</div>
-            </div>
-          </button>
-          <button class="ps-rel-opt" data-val="original">
-            <div class="ps-rel-opt-icone">📷</div>
-            <div class="ps-rel-opt-info">
-              <div class="ps-rel-opt-titulo">Fotos originais</div>
-              <div class="ps-rel-opt-sub">Alta qualidade · arquivo maior</div>
-            </div>
-          </button>
-        </div>
-        <button class="cd-modal-cancel" style="width:100%;margin-top:12px">Cancelar</button>
-      </div>`;
-      o.querySelectorAll('.ps-rel-opt').forEach(btn => {
-        btn.addEventListener('click', () => { o.remove(); resolve(btn.dataset.val); });
-      });
-      o.querySelector('.cd-modal-cancel').addEventListener('click', () => { o.remove(); resolve(null); });
-      o.addEventListener('click', e => { if(e.target===o){ o.remove(); resolve(null); }});
-      document.body.appendChild(o);
+    // ── Modal de escolha ──
+    const overlay = document.createElement('div');
+    overlay.className = 'cd-overlay';
+    overlay.innerHTML =
+      '<div class="cd-modal" style="width:320px">' +
+        '<div class="cd-modal-titulo" style="font-size:14px;margin-bottom:4px">Abrir Relatório</div>' +
+        '<div style="font-size:11px;color:#6b7280;margin-bottom:14px">Como deseja exibir as fotos?</div>' +
+        '<div style="display:flex;flex-direction:column;gap:8px">' +
+          '<button id="rel-none"   style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
+            '<span style="font-size:22px">📄</span>' +
+            '<span><strong style="display:block;font-size:12px">Sem fotos</strong><span style="font-size:10px;color:#6b7280">Leve e rápido · ideal para e-mail</span></span>' +
+          '</button>' +
+          '<button id="rel-comp"  style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
+            '<span style="font-size:22px">🗜</span>' +
+            '<span><strong style="display:block;font-size:12px">Fotos comprimidas</strong><span style="font-size:10px;color:#6b7280">Equilibrado · ~5MB estimado</span></span>' +
+          '</button>' +
+          '<button id="rel-orig"  style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
+            '<span style="font-size:22px">📷</span>' +
+            '<span><strong style="display:block;font-size:12px">Fotos originais</strong><span style="font-size:10px;color:#6b7280">Alta qualidade · arquivo maior</span></span>' +
+          '</button>' +
+        '</div>' +
+        '<button id="rel-cancel" style="width:100%;margin-top:12px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-size:10px;color:#6b7280">Cancelar</button>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    const escolha = await new Promise(function(resolve) {
+      overlay.querySelector('#rel-none').onclick   = function() { overlay.remove(); resolve('none'); };
+      overlay.querySelector('#rel-comp').onclick   = function() { overlay.remove(); resolve('compressed'); };
+      overlay.querySelector('#rel-orig').onclick   = function() { overlay.remove(); resolve('original'); };
+      overlay.querySelector('#rel-cancel').onclick = function() { overlay.remove(); resolve(null); };
+      overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); resolve(null); } };
     });
 
     if (!escolha) return;
 
     const codigo  = gerarCodigoRelatorio();
     const agora   = new Date();
-    const dtStr   = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    const totalHH = lista.reduce((s,o) => s+(o.hh_prev_os||0), 0);
+    const dtStr   = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    const totalHH = lista.reduce(function(s,o){ return s + (o.hh_prev_os||0); }, 0);
 
-    const params = new URLSearchParams({
-      equipe: _filtEquipe,
-      tipos:  _filtTipos.join('|'),
-      crits:  _filtCrit.join(','),
-      mo:     _filtMO||'',
-      status: _filtStatus.join(','),
-      cod:    codigo,
-      dt:     dtStr,
-      hh:     Math.round(totalHH),
-      fotos:  escolha,
-    });
+    const qs = 'equipe='  + encodeURIComponent(_filtEquipe) +
+               '&tipos='  + encodeURIComponent(_filtTipos.join('|')) +
+               '&crits='  + encodeURIComponent(_filtCrit.join(',')) +
+               '&mo='     + encodeURIComponent(_filtMO||'') +
+               '&status=' + encodeURIComponent(_filtStatus.join(',')) +
+               '&cod='    + encodeURIComponent(codigo) +
+               '&dt='     + encodeURIComponent(dtStr) +
+               '&hh='     + Math.round(totalHH) +
+               '&fotos='  + escolha;
 
-    // Usar <a> em vez de window.open — não é bloqueado como popup após await
     const a = document.createElement('a');
-    a.href = 'relatorio.html?' + params.toString();
+    a.href = 'relatorio.html?' + qs;
     a.target = '_blank';
-    a.rel = 'noopener';
+    a.rel = 'noopener noreferrer';
     document.body.appendChild(a);
     a.click();
-    setTimeout(() => a.remove(), 100);
+    a.remove();
   }
 
 
