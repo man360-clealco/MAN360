@@ -860,67 +860,71 @@ window.Modulos.proj_caldeiraria = (() => {
     return m[c]||{l:c,cor:'#6b7280',bg:'#f3f4f6'};
   }
 
-  async function gerarRelatorio() {
-    const lista = osFiltradas();
+  function gerarRelatorio() {
+    var lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
-    // ── Modal de escolha ──
-    const overlay = document.createElement('div');
-    overlay.className = 'cd-overlay';
-    overlay.innerHTML =
-      '<div class="cd-modal" style="width:320px">' +
-        '<div class="cd-modal-titulo" style="font-size:14px;margin-bottom:4px">Abrir Relatório</div>' +
-        '<div style="font-size:11px;color:#6b7280;margin-bottom:14px">Como deseja exibir as fotos?</div>' +
-        '<div style="display:flex;flex-direction:column;gap:8px">' +
-          '<button id="rel-none"   style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
-            '<span style="font-size:22px">📄</span>' +
-            '<span><strong style="display:block;font-size:12px">Sem fotos</strong><span style="font-size:10px;color:#6b7280">Leve e rápido · ideal para e-mail</span></span>' +
-          '</button>' +
-          '<button id="rel-comp"  style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
-            '<span style="font-size:22px">🗜</span>' +
-            '<span><strong style="display:block;font-size:12px">Fotos comprimidas</strong><span style="font-size:10px;color:#6b7280">Equilibrado · ~5MB estimado</span></span>' +
-          '</button>' +
-          '<button id="rel-orig"  style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;text-align:left">' +
-            '<span style="font-size:22px">📷</span>' +
-            '<span><strong style="display:block;font-size:12px">Fotos originais</strong><span style="font-size:10px;color:#6b7280">Alta qualidade · arquivo maior</span></span>' +
-          '</button>' +
-        '</div>' +
-        '<button id="rel-cancel" style="width:100%;margin-top:12px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-size:10px;color:#6b7280">Cancelar</button>' +
+    // Criar overlay do modal
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center';
+    
+    var modal = document.createElement('div');
+    modal.style.cssText = 'background:#fff;border-radius:10px;padding:18px;width:320px;box-shadow:0 8px 30px rgba(0,0,0,.15)';
+    modal.innerHTML =
+      '<div style="font-size:14px;font-weight:700;margin-bottom:4px">Abrir Relatório</div>' +
+      '<div style="font-size:11px;color:#6b7280;margin-bottom:14px">Como deseja exibir as fotos?</div>' +
+      '<div id="rel-opts" style="display:flex;flex-direction:column;gap:8px">' +
+        '<button id="opc-none" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
+          '<span style="font-size:22px">📄</span>' +
+          '<span><b style="display:block;font-size:12px">Sem fotos</b><span style="font-size:10px;color:#6b7280">Leve e rápido · ideal para e-mail</span></span>' +
+        '</button>' +
+        '<button id="opc-comp" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
+          '<span style="font-size:22px">🗜</span>' +
+          '<span><b style="display:block;font-size:12px">Fotos comprimidas</b><span style="font-size:10px;color:#6b7280">Equilibrado · ~5MB estimado</span></span>' +
+        '</button>' +
+        '<button id="opc-orig" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
+          '<span style="font-size:22px">📷</span>' +
+          '<span><b style="display:block;font-size:12px">Fotos originais</b><span style="font-size:10px;color:#6b7280">Alta qualidade · arquivo maior</span></span>' +
+        '</button>' +
+        '<button id="opc-cancel" style="width:100%;margin-top:4px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:10px;color:#6b7280">Cancelar</button>' +
       '</div>';
-    document.body.appendChild(overlay);
+    ov.appendChild(modal);
+    document.body.appendChild(ov);
 
-    const escolha = await new Promise(function(resolve) {
-      overlay.querySelector('#rel-none').onclick   = function() { overlay.remove(); resolve('none'); };
-      overlay.querySelector('#rel-comp').onclick   = function() { overlay.remove(); resolve('compressed'); };
-      overlay.querySelector('#rel-orig').onclick   = function() { overlay.remove(); resolve('original'); };
-      overlay.querySelector('#rel-cancel').onclick = function() { overlay.remove(); resolve(null); };
-      overlay.onclick = function(e) { if (e.target === overlay) { overlay.remove(); resolve(null); } };
-    });
+    function fechar() { document.body.removeChild(ov); }
 
-    if (!escolha) return;
+    function abrir(fotos) {
+      fechar();
+      var codigo = gerarCodigoRelatorio();
+      var agora  = new Date();
+      var dtStr  = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+      var totalHH = 0;
+      for (var i=0; i<lista.length; i++) totalHH += (lista[i].hh_prev_os||0);
 
-    const codigo  = gerarCodigoRelatorio();
-    const agora   = new Date();
-    const dtStr   = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    const totalHH = lista.reduce(function(s,o){ return s + (o.hh_prev_os||0); }, 0);
+      var qs = 'equipe='  + encodeURIComponent(_filtEquipe)
+             + '&tipos='  + encodeURIComponent(_filtTipos.join('|'))
+             + '&crits='  + encodeURIComponent(_filtCrit.join(','))
+             + '&mo='     + encodeURIComponent(_filtMO||'')
+             + '&status=' + encodeURIComponent(_filtStatus.join(','))
+             + '&cod='    + encodeURIComponent(codigo)
+             + '&dt='     + encodeURIComponent(dtStr)
+             + '&hh='     + Math.round(totalHH)
+             + '&fotos='  + fotos;
 
-    const qs = 'equipe='  + encodeURIComponent(_filtEquipe) +
-               '&tipos='  + encodeURIComponent(_filtTipos.join('|')) +
-               '&crits='  + encodeURIComponent(_filtCrit.join(',')) +
-               '&mo='     + encodeURIComponent(_filtMO||'') +
-               '&status=' + encodeURIComponent(_filtStatus.join(',')) +
-               '&cod='    + encodeURIComponent(codigo) +
-               '&dt='     + encodeURIComponent(dtStr) +
-               '&hh='     + Math.round(totalHH) +
-               '&fotos='  + escolha;
+      var a = document.createElement('a');
+      a.href = 'relatorio.html?' + qs;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
 
-    const a = document.createElement('a');
-    a.href = 'relatorio.html?' + qs;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    document.getElementById('opc-none').onclick   = function() { abrir('none'); };
+    document.getElementById('opc-comp').onclick   = function() { abrir('compressed'); };
+    document.getElementById('opc-orig').onclick   = function() { abrir('original'); };
+    document.getElementById('opc-cancel').onclick = function() { fechar(); };
+    ov.onclick = function(e) { if (e.target === ov) fechar(); };
   }
 
 
