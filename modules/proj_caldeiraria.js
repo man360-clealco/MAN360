@@ -615,7 +615,7 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-lista-hdr">
           <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
           ${htmlFiltrosLista()}
-          <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-file-description"></i> Relatório PDF</button>
+          <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
         </div>
         <div class="ps-lista">${htmlListaOS(lista)}</div>
       </div>
@@ -864,21 +864,67 @@ window.Modulos.proj_caldeiraria = (() => {
     const lista = osFiltradas();
     if (!lista.length) { alert('Nenhuma OS para gerar relatório.'); return; }
 
-    const codigo   = gerarCodigoRelatorio();
-    const agora    = new Date();
-    const dtStr    = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    const totalHH  = lista.reduce((s,o) => s+(o.hh_prev_os||0), 0);
-    const tiposStr = _filtTipos.join('|');
+    // Modal de escolha de fotos
+    const escolha = await new Promise(resolve => {
+      const o = document.createElement('div');
+      o.className = 'cd-overlay';
+      o.innerHTML = `<div class="cd-modal" style="width:320px">
+        <div class="cd-modal-titulo" style="font-size:14px;margin-bottom:4px">
+          <i class="ti ti-external-link"></i> Abrir Relatório
+        </div>
+        <div style="font-size:11px;color:#6b7280;margin-bottom:16px">
+          Como deseja exibir as fotos?
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="ps-rel-opt" data-val="none">
+            <div class="ps-rel-opt-icone">📄</div>
+            <div class="ps-rel-opt-info">
+              <div class="ps-rel-opt-titulo">Sem fotos</div>
+              <div class="ps-rel-opt-sub">Leve e rápido · ideal para e-mail</div>
+            </div>
+          </button>
+          <button class="ps-rel-opt" data-val="compressed">
+            <div class="ps-rel-opt-icone">🗜</div>
+            <div class="ps-rel-opt-info">
+              <div class="ps-rel-opt-titulo">Fotos comprimidas</div>
+              <div class="ps-rel-opt-sub">Equilibrado · ~5MB estimado</div>
+            </div>
+          </button>
+          <button class="ps-rel-opt" data-val="original">
+            <div class="ps-rel-opt-icone">📷</div>
+            <div class="ps-rel-opt-info">
+              <div class="ps-rel-opt-titulo">Fotos originais</div>
+              <div class="ps-rel-opt-sub">Alta qualidade · arquivo maior</div>
+            </div>
+          </button>
+        </div>
+        <button class="cd-modal-cancel" style="width:100%;margin-top:12px">Cancelar</button>
+      </div>`;
+      o.querySelectorAll('.ps-rel-opt').forEach(btn => {
+        btn.addEventListener('click', () => { o.remove(); resolve(btn.dataset.val); });
+      });
+      o.querySelector('.cd-modal-cancel').addEventListener('click', () => { o.remove(); resolve(null); });
+      o.addEventListener('click', e => { if(e.target===o){ o.remove(); resolve(null); }});
+      document.body.appendChild(o);
+    });
+
+    if (!escolha) return;
+
+    const codigo  = gerarCodigoRelatorio();
+    const agora   = new Date();
+    const dtStr   = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const totalHH = lista.reduce((s,o) => s+(o.hh_prev_os||0), 0);
 
     const params = new URLSearchParams({
       equipe: _filtEquipe,
-      tipos:  tiposStr,
+      tipos:  _filtTipos.join('|'),
       crits:  _filtCrit.join(','),
       mo:     _filtMO||'',
       status: _filtStatus.join(','),
       cod:    codigo,
       dt:     dtStr,
       hh:     Math.round(totalHH),
+      fotos:  escolha,
     });
 
     window.open('relatorio.html?' + params.toString(), '_blank');
@@ -1001,6 +1047,11 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-modal-titulo{font-size:13px;font-weight:700;margin-bottom:12px;color:#1a1a1a;}
 .ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;width:100%;}
 .ps-btn-primary{height:28px;padding:0 12px;border:none;border-radius:var(--radius-sm);background:var(--yellow,#F8C100);font-family:var(--font);font-size:11px;font-weight:700;color:#1a1a1a;cursor:pointer;display:flex;align-items:center;gap:5px;justify-content:center;}
+.ps-rel-opt{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);cursor:pointer;text-align:left;font-family:var(--font);transition:border-color .15s,background .15s;}
+.ps-rel-opt:hover{border-color:var(--yellow);background:#fffbeb;}
+.ps-rel-opt-icone{font-size:22px;flex-shrink:0;}
+.ps-rel-opt-titulo{font-size:12px;font-weight:700;color:#1a1a1a;}
+.ps-rel-opt-sub{font-size:10px;color:#6b7280;margin-top:2px;}
 .ps-btn-primary:hover{background:#daa900;}
 .ps-tipos-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;margin-bottom:4px;}
 .ps-tipo-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);}
