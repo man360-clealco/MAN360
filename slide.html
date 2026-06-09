@@ -88,9 +88,9 @@ async function main(){
   const p=gp();
   try{
     // Buscar OS
-    let q='select=os,desc_servico,hh_prev_os,proj_criticidade,proj_mo_tipo,status_os,proj_tipo_intervencao';
+    let q='select=os,desc_servico,hh_prev_os,proj_criticidade,status_os,proj_tipo_intervencao';
     q+='&equipe=eq.'+encodeURIComponent(p.equipe)+'&tipo_atividade=neq.MCU';
-    if(p.tipos.length) q+='&proj_tipo_intervencao=in.('+p.tipos.map(t=>'"'+t+'"').join(',')+')';
+    if(p.tipos.length) q+='&proj_tipo_intervencao=in.('+p.tipos.map(t=>'"'+t.trim()+'"').join(',')+')';
     const os=await db('ordens_servico',q);
 
     const totalHH=os.reduce((s,o)=>s+(o.hh_prev_os||0),0);
