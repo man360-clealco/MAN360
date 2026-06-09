@@ -26,15 +26,26 @@ window.Modulos.cal_acomp = (() => {
   }
   function fmtDia(d) {
     if (!d) return '—';
-    const dt = typeof d==='string' ? new Date(d.includes('T')?d:d+'T12:00:00') : new Date(d);
+    let dt;
+    if (typeof d === 'string') {
+      // Forçar leitura como local adicionando T12:00:00 se só data, ou removendo Z/offset
+      const s = d.includes('T') ? d.replace('Z','').replace(/[+-]\d{2}:\d{2}$/,'') : d+'T12:00:00';
+      dt = new Date(s);
+    } else {
+      dt = d instanceof Date ? d : new Date(d);
+    }
     const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
     return `${dias[dt.getDay()]} ${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}`;
   }
   function fmtHora(d) {
     if (!d) return '';
-    const dt = typeof d==='string' ? new Date(d) : new Date(d);
-    // Usar toLocaleTimeString para respeitar timezone local do browser
-    return dt.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', hour12:false});
+    if (typeof d === 'string') {
+      // Extrair hora diretamente da string ISO se tiver formato T
+      const m = d.match(/T(\d{2}):(\d{2})/);
+      if (m) return m[1] + ':' + m[2];
+    }
+    const dt = d instanceof Date ? d : new Date(d);
+    return String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
   }
   function fmtDiaHora(d) {
     if (!d) return '—';
@@ -917,11 +928,9 @@ window.Modulos.cal_acomp = (() => {
 
   function dtHoraToISO(dh) {
     if(!dh) return null;
-    // Construir data local explicitamente para evitar problema de timezone
-    const [ano,mes,dia] = dh.data.split('-').map(Number);
-    const [h,m] = dh.hora.split(':').map(Number);
-    const d = new Date(ano, mes-1, dia, h, m, 0, 0);
-    return d.toISOString();
+    // Salvar sem timezone — formato local sem conversão UTC
+    // Evita problema de +3h ao exibir em browsers configurados como UTC
+    return dh.data + 'T' + dh.hora + ':00';
   }
 
   function modalOpcoes(titulo,opcoes) {
