@@ -77,7 +77,7 @@ window.Modulos.cal_acomp = (() => {
   /* ── Folgas ── */
   function projetarFolgas(colab, ini, fim) {
     const folgas = new Set();
-    const esc = _escalas[colab.escala_id]; if (!esc) return folgas;
+    const esc = _escalas[colab.escala]; if (!esc) return folgas;
     const di = new Date(ini); di.setHours(12,0,0,0);
     const df = new Date(fim); df.setHours(12,0,0,0);
     if (esc.tipo_ciclo==='ADM') {
@@ -91,7 +91,8 @@ window.Modulos.cal_acomp = (() => {
     while(d<=df){
       const diff=Math.round((d-ancD)/86400000);
       const pos=((diff%ciclo)+ciclo)%ciclo;
-      if(pos===esc.dias_trabalho)folgas.add(isoDate(d));
+      // ancora É a data da folga → pos===0 significa folga
+      if(pos===0)folgas.add(isoDate(d));
       d.setDate(d.getDate()+1);
     }
     return folgas;
@@ -101,13 +102,13 @@ window.Modulos.cal_acomp = (() => {
   function hhEquipeDia(equipe, data) {
     const iso=isoDate(data); let total=0;
     for (const m of (equipe.membros||[])) {
-      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-      if(!c||!c.turno_id) continue;
+      const col=_colabs.find(x=>x.cracha===m.chapa);
+      if(!col||!col.turno) continue;
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
       if(_justific.some(j=>j.chapa===m.chapa&&iso>=j.data_inicio&&iso<=j.data_fim)) continue;
-      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
+      const folgas=projetarFolgas(col,iniSem(_sem),fimSem(_sem+2));
       if(folgas.has(iso)) continue;
-      const t=_turnos[c.turno_id]; if(!t) continue;
+      const t=_turnos[col.turno]; if(!t) continue;
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
       const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
       total+=Math.max(0,((sh*60+sm)-(eh*60+em)-(t.intervalo_min||0))/60);
@@ -119,13 +120,13 @@ window.Modulos.cal_acomp = (() => {
   function entradaEquipeDia(equipe, data) {
     let minEntrada = 999;
     for (const m of (equipe.membros||[])) {
-      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-      if(!c||!c.turno_id) continue;
+      const col=_colabs.find(x=>x.cracha===m.chapa);
+      if(!col||!col.turno) continue;
       const iso=isoDate(data);
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
-      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
+      const folgas=projetarFolgas(col,iniSem(_sem),fimSem(_sem+2));
       if(folgas.has(iso)) continue;
-      const t=_turnos[c.turno_id]; if(!t) continue;
+      const t=_turnos[col.turno]; if(!t) continue;
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
       if(eh*60+em < minEntrada) minEntrada=eh*60+em;
     }
@@ -145,11 +146,11 @@ window.Modulos.cal_acomp = (() => {
     // Horário de saída real do turno (do primeiro membro com turno)
     function horaSaidaTurno() {
       for(const m of (equipe.membros||[])){
-        const col=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-        if(!col||!col.turno_id) continue;
-        const t=_turnos[col.turno_id]; if(!t) continue;
+        const col=_colabs.find(x=>x.cracha===m.chapa);
+        if(!col||!col.turno) continue;
+        const t=_turnos[col.turno]; if(!t) continue;
         const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
-        return sh*60+sm; // minutos desde 00:00
+        return sh*60+sm;
       }
       return 15*60+20; // fallback 15:20
     }
@@ -332,8 +333,14 @@ window.Modulos.cal_acomp = (() => {
     _colabs=colabs||[];
     const {data:turnos}=await db.from('apt_turnos').select('*');
     const {data:escalas}=await db.from('apt_escalas').select('*');
-    _turnos={}; (turnos||[]).forEach(t=>{_turnos[t.id]=t;});
-    _escalas={}; (escalas||[]).forEach(e=>{_escalas[e.id]=e;});
+    _turnos={}; (turnos||[]).forEach(t=>{
+      _turnos[t.id]=t;      // índice por id (legado)
+      if(t.nome) _turnos[t.nome]=t; // índice por nome (campo 'turno' do colaborador)
+    });
+    _escalas={}; (escalas||[]).forEach(e=>{
+      _escalas[e.id]=e;       // índice por id
+      if(e.nome) _escalas[e.nome]=e; // índice por nome (campo 'escala' do colaborador)
+    });
 
     const ini2=isoDate(iniSem(_sem-1)); // 2 semanas atrás para folgas
     const fim2=isoDate(fimSem(_sem+1));
