@@ -33,7 +33,8 @@ window.Modulos.cal_acomp = (() => {
   function fmtHora(d) {
     if (!d) return '';
     const dt = typeof d==='string' ? new Date(d) : new Date(d);
-    return `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
+    // Usar toLocaleTimeString para respeitar timezone local do browser
+    return dt.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit', hour12:false});
   }
   function fmtDiaHora(d) {
     if (!d) return '—';
@@ -916,7 +917,11 @@ window.Modulos.cal_acomp = (() => {
 
   function dtHoraToISO(dh) {
     if(!dh) return null;
-    return new Date(dh.data+'T'+dh.hora+':00').toISOString();
+    // Construir data local explicitamente para evitar problema de timezone
+    const [ano,mes,dia] = dh.data.split('-').map(Number);
+    const [h,m] = dh.hora.split(':').map(Number);
+    const d = new Date(ano, mes-1, dia, h, m, 0, 0);
+    return d.toISOString();
   }
 
   function modalOpcoes(titulo,opcoes) {
