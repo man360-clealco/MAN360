@@ -333,21 +333,25 @@ window.Modulos.cal_acomp = (() => {
     const {data:colabs}=await db.from('apt_colaboradores').select('*').eq('modalidade','CAL');
     _colabs=colabs||[];
 
-    // Turnos — indexar por id E por nome
-    const {data:turnos,error:eTurnos}=await db.from('apt_turnos').select('*');
-    if(eTurnos) console.warn('apt_turnos:',eTurnos.message);
-    _turnos={}; (turnos||[]).forEach(t=>{
-      if(t.id)   _turnos[t.id]=t;
-      if(t.nome) _turnos[t.nome]=t;
-    });
+    // Turnos — tolerante a falha, fallback embutido
+    _turnos={};
+    try {
+      const {data:turnos}=await db.from('apt_turnos').select('*');
+      (turnos||[]).forEach(t=>{
+        if(t.id)   _turnos[t.id]=t;
+        if(t.nome) _turnos[t.nome]=t;
+      });
+    } catch(e){ console.warn('apt_turnos indisponível'); }
 
-    // Escalas — indexar por id E por nome
-    const {data:escalas,error:eEscalas}=await db.from('apt_escalas').select('*');
-    if(eEscalas) console.warn('apt_escalas:',eEscalas.message);
-    _escalas={}; (escalas||[]).forEach(e=>{
-      if(e.id)   _escalas[e.id]=e;
-      if(e.nome) _escalas[e.nome]=e;
-    });
+    // Escalas — tolerante a falha, fallback embutido
+    _escalas={};
+    try {
+      const {data:escalas}=await db.from('apt_escalas').select('*');
+      (escalas||[]).forEach(e=>{
+        if(e.id)   _escalas[e.id]=e;
+        if(e.nome) _escalas[e.nome]=e;
+      });
+    } catch(e){ console.warn('apt_escalas indisponível'); }
 
     // Férias e justificativas — tolerante a falha
     const ini2=isoDate(iniSem(_sem-1));
@@ -365,15 +369,19 @@ window.Modulos.cal_acomp = (() => {
     const {data:mbs}=await db.from('cal_equipe_membros').select('*');
     _equipes=(eqs||[]).map(e=>({...e,he_ativo:e.he_ativo||false,membros:(mbs||[]).filter(m=>m.equipe_id===e.id).map(m=>({chapa:m.chapa,nome:m.nome}))}));
 
-    const {data:fila}=await db.from('cal_fila').select('*').eq('semana',_sem).eq('ano',ano).order('ordem',{ascending:true});
-    _fila={};
-    (fila||[]).forEach(item=>{if(!_fila[item.equipe_id])_fila[item.equipe_id]=[];_fila[item.equipe_id].push(item);});
+    try {
+      const {data:fila}=await db.from('cal_fila').select('*').eq('semana',_sem).eq('ano',ano).order('ordem',{ascending:true});
+      _fila={};
+      (fila||[]).forEach(item=>{if(!_fila[item.equipe_id])_fila[item.equipe_id]=[];_fila[item.equipe_id].push(item);});
+    } catch(e){ console.warn('cal_fila:',e); _fila={}; }
 
-    const {data:prog}=await db.from('programacao_semanal').select('*').eq('semana',_sem).eq('ano',ano).like('equipe','CAL%');
-    _progSem=prog||[];
-    const anoAnt=iniSem(_sem-1).getFullYear();
-    const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
-    _progAnt=progAnt||[];
+    try {
+      const {data:prog}=await db.from('programacao_semanal').select('*').eq('semana',_sem).eq('ano',ano).like('equipe','CAL%');
+      _progSem=prog||[];
+      const anoAnt=iniSem(_sem-1).getFullYear();
+      const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
+      _progAnt=progAnt||[];
+    } catch(e){ console.warn('prog_semanal:',e); _progSem=[]; _progAnt=[]; }
     // Pré-calcular folgas de todos os colaboradores para o range relevante
     _folgasCache={};
     const rangeIni=iniSem(_sem-1), rangeFim=fimSem(_sem+4);
