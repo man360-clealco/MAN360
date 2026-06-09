@@ -122,7 +122,7 @@ window.Modulos.cal_acomp = (() => {
 
   /* ── Calcular previsão início/fim de cada item da fila ──
      Retorna array com {id, inicioCalc, fimCalc} para cada item ativo */
-    function calcularPrevisoes(equipe) {
+      function calcularPrevisoes(equipe) {
     const fila=(_fila[equipe.id]||[]);
     const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
     if(!ativos.length) return {};
@@ -130,35 +130,44 @@ window.Modulos.cal_acomp = (() => {
     const result={};
     let cursorDt=null;
 
+    // Horário de saída real do turno (do primeiro membro com turno)
+    function horaSaidaTurno() {
+      for(const m of (equipe.membros||[])){
+        const col=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
+        if(!col||!col.turno_id) continue;
+        const t=_turnos[col.turno_id]; if(!t) continue;
+        const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
+        return sh*60+sm; // minutos desde 00:00
+      }
+      return 15*60+20; // fallback 15:20
+    }
+    const SAIDA_MIN=horaSaidaTurno();
+
     for(let idx=0;idx<ativos.length;idx++){
       const item=ativos[idx];
       const hhPrev=item.hh_previsto||8;
 
-      // ── Definir ponto de partida do cursor ──
+      // ── Cursor inicial ──
       if(idx===0){
         if((item.status==='em_execucao'||item.status==='pausado')&&item.iniciado_em){
           cursorDt=new Date(item.iniciado_em);
         } else {
-          // Começa no próximo horário de entrada disponível
           const agora=new Date();
           const hj=hoje();
-          const entHj=entradaEquipeDia(equipe,hj); // minutos desde 00:00
+          const entHj=entradaEquipeDia(equipe,hj);
           const agorMin=agora.getHours()*60+agora.getMinutes();
 
           if(hhEquipeDia(equipe,hj)===0){
-            // Hoje sem HH — avançar para próximo dia com HH
             cursorDt=new Date(hj);
             cursorDt.setDate(cursorDt.getDate()+1);
             while(hhEquipeDia(equipe,cursorDt)===0)
               cursorDt.setDate(cursorDt.getDate()+1);
             const e=entradaEquipeDia(equipe,cursorDt)||420;
             cursorDt.setHours(Math.floor(e/60),e%60,0,0);
-          } else if(entHj!==null && agorMin<entHj){
-            // Antes da entrada — começa na entrada de hoje
+          } else if(entHj!==null&&agorMin<entHj){
             cursorDt=new Date(hj);
             cursorDt.setHours(Math.floor(entHj/60),entHj%60,0,0);
           } else {
-            // Já no turno ou depois — começa agora
             cursorDt=new Date(agora);
           }
         }
@@ -166,9 +175,9 @@ window.Modulos.cal_acomp = (() => {
 
       result[item.id]={inicioCalc:new Date(cursorDt)};
 
-      // ── Avançar cursor pelo HH previsto ──
-      // Estratégia simples: consumir HH dia a dia usando hhEquipeDia
-      // Sem lógica de almoço — o hhEquipeDia já desconta intervalos do turno
+      // ── Consumir HH dia a dia ──
+      // hhEquipeDia = soma real de todos os membros disponíveis
+      // Avançar dias completos; no último dia, hora final = horário de saída do turno
       let hhRestante=hhPrev;
       let d=new Date(cursorDt);
 
@@ -176,51 +185,49 @@ window.Modulos.cal_acomp = (() => {
         const hhDia=hhEquipeDia(equipe,d);
 
         if(hhDia===0){
-          // Sem disponibilidade hoje — pular para próximo dia
-          d.setDate(d.getDate()+1);
-          d.setHours(0,0,0,0);
-          const e=entradaEquipeDia(equipe,d)||(7*60);
+          // Sem disponibilidade — próximo dia
+          d=new Date(d); d.setDate(d.getDate()+1);
+          const e=entradaEquipeDia(equipe,d)||420;
           d.setHours(Math.floor(e/60),e%60,0,0);
           continue;
         }
 
-        // Quanto do dia já foi consumido (proporção do cursor dentro do dia)
-        const e=entradaEquipeDia(equipe,d)||(7*60);
-        const entMin=Math.floor(e/60)*60+e%60; // em minutos (hora*60+min)
-        // Horário de saída: entrada + hhDia em minutos
-        const saidaMin=e+Math.round(hhDia*60);
+        // HH disponível hoje a partir do cursor
+        // Comparar cursor com entrada do turno
+        const entMin=entradaEquipeDia(equipe,d)||420;
         const cursorMin=d.getHours()*60+d.getMinutes();
 
-        // HH restante neste dia a partir do cursor
         let hhDispHoje;
-        if(cursorMin<=e){
-          // Cursor antes ou na entrada — dia completo disponível
+        if(cursorMin<=entMin){
+          // Cursor antes ou na entrada: dia completo
           hhDispHoje=hhDia;
-        } else if(cursorMin>=saidaMin){
-          // Cursor depois da saída — nada disponível hoje
-          d.setDate(d.getDate()+1);
-          d.setHours(0,0,0,0);
-          const e2=entradaEquipeDia(equipe,d)||(7*60);
-          d.setHours(Math.floor(e2/60),e2%60,0,0);
+        } else if(cursorMin>=SAIDA_MIN){
+          // Cursor depois da saída: nada hoje
+          d=new Date(d); d.setDate(d.getDate()+1);
+          const e=entradaEquipeDia(equipe,d)||420;
+          d.setHours(Math.floor(e/60),e%60,0,0);
           continue;
         } else {
-          // Cursor dentro do turno — proporcional ao que resta
-          hhDispHoje=Math.max(0,(saidaMin-cursorMin)/60);
+          // Cursor dentro do turno: fração proporcional
+          const fracaoRestante=(SAIDA_MIN-cursorMin)/(SAIDA_MIN-entMin);
+          hhDispHoje=hhDia*fracaoRestante;
         }
 
         if(hhRestante<=hhDispHoje){
-          // Termina hoje
-          const minParaFim=Math.round(hhRestante*60);
-          const fimMin=(cursorMin<=e?e:cursorMin)+minParaFim;
+          // Termina hoje — hora de fim proporcional dentro do turno
+          const fracaoUsada=hhRestante/hhDia;
+          const duracaoTurnoMin=SAIDA_MIN-entMin;
+          const inicioEfetivoMin=Math.max(cursorMin,entMin);
+          const fimMin=inicioEfetivoMin+Math.round(fracaoUsada*duracaoTurnoMin);
+          d=new Date(d);
           d.setHours(Math.floor(fimMin/60),fimMin%60,0,0);
           hhRestante=0;
         } else {
-          // Consome o dia todo e vai para o próximo
+          // Consome dia inteiro
           hhRestante-=hhDispHoje;
-          d.setDate(d.getDate()+1);
-          d.setHours(0,0,0,0);
-          const e2=entradaEquipeDia(equipe,d)||(7*60);
-          d.setHours(Math.floor(e2/60),e2%60,0,0);
+          d=new Date(d); d.setDate(d.getDate()+1);
+          const e=entradaEquipeDia(equipe,d)||420;
+          d.setHours(Math.floor(e/60),e%60,0,0);
         }
       }
 
@@ -229,6 +236,7 @@ window.Modulos.cal_acomp = (() => {
     }
     return result;
   }
+
 
 
   /* ── Tipo de OS ── */
