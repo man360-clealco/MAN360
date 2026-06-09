@@ -93,10 +93,14 @@ async function main(){
     if(p.tipos.length) q+='&proj_tipo_intervencao=in.('+p.tipos.map(t=>'"'+t.trim()+'"').join(',')+')';
     const os=await db('ordens_servico',q);
 
-    const totalHH=os.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhExec=os.filter(o=>(o.status_os||'').toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const osExec=os.filter(o=>(o.status_os||'').toLowerCase().includes('encerr')).length;
-    const osTotal=os.length;
+    // Excluir OS canceladas/suspensas de todos os cálculos
+    function isCancelada(o){ const s=(o.status_os||'').toLowerCase(); return s.includes('cancel')||s.includes('suspend'); }
+    const osValidas = os.filter(o=>!isCancelada(o));
+
+    const totalHH=osValidas.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhExec=osValidas.filter(o=>(o.status_os||'').toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const osExec=osValidas.filter(o=>(o.status_os||'').toLowerCase().includes('encerr')).length;
+    const osTotal=osValidas.length;
 
     const hhDia=hhDiario(p.nEqProp);
     const hoje=new Date(); hoje.setHours(12,0,0,0);
