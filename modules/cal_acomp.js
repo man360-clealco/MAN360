@@ -108,7 +108,7 @@ window.Modulos.cal_acomp = (() => {
       if(_justific.some(j=>j.chapa===m.chapa&&iso>=j.data_inicio&&iso<=j.data_fim)) continue;
       const folgas=projetarFolgas(col,iniSem(_sem),fimSem(_sem+2));
       if(folgas.has(iso)) continue;
-      const t=_turnos[col.turno]; if(!t) continue;
+      const t=_turnos[col.turno]||{hora_entrada:'07:00',hora_saida:'15:20',intervalo_min:0};
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
       const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
       total+=Math.max(0,((sh*60+sm)-(eh*60+em)-(t.intervalo_min||0))/60);
@@ -331,22 +331,34 @@ window.Modulos.cal_acomp = (() => {
 
     const {data:colabs}=await db.from('apt_colaboradores').select('*').eq('modalidade','CAL');
     _colabs=colabs||[];
-    const {data:turnos}=await db.from('apt_turnos').select('*');
-    const {data:escalas}=await db.from('apt_escalas').select('*');
+
+    // Turnos — indexar por id E por nome
+    const {data:turnos,error:eTurnos}=await db.from('apt_turnos').select('*');
+    if(eTurnos) console.warn('apt_turnos:',eTurnos.message);
     _turnos={}; (turnos||[]).forEach(t=>{
-      _turnos[t.id]=t;      // índice por id (legado)
-      if(t.nome) _turnos[t.nome]=t; // índice por nome (campo 'turno' do colaborador)
-    });
-    _escalas={}; (escalas||[]).forEach(e=>{
-      _escalas[e.id]=e;       // índice por id
-      if(e.nome) _escalas[e.nome]=e; // índice por nome (campo 'escala' do colaborador)
+      if(t.id)   _turnos[t.id]=t;
+      if(t.nome) _turnos[t.nome]=t;
     });
 
-    const ini2=isoDate(iniSem(_sem-1)); // 2 semanas atrás para folgas
+    // Escalas — indexar por id E por nome
+    const {data:escalas,error:eEscalas}=await db.from('apt_escalas').select('*');
+    if(eEscalas) console.warn('apt_escalas:',eEscalas.message);
+    _escalas={}; (escalas||[]).forEach(e=>{
+      if(e.id)   _escalas[e.id]=e;
+      if(e.nome) _escalas[e.nome]=e;
+    });
+
+    // Férias e justificativas — tolerante a falha
+    const ini2=isoDate(iniSem(_sem-1));
     const fim2=isoDate(fimSem(_sem+1));
-    const {data:ferias}=await db.from('apt_ferias').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-    const {data:just}=await db.from('apt_justificativas').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-    _ferias=ferias||[]; _justific=just||[];
+    try {
+      const {data:ferias}=await db.from('apt_ferias').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
+      _ferias=ferias||[];
+    } catch(e){ console.warn('apt_ferias não encontrada'); _ferias=[]; }
+    try {
+      const {data:just}=await db.from('apt_justificativas').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
+      _justific=just||[];
+    } catch(e){ console.warn('apt_justificativas não encontrada'); _justific=[]; }
 
     const {data:eqs}=await db.from('cal_equipes').select('*').eq('ativo',true);
     const {data:mbs}=await db.from('cal_equipe_membros').select('*');
@@ -1343,7 +1355,9 @@ window.Modulos.cal_acomp = (() => {
 
 
     _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
-    try { await carregarTudo(); renderizar(); }
+    try { await carregarTudo();
+      console.log('_colabs:',_colabs.length,'_turnos:',Object.keys(_turnos),'_escalas:',Object.keys(_escalas));
+      renderizar(); }
     catch(e) {
       console.error('cal_acomp:',e);
       _container.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
