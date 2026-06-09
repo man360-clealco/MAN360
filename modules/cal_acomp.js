@@ -122,122 +122,114 @@ window.Modulos.cal_acomp = (() => {
 
   /* ── Calcular previsão início/fim de cada item da fila ──
      Retorna array com {id, inicioCalc, fimCalc} para cada item ativo */
-  function calcularPrevisoes(equipe) {
+    function calcularPrevisoes(equipe) {
     const fila=(_fila[equipe.id]||[]);
     const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
     if(!ativos.length) return {};
 
     const result={};
-    // Cursor de tempo: começa do primeiro disponível
-    let cursorDt = null;
+    let cursorDt=null;
 
-    for (let idx=0;idx<ativos.length;idx++) {
+    for(let idx=0;idx<ativos.length;idx++){
       const item=ativos[idx];
       const hhPrev=item.hh_previsto||8;
 
-      // Ponto de partida
-      if(idx===0) {
-        if((item.status==='em_execucao'||item.status==='pausado')&&item.iniciado_em) {
+      // ── Definir ponto de partida do cursor ──
+      if(idx===0){
+        if((item.status==='em_execucao'||item.status==='pausado')&&item.iniciado_em){
           cursorDt=new Date(item.iniciado_em);
         } else {
-          // Calcular cursor correto: próximo horário de trabalho
+          // Começa no próximo horário de entrada disponível
           const agora=new Date();
           const hj=hoje();
-          const hhHj=hhEquipeDia(equipe,hj);
-          const entHj=entradaEquipeDia(equipe,hj); // minutos desde meia-noite
-          const agoraMin=agora.getHours()*60+agora.getMinutes();
+          const entHj=entradaEquipeDia(equipe,hj); // minutos desde 00:00
+          const agorMin=agora.getHours()*60+agora.getMinutes();
 
-          if(hhHj>0 && entHj!==null && agoraMin<entHj) {
-            // Hoje é dia útil mas ainda não chegou a hora de entrada → usar entrada hoje
+          if(hhEquipeDia(equipe,hj)===0){
+            // Hoje sem HH — avançar para próximo dia com HH
+            cursorDt=new Date(hj);
+            cursorDt.setDate(cursorDt.getDate()+1);
+            while(hhEquipeDia(equipe,cursorDt)===0)
+              cursorDt.setDate(cursorDt.getDate()+1);
+            const e=entradaEquipeDia(equipe,cursorDt)||420;
+            cursorDt.setHours(Math.floor(e/60),e%60,0,0);
+          } else if(entHj!==null && agorMin<entHj){
+            // Antes da entrada — começa na entrada de hoje
             cursorDt=new Date(hj);
             cursorDt.setHours(Math.floor(entHj/60),entHj%60,0,0);
-          } else if(hhHj>0 && entHj!==null) {
-            // Dentro ou após o turno hoje → usar agora (dentro) ou próximo dia (após)
-            // Encontrar saída do turno
-            let saidaHj=0;
-            for(const m of (equipe.membros||[])){
-              const cc=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-              if(!cc||!cc.turno_id)continue;
-              const tt=_turnos[cc.turno_id]; if(!tt)continue;
-              const [sh,sm]=(tt.hora_saida||'17:00').split(':').map(Number);
-              const sMin=sh*60+sm;
-              if(sMin>saidaHj)saidaHj=sMin;
-            }
-            if(agoraMin<saidaHj) {
-              // Ainda dentro do turno → começa agora
-              cursorDt=new Date(agora);
-            } else {
-              // Passou do turno → próximo dia útil
-              cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
-              while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
-              const entP=entradaEquipeDia(equipe,cursorDt);
-              if(entP!==null){cursorDt.setHours(Math.floor(entP/60),entP%60,0,0);}
-            }
           } else {
-            // Hoje é folga → próximo dia útil
-            cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
-            while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
-            const entP=entradaEquipeDia(equipe,cursorDt);
-            if(entP!==null){cursorDt.setHours(Math.floor(entP/60),entP%60,0,0);}
+            // Já no turno ou depois — começa agora
+            cursorDt=new Date(agora);
           }
         }
       }
 
       result[item.id]={inicioCalc:new Date(cursorDt)};
 
-      // Avançar cursor pelo HH previsto, pulando domingos e almoço
+      // ── Avançar cursor pelo HH previsto ──
+      // Estratégia simples: consumir HH dia a dia usando hhEquipeDia
+      // Sem lógica de almoço — o hhEquipeDia já desconta intervalos do turno
       let hhRestante=hhPrev;
       let d=new Date(cursorDt);
 
-      while(hhRestante>0) {
+      while(hhRestante>0){
         const hhDia=hhEquipeDia(equipe,d);
-        if(hhDia===0||d.getDay()===0) { // folga ou domingo
+
+        if(hhDia===0){
+          // Sem disponibilidade hoje — pular para próximo dia
           d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null){d.setHours(Math.floor(ent/60),ent%60,0,0);}
+          d.setHours(0,0,0,0);
+          const e=entradaEquipeDia(equipe,d)||(7*60);
+          d.setHours(Math.floor(e/60),e%60,0,0);
           continue;
         }
-        // Calcular horas restantes no dia a partir do cursor
-        const t=_turnos[(_colabs.find(x=>(x.cracha||x.chapa)===((equipe.membros||[])[0]||{}).chapa)||{}).turno_id]||{};
-        const [sh,sm]=(t.hora_saida||'17:00').split(':').map(Number);
-        const saidaMin=sh*60+sm;
+
+        // Quanto do dia já foi consumido (proporção do cursor dentro do dia)
+        const e=entradaEquipeDia(equipe,d)||(7*60);
+        const entMin=Math.floor(e/60)*60+e%60; // em minutos (hora*60+min)
+        // Horário de saída: entrada + hhDia em minutos
+        const saidaMin=e+Math.round(hhDia*60);
         const cursorMin=d.getHours()*60+d.getMinutes();
-        // Pular almoço 12:00-13:00
-        let dispMin=saidaMin-cursorMin;
-        if(cursorMin<720&&saidaMin>780) dispMin-=60; // subtrai 1h de almoço
-        else if(cursorMin>=720&&cursorMin<780) {
-          d.setHours(13,0,0,0); // pula pro fim do almoço
-          dispMin=saidaMin-780;
-          if(dispMin<=0){d.setDate(d.getDate()+1);const ent=entradaEquipeDia(equipe,d);if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);continue;}
-        }
-        const dispHH=Math.max(0,dispMin/60);
-        if(dispHH<=0){
+
+        // HH restante neste dia a partir do cursor
+        let hhDispHoje;
+        if(cursorMin<=e){
+          // Cursor antes ou na entrada — dia completo disponível
+          hhDispHoje=hhDia;
+        } else if(cursorMin>=saidaMin){
+          // Cursor depois da saída — nada disponível hoje
           d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
+          d.setHours(0,0,0,0);
+          const e2=entradaEquipeDia(equipe,d)||(7*60);
+          d.setHours(Math.floor(e2/60),e2%60,0,0);
           continue;
+        } else {
+          // Cursor dentro do turno — proporcional ao que resta
+          hhDispHoje=Math.max(0,(saidaMin-cursorMin)/60);
         }
-        if(hhRestante<=dispHH) {
+
+        if(hhRestante<=hhDispHoje){
           // Termina hoje
-          let fimMin=cursorMin+Math.round(hhRestante*60);
-          // Adicionar almoço se atravessa
-          if(cursorMin<720&&fimMin>720) fimMin+=60;
+          const minParaFim=Math.round(hhRestante*60);
+          const fimMin=(cursorMin<=e?e:cursorMin)+minParaFim;
           d.setHours(Math.floor(fimMin/60),fimMin%60,0,0);
           hhRestante=0;
         } else {
-          hhRestante-=dispHH;
+          // Consome o dia todo e vai para o próximo
+          hhRestante-=hhDispHoje;
           d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
+          d.setHours(0,0,0,0);
+          const e2=entradaEquipeDia(equipe,d)||(7*60);
+          d.setHours(Math.floor(e2/60),e2%60,0,0);
         }
       }
 
       result[item.id].fimCalc=new Date(d);
       cursorDt=new Date(d);
-      // Próximo começa no início do próximo dia útil se fim foi no final do dia
     }
     return result;
   }
+
 
   /* ── Tipo de OS ── */
   function tipoOS(item) {
