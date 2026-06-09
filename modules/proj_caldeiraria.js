@@ -616,6 +616,7 @@ window.Modulos.proj_caldeiraria = (() => {
           <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
           ${htmlFiltrosLista()}
           <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
+          <button class="ps-btn-secondary" id="btn-slide" style="flex-shrink:0"><i class="ti ti-chart-line"></i> Gerar Slide</button>
         </div>
         <div class="ps-lista">${htmlListaOS(lista)}</div>
       </div>
@@ -746,6 +747,10 @@ window.Modulos.proj_caldeiraria = (() => {
     /* Relatório PDF */
     const btnRel = c.querySelector('#btn-relatorio');
     if (btnRel) btnRel.addEventListener('click', ()=>gerarRelatorio());
+
+    /* Slide */
+    const btnSlide = c.querySelector('#btn-slide');
+    if (btnSlide) btnSlide.addEventListener('click', ()=>gerarSlide());
   }
 
   /* ══════════════════════════════════════
@@ -858,6 +863,28 @@ window.Modulos.proj_caldeiraria = (() => {
     if (!c) return {l:'—',cor:'#9ca3af',bg:'#f3f4f6'};
     const m={alta:{l:'Alta',cor:'#dc2626',bg:'#fee2e2'},media:{l:'Média',cor:'#d97706',bg:'#fef3c7'},baixa:{l:'Baixa',cor:'#16a34a',bg:'#dcfce7'}};
     return m[c]||{l:c,cor:'#6b7280',bg:'#f3f4f6'};
+  }
+
+  function gerarSlide() {
+    if (!_dtInicio) { alert('Informe a data de início do projeto antes de gerar o slide.'); return; }
+    const lista = osParaMetricas();
+    if (!lista.length) { alert('Nenhuma OS encontrada.'); return; }
+
+    // ── Montar URL para slide.html ──
+    const tiposStr = _filtTipos.join('|');
+    const qs = 'equipe='   + encodeURIComponent(_filtEquipe)
+             + '&tipos='   + encodeURIComponent(tiposStr)
+             + '&inicio='  + encodeURIComponent(_dtInicio)
+             + '&nEqProp=' + _nEqProp
+             + '&nEqTerc=' + _nEqTerc;
+
+    const a = document.createElement('a');
+    a.href = 'slide.html?' + qs;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   function gerarRelatorio() {
@@ -1044,6 +1071,8 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-modal-titulo{font-size:13px;font-weight:700;margin-bottom:12px;color:#1a1a1a;}
 .ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;width:100%;}
 .ps-btn-primary{height:28px;padding:0 12px;border:none;border-radius:var(--radius-sm);background:var(--yellow,#F8C100);font-family:var(--font);font-size:11px;font-weight:700;color:#1a1a1a;cursor:pointer;display:flex;align-items:center;gap:5px;justify-content:center;}
+.ps-btn-secondary{height:28px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);font-family:var(--font);font-size:10px;font-weight:700;color:#374151;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;}
+.ps-btn-secondary:hover{background:#f3f4f6;}
 .ps-rel-opt{display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);cursor:pointer;text-align:left;font-family:var(--font);transition:border-color .15s,background .15s;}
 .ps-rel-opt:hover{border-color:var(--yellow);background:#fffbeb;}
 .ps-rel-opt-icone{font-size:22px;flex-shrink:0;}
