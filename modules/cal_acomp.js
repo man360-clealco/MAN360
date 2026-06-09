@@ -68,6 +68,7 @@ window.Modulos.cal_acomp = (() => {
   let _escalas   = {};
   let _ferias    = [];
   let _justific  = [];
+  let _folgasCache = {}; // cache: chapa -> Set de datas de folga
   let _container = null;
   let _itemAberto= null;  // id do item com ações abertas
 
@@ -106,7 +107,7 @@ window.Modulos.cal_acomp = (() => {
       if(!col||!col.turno) continue;
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
       if(_justific.some(j=>j.chapa===m.chapa&&iso>=j.data_inicio&&iso<=j.data_fim)) continue;
-      const folgas=projetarFolgas(col,iniSem(_sem),fimSem(_sem+2));
+      const folgas=_folgasCache[col.cracha]||new Set();
       if(folgas.has(iso)) continue;
       const t=_turnos[col.turno]||{hora_entrada:'07:00',hora_saida:'15:20',intervalo_min:0};
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
@@ -124,7 +125,7 @@ window.Modulos.cal_acomp = (() => {
       if(!col||!col.turno) continue;
       const iso=isoDate(data);
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
-      const folgas=projetarFolgas(col,iniSem(_sem),fimSem(_sem+2));
+      const folgas=_folgasCache[col.cracha]||new Set();
       if(folgas.has(iso)) continue;
       const t=_turnos[col.turno]; if(!t) continue;
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
@@ -373,6 +374,12 @@ window.Modulos.cal_acomp = (() => {
     const anoAnt=iniSem(_sem-1).getFullYear();
     const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
     _progAnt=progAnt||[];
+    // Pré-calcular folgas de todos os colaboradores para o range relevante
+    _folgasCache={};
+    const rangeIni=iniSem(_sem-1), rangeFim=fimSem(_sem+4);
+    for(const col of _colabs){
+      _folgasCache[col.cracha]=projetarFolgas(col,rangeIni,rangeFim);
+    }
   }
 
   async function salvarOrdem(equipeId) {
@@ -1355,9 +1362,7 @@ window.Modulos.cal_acomp = (() => {
 
 
     _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
-    try { await carregarTudo();
-      console.log('_colabs:',_colabs.length,'_turnos:',Object.keys(_turnos),'_escalas:',Object.keys(_escalas));
-      renderizar(); }
+    try { await carregarTudo(); renderizar(); }
     catch(e) {
       console.error('cal_acomp:',e);
       _container.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
