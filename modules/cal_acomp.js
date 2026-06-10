@@ -1151,14 +1151,20 @@ window.Modulos.cal_acomp = {
         if(!sels.length&&!avulso){ showToast('Selecione ao menos uma OS','erro'); return; }
 
         const db=getDB();
-        const filaEq=s.fila[equipeId]||[];
-        let maxPos=filaEq.length?Math.max(...filaEq.map(f=>f.posicao)):0;
-        const inserts=[];
 
+        // Busca fila atualizada do banco para evitar conflitos por cache
+        const{data:filaAtual}=await db.from('cal_fila').select('os,cod_servico');
+        const jaNobanco=new Set((filaAtual||[]).map(f=>f.os+'|'+(f.cod_servico||'1')));
+
+        // Posição máxima atual desta equipe
+        const{data:filaDaEq}=await db.from('cal_fila').select('posicao').eq('equipe_id',equipeId).order('posicao',{ascending:false}).limit(1);
+        let maxPos=(filaDaEq?.[0]?.posicao)||0;
+
+        const inserts=[];
         if(sels.length){
           for(const el of sels){
             const os_val=el.dataset.os, cod_val=el.dataset.cod||'1';
-            if(jaAlocadas.has(os_val+'|'+cod_val)){ showToast(`OS ${os_val} já está em outra equipe`,'info'); continue; }
+            if(jaNobanco.has(os_val+'|'+cod_val)){ showToast(`OS ${os_val} já está na fila de outra equipe`,'info'); continue; }
             inserts.push({equipe_id:equipeId,os:os_val,cod_servico:cod_val,posicao:++maxPos,semana_ref:s.semana,ano_ref:s.ano,status:'pendente'});
           }
         } else if(avulso){
