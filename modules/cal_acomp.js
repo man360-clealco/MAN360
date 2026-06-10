@@ -375,7 +375,11 @@ window.Modulos.cal_acomp = {
             const{data:progRows}=await db.from('programacao_semanal')
               .select('os,cod_servico,desc_servico,hh_previsto').in('os',osSemDados)
               .eq('semana',s.semana).eq('ano',s.ano);
-            (progRows||[]).forEach(p=>{ progMapFila[p.os+'|'+(p.cod_servico||'1')]=p; progMapFila[p.os+'|1']=p; });
+            (progRows||[]).forEach(p=>{
+              const cod=(p.cod_servico==='?'||!p.cod_servico)?'1':p.cod_servico;
+              progMapFila[p.os+'|'+cod]=p;
+              progMapFila[p.os+'|1']=p; // sempre mapeia por '1' também
+            });
           }
 
           filaRows.forEach(f=>{
@@ -872,7 +876,11 @@ window.Modulos.cal_acomp = {
           .select('os,cod_servico,desc_servico,hh_previsto')
           .in('os',osSemDados)
           .eq('semana',s.semana).eq('ano',s.ano);
-        (progRows||[]).forEach(p=>{ progMap[p.os+'|'+(p.cod_servico||'1')]=p; progMap[p.os+'|1']=p; });
+        (progRows||[]).forEach(p=>{
+          const cod=(p.cod_servico==='?'||!p.cod_servico)?'1':p.cod_servico;
+          progMap[p.os+'|'+cod]=p;
+          progMap[p.os+'|1']=p;
+        });
       }
 
       filaRows.forEach(f=>{
