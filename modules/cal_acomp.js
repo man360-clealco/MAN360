@@ -144,6 +144,15 @@ window.Modulos.cal_acomp = {
   _hoje()    { return new Date().toISOString().slice(0,10); },
   _fmtDM(iso){ if(!iso)return'—'; const[,m,d]=iso.split('-'); return `${d}/${m}`; },
   _fmtDMH(iso){ if(!iso)return'—'; const dt=iso.includes('T')?iso:iso+'T00:00:00'; const d=new Date(dt); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; },
+  // Converte datetime do banco (pode ser UTC) para "YYYY-MM-DDTHH:MM" local — usado em _somarHH
+  _dtBancoToLocal(iso){
+    if(!iso) return null;
+    const d=new Date(iso.includes('T')?iso:iso+'T00:00:00');
+    const y=d.getFullYear(), mo=String(d.getMonth()+1).padStart(2,'0');
+    const dd=String(d.getDate()).padStart(2,'0');
+    const hh=String(d.getHours()).padStart(2,'0'), mm=String(d.getMinutes()).padStart(2,'0');
+    return `${y}-${mo}-${dd}T${hh}:${mm}`;
+  },
   _diaSem(iso){ return ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][new Date(iso+'T00:00:00').getDay()]; },
   _diaSemN(iso){ return new Date(iso+'T00:00:00').getDay(); },
   _semParaDatas(s){ const i=this._addDays(this._s.DATA_ANCORA,(s-this._s.SEM_ANCORA)*7); return {ini:i,fim:this._addDays(i,6)}; },
@@ -664,7 +673,7 @@ window.Modulos.cal_acomp = {
       const presentes=mems.filter(m=>{
         const turno=this._turnoDe(m);
         const escala=this._escalaDe(m);
-        if(!turno||!escala) return false;
+        if(!turno||!escala) return true; // sem config: assume presente
         const dw=new Date(dAtual+'T00:00:00').getDay();
         if(turno.nome==='ADM'&&(dw===0||dw===6)) return false;
         const ini2=this._addDays(dAtual,-45),fim2=this._addDays(dAtual,45);
@@ -679,6 +688,7 @@ window.Modulos.cal_acomp = {
       }
 
       const minSaida=getMinSaida(dAtual);
+      console.log(`[somarHH] dia=${dAtual} presentes=${presentes} minCursor=${minCursor} minSaida=${minSaida} hhRestantes=${hhRestantes}`);
       if(minCursor>=minSaida){
         dAtual=this._addDays(dAtual,1);
         minCursor=getMinEntrada();
@@ -720,8 +730,7 @@ window.Modulos.cal_acomp = {
       if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
 
       if(f.status==='em_execucao'&&f.dt_inicio_real){
-        // Em execução: início = real, fim = início + HH distribuído por dias úteis
-        cursor=f.dt_inicio_real;
+        cursor=this._dtBancoToLocal(f.dt_inicio_real);
       } else if(f.status==='pendente'||f.status==='pausado'){
         // Pendente: início = fim do anterior ou agora
         if(!cursor){
@@ -732,6 +741,7 @@ window.Modulos.cal_acomp = {
 
       if(cursor){
         f._dtIniPrev=cursor;
+        console.log(`[fila] OS=${f.os} status=${f.status} hh=${hh} mems=${mems.length} cursor=${cursor}`);
         const dtFim=this._somarHH(cursor,hh,mems);
         f._dtFimPrev=dtFim;
         cursor=dtFim;
@@ -1357,7 +1367,7 @@ window.Modulos.cal_acomp = {
       fila.forEach(f=>{
         const hh=parseFloat(f._os?.hh_prev_servico||0);
         if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
-        if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=f.dt_inicio_real;
+        if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
         else if(!cursor){ const hoje=this._hoje(); cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00'; }
         f._dtIniPrev=cursor;
         const dtFim=this._somarHH(cursor,hh,mems);
