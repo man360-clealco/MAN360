@@ -433,31 +433,44 @@ window.Modulos.cal_acomp = {
     const el=document.getElementById('ca-kpis-wrap'); if(!el) return;
     const s=this._s;
 
-    // Toda a fila (exceto interrompidos)
+    // Programação CAL da semana (base dos KPIs de aderência)
+    const progCAL=s.programacao.filter(p=>!p.modalidade||p.modalidade==='CAL'||
+      // fallback: se não tem modalidade na prog, cruza com ordens_servico via OS já carregadas
+      Object.values(s.fila).flat().find(f=>f.os===p.os));
+    const hhProg=progCAL.reduce((a,p)=>a+(parseFloat(p.hh_previsto)||0),0);
+
+    // OS do board que estão na programação CAL
     const todasOS=Object.values(s.fila).flat().filter(f=>f.status!=='interrompido');
-    const hhTotal=todasOS.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const osProg=todasOS.filter(f=>progCAL.find(p=>p.os===f.os&&(p.cod_servico||'1')===(f.cod_servico||'1')));
 
-    // Aderência atual: encerradas / total programadas
-    const encerradas=todasOS.filter(f=>f.status==='encerrado');
-    const hhEnc=encerradas.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
-    const aderAtual=hhTotal>0?hhEnc/hhTotal:null;
+    // Aderência atual: HH encerrado de OS programadas / HH programado total
+    const hhEncProg=osProg.filter(f=>f.status==='encerrado').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const aderAtual=hhProg>0?hhEncProg/hhProg:null;
 
-    // Aderência projetada: encerradas + em execução que terminam até domingo
+    // Aderência projetada: HH (encerrado + em execução com fim até domingo) / HH programado
     const domingo=s.dataFim;
-    const hhProj=todasOS.filter(f=>f.status==='encerrado'||f.status==='em_execucao').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
-    const aderProj=hhTotal>0?hhProj/hhTotal:null;
+    const hhProjProg=osProg.filter(f=>{
+      if(f.status==='encerrado') return true;
+      if(f.status==='em_execucao'){
+        // Incluir se fim previsto <= domingo
+        return !f._dtFimPrev||(f._dtFimPrev.slice(0,10)<=domingo);
+      }
+      return false;
+    }).reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const aderProj=hhProg>0?hhProjProg/hhProg:null;
 
-    // % HH MCU
+    // % HH MCU sobre toda a fila
+    const hhTotal=todasOS.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
     const hhMCU=todasOS.filter(f=>f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
     const pctMCU=hhTotal>0?hhMCU/hhTotal:null;
 
-    // % HH Reprogramado (semana_ref < semana atual)
+    // % HH Reprogramado
     const hhRpg=todasOS.filter(f=>f.semana_ref<s.semana).reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
     const pctRpg=hhTotal>0?hhRpg/hhTotal:null;
 
-    // Cobertura da programação
-    const totalProg=s.programacao.length;
-    const alocadas=s.programacao.filter(p=>todasOS.find(f=>f.os===p.os&&f.cod_servico===p.cod_servico)).length;
+    // Cobertura: OS da programação CAL que já estão no board
+    const totalProg=progCAL.length;
+    const alocadas=progCAL.filter(p=>todasOS.find(f=>f.os===p.os&&(f.cod_servico||'1')===(p.cod_servico||'1'))).length;
     const pctCob=totalProg>0?alocadas/totalProg:null;
 
     const _pct=(v)=>v===null?'—':Math.round(v*100)+'%';
@@ -480,7 +493,7 @@ window.Modulos.cal_acomp = {
           <div class="ca-kpi-lbl">Aderência Atual</div>
           <div class="ca-kpi-val" style="color:${_cor(aderAtual)}">${_pct(aderAtual)}</div>
           ${_bar(aderAtual)}
-          <div class="ca-kpi-sub">${hhEnc.toFixed(1)}h enc. / ${hhTotal.toFixed(1)}h total</div>
+          <div class="ca-kpi-sub">${hhEncProg.toFixed(1)}h enc. / ${hhProg.toFixed(1)}h prog.</div>
         </div>
         <div class="ca-kpi">
           <div class="ca-kpi-lbl">Aderência Projetada</div>
@@ -610,55 +623,74 @@ window.Modulos.cal_acomp = {
     this._bindAcoesFila(el);
   },
 
-  /* ── Soma HH a partir de um datetime, respeitando dias úteis da equipe ── */
+  /* ── Soma HH a partir de um datetime, respeitando turno e folgas da equipe ── */
   _somarHH(dtInicio, hhTotal, mems){
-    if(!dtInicio||!hhTotal) return null;
-    // Parse do datetime de início
-    const dtStr = dtInicio.slice(0,16); // "YYYY-MM-DDTHH:MM"
-    const [datePart, timePart] = dtStr.split('T');
-    const [hIni, mIni] = timePart.split(':').map(Number);
-    let dAtual = datePart;
-    let minRestantes = Math.round(hhTotal * 60);
-    let minCursor = hIni * 60 + mIni;
+    if(!dtInicio||!hhTotal||!mems.length) return null;
+    const dtStr=dtInicio.slice(0,16); // "YYYY-MM-DDTHH:MM"
+    const [datePart,timePart]=dtStr.split('T');
+    const [hIni,mIni]=(timePart||'07:00').split(':').map(Number);
+    let dAtual=datePart;
+    let minRestantes=Math.round(hhTotal*60);
+    let minCursor=hIni*60+mIni;
 
-    for(let i=0; i<60; i++){
-      // HH disponível da equipe neste dia (média por membro presente)
-      const hhDia = mems.reduce((acc,m)=>{
+    // Usa o turno do primeiro membro como referência de horário
+    const turnoRef=this._turnoDe(mems[0]);
+    const getMinEntrada=()=>{
+      if(turnoRef?.hora_entrada){ const[h,m]=turnoRef.hora_entrada.split(':').map(Number); return h*60+m; }
+      return 7*60; // fallback 07:00
+    };
+    const getMinSaida=(dia)=>{
+      if(turnoRef?.nome==='ADM'&&new Date(dia+'T00:00:00').getDay()===5&&turnoRef?.saida_sexta){
+        const[h,m]=turnoRef.saida_sexta.split(':').map(Number); return h*60+m;
+      }
+      if(turnoRef?.hora_saida){ const[h,m]=turnoRef.hora_saida.split(':').map(Number); return h*60+m; }
+      return 17*60; // fallback 17:00
+    };
+
+    for(let i=0; i<90; i++){
+      // Verifica se algum membro trabalha neste dia (pelo menos 1 sem folga)
+      const algumTrabalha=mems.some(m=>{
         const turno=this._turnoDe(m);
         const escala=this._escalaDe(m);
-        const ini2=this._addDays(dAtual,-30), fim2=this._addDays(dAtual,30);
+        if(!turno||!escala) return false;
+        const ini2=this._addDays(dAtual,-45),fim2=this._addDays(dAtual,45);
         const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
-        if(folgas.has(dAtual)) return acc;
-        return acc+this._hhTurno(turno,dAtual);
-      },0);
+        if(folgas.has(dAtual)) return false;
+        const dw=new Date(dAtual+'T00:00:00').getDay();
+        if(turno.nome==='ADM'&&(dw===0||dw===6)) return false;
+        return true;
+      });
 
-      if(hhDia<=0){ dAtual=this._addDays(dAtual,1); minCursor=0; continue; }
-
-      // Minutos disponíveis restantes no dia a partir do cursor
-      const turnoRef = this._turnoDe(mems[0]);
-      let minFimDia = 18*60; // fallback 18:00
-      if(turnoRef?.hora_saida){
-        const [hs,ms]=turnoRef.hora_saida.split(':').map(Number);
-        minFimDia = hs*60+ms;
+      if(!algumTrabalha){
+        dAtual=this._addDays(dAtual,1);
+        minCursor=getMinEntrada();
+        continue;
       }
-      const minDispDia = Math.max(0, minFimDia - minCursor);
 
-      if(minRestantes <= minDispDia){
-        // Termina neste dia
-        const minFim = minCursor + minRestantes;
-        const hFim = Math.floor(minFim/60);
-        const mFim = minFim%60;
+      const minSaida=getMinSaida(dAtual);
+
+      // Garante que cursor não ultrapasse a saída (pode acontecer na OS anterior)
+      if(minCursor>=minSaida){
+        dAtual=this._addDays(dAtual,1);
+        minCursor=getMinEntrada();
+        continue;
+      }
+
+      // Garante que cursor não seja antes da entrada
+      if(minCursor<getMinEntrada()) minCursor=getMinEntrada();
+
+      const minDispDia=minSaida-minCursor;
+
+      if(minRestantes<=minDispDia){
+        const minFim=minCursor+minRestantes;
+        const hFim=Math.floor(minFim/60);
+        const mFim=minFim%60;
         return `${dAtual}T${String(hFim).padStart(2,'0')}:${String(mFim).padStart(2,'0')}:00`;
       }
 
-      minRestantes -= minDispDia;
-      dAtual = this._addDays(dAtual,1);
-      minCursor = 0; // próximo dia começa do início
-      // Ajusta cursor para hora entrada do turno
-      if(turnoRef?.hora_entrada){
-        const [he,me]=turnoRef.hora_entrada.split(':').map(Number);
-        minCursor=he*60+me;
-      }
+      minRestantes-=minDispDia;
+      dAtual=this._addDays(dAtual,1);
+      minCursor=getMinEntrada();
     }
     return null;
   },
@@ -699,7 +731,7 @@ window.Modulos.cal_acomp = {
       const os=f._os;
       const desc=os?.desc_servico||os?.desc_os||'—';
       const hh=parseFloat(os?.hh_prev_servico||0);
-      const dt_ini=f.dt_inicio_real?this._fmtDMH(f.dt_inicio_real):'—';
+      const dt_ini=f.dt_inicio_real?this._fmtDMH(f.dt_inicio_real):f._dtIniPrev?this._fmtDMH(f._dtIniPrev):'—';
       // Previsão calculada sequencialmente
       const dtFimPrev=f._dtFimPrev?this._fmtDMH(f._dtFimPrev):'—';
       const total=fila.length;
@@ -1195,8 +1227,25 @@ window.Modulos.cal_acomp = {
   _renderListaGeral(){
     const el=document.getElementById('ca-lista-wrap'); if(!el) return;
     const s=this._s;
+
+    // Calcular previsões para todas as equipes antes de montar a lista
+    s.equipes.forEach(eq=>{
+      const fila=(s.fila[eq.id]||[]).filter(f=>f.status!=='interrompido'&&f.status!=='encerrado').sort((a,b)=>a.posicao-b.posicao);
+      const mems=s.membros[eq.id]||[];
+      let cursor=null;
+      fila.forEach(f=>{
+        const hh=parseFloat(f._os?.hh_prev_servico||0);
+        if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
+        if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=f.dt_inicio_real;
+        else if(!cursor){ const hoje=this._hoje(); cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00'; }
+        f._dtIniPrev=cursor;
+        const dtFim=this._somarHH(cursor,hh,mems);
+        f._dtFimPrev=dtFim;
+        cursor=dtFim;
+      });
+    });
+
     const todos=Object.values(s.fila).flat().sort((a,b)=>{
-      // Ordena por equipe depois posição
       if(a.equipe_id!==b.equipe_id) return a.equipe_id-b.equipe_id;
       return a.posicao-b.posicao;
     });
@@ -1204,13 +1253,15 @@ window.Modulos.cal_acomp = {
     const rows=todos.map(f=>{
       const eq=s.equipes.find(e=>e.id===f.equipe_id);
       const hh=parseFloat(f._os?.hh_prev_servico||0);
+      const iniPrev=f.dt_inicio_real?this._fmtDM(f.dt_inicio_real.slice(0,10)):f._dtIniPrev?this._fmtDM(f._dtIniPrev.slice(0,10)):'—';
+      const fimPrev=f._dtFimPrev?this._fmtDM(f._dtFimPrev.slice(0,10)):'—';
       return `<div class="ca-lista-row">
         <span style="font-weight:700">${f.os}</span>
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f._os?.desc_servico||f._os?.desc_os||'—'}">${f._os?.desc_servico||f._os?.desc_os||'—'}</span>
         <span>${eq?.nome||'—'}</span>
         <span style="text-align:right">${hh?hh.toFixed(1)+'h':'—'}</span>
-        <span style="color:#9ca3af">—</span>
-        <span style="color:#9ca3af">—</span>
+        <span style="color:#6b7280">${iniPrev}</span>
+        <span style="color:#6b7280">${fimPrev}</span>
       </div>`;
     }).join('');
 
