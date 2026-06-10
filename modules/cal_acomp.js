@@ -333,7 +333,18 @@ window.Modulos.cal_acomp = {
         db.from('programacao_semanal').select('*').eq('semana',s.semana).eq('ano',s.ano),
       ]);
       s.equipes    =rEq.data||[];
-      s.programacao=rProg.data||[];
+      const progTodas=rProg.data||[];
+
+      // Filtrar programação apenas para OS de modalidade CAL
+      if(progTodas.length){
+        const osNumsProg=[...new Set(progTodas.map(p=>p.os))];
+        const {data:osModalidade}=await db.from('ordens_servico')
+          .select('os,modalidade').in('os',osNumsProg.slice(0,500));
+        const osCAL=new Set((osModalidade||[]).filter(o=>o.modalidade==='CAL').map(o=>o.os));
+        s.programacao=progTodas.filter(p=>osCAL.has(p.os));
+      } else {
+        s.programacao=[];
+      }
 
       // Membros enriquecidos
       s.membros={};
@@ -624,71 +635,71 @@ window.Modulos.cal_acomp = {
   },
 
   /* ── Soma HH a partir de um datetime, respeitando turno e folgas da equipe ── */
+  /* HH é Homem-Hora: duração = HH ÷ membros presentes no dia                  */
   _somarHH(dtInicio, hhTotal, mems){
     if(!dtInicio||!hhTotal||!mems.length) return null;
-    const dtStr=dtInicio.slice(0,16); // "YYYY-MM-DDTHH:MM"
+    const dtStr=dtInicio.slice(0,16);
     const [datePart,timePart]=dtStr.split('T');
     const [hIni,mIni]=(timePart||'07:00').split(':').map(Number);
     let dAtual=datePart;
-    let minRestantes=Math.round(hhTotal*60);
+    let hhRestantes=hhTotal; // em horas decimais
     let minCursor=hIni*60+mIni;
 
-    // Usa o turno do primeiro membro como referência de horário
     const turnoRef=this._turnoDe(mems[0]);
     const getMinEntrada=()=>{
       if(turnoRef?.hora_entrada){ const[h,m]=turnoRef.hora_entrada.split(':').map(Number); return h*60+m; }
-      return 7*60; // fallback 07:00
+      return 7*60;
     };
     const getMinSaida=(dia)=>{
-      if(turnoRef?.nome==='ADM'&&new Date(dia+'T00:00:00').getDay()===5&&turnoRef?.saida_sexta){
+      const dw=new Date(dia+'T00:00:00').getDay();
+      if(turnoRef?.nome==='ADM'&&dw===5&&turnoRef?.saida_sexta){
         const[h,m]=turnoRef.saida_sexta.split(':').map(Number); return h*60+m;
       }
       if(turnoRef?.hora_saida){ const[h,m]=turnoRef.hora_saida.split(':').map(Number); return h*60+m; }
-      return 17*60; // fallback 17:00
+      return 17*60;
     };
 
     for(let i=0; i<90; i++){
-      // Verifica se algum membro trabalha neste dia (pelo menos 1 sem folga)
-      const algumTrabalha=mems.some(m=>{
+      // Conta membros presentes neste dia
+      const presentes=mems.filter(m=>{
         const turno=this._turnoDe(m);
         const escala=this._escalaDe(m);
         if(!turno||!escala) return false;
-        const ini2=this._addDays(dAtual,-45),fim2=this._addDays(dAtual,45);
-        const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
-        if(folgas.has(dAtual)) return false;
         const dw=new Date(dAtual+'T00:00:00').getDay();
         if(turno.nome==='ADM'&&(dw===0||dw===6)) return false;
-        return true;
-      });
+        const ini2=this._addDays(dAtual,-45),fim2=this._addDays(dAtual,45);
+        const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
+        return !folgas.has(dAtual);
+      }).length;
 
-      if(!algumTrabalha){
+      if(presentes===0){
         dAtual=this._addDays(dAtual,1);
         minCursor=getMinEntrada();
         continue;
       }
 
       const minSaida=getMinSaida(dAtual);
-
-      // Garante que cursor não ultrapasse a saída (pode acontecer na OS anterior)
       if(minCursor>=minSaida){
         dAtual=this._addDays(dAtual,1);
         minCursor=getMinEntrada();
         continue;
       }
-
-      // Garante que cursor não seja antes da entrada
       if(minCursor<getMinEntrada()) minCursor=getMinEntrada();
 
+      // Minutos disponíveis no dia × membros = HH disponível no dia a partir do cursor
       const minDispDia=minSaida-minCursor;
+      const hhDispDia=(minDispDia/60)*presentes; // HH = horas × pessoas
 
-      if(minRestantes<=minDispDia){
-        const minFim=minCursor+minRestantes;
+      if(hhRestantes<=hhDispDia){
+        // Termina neste dia: duração real = hhRestantes / presentes
+        const minDuracao=Math.round((hhRestantes/presentes)*60);
+        const minFim=minCursor+minDuracao;
         const hFim=Math.floor(minFim/60);
         const mFim=minFim%60;
         return `${dAtual}T${String(hFim).padStart(2,'0')}:${String(mFim).padStart(2,'0')}:00`;
       }
 
-      minRestantes-=minDispDia;
+      hhRestantes-=hhDispDia;
       dAtual=this._addDays(dAtual,1);
       minCursor=getMinEntrada();
     }
@@ -981,102 +992,212 @@ window.Modulos.cal_acomp = {
   async _modalAddOS(equipeId){
     const s=this._s;
     const eq=s.equipes.find(e=>e.id===equipeId);
+    // OS já na fila (qualquer equipe)
+    const jaAlocadas=new Set(Object.values(s.fila).flat().map(f=>f.os+'|'+(f.cod_servico||'1')));
+
     this._modal('Adicionar OS — '+eq?.nome,`
-      <div class="ca-row">
-        <div class="ca-field" style="flex:2">
-          <label class="ca-lbl">Buscar OS</label>
-          <input id="ca-os-busca" class="ca-input" placeholder="Número da OS ou descrição…" autocomplete="off">
+      <style>
+        .ca-add-tab{padding:6px 14px;font-size:11px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;color:#6b7280;display:inline-flex;align-items:center;gap:5px}
+        .ca-add-tab.on{color:var(--yellow);border-bottom-color:var(--yellow)}
+        .ca-os-check-row{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #f3f4f6;font-size:11px;cursor:pointer;transition:background .1s}
+        .ca-os-check-row:hover{background:#f9fafb}
+        .ca-os-check-row.selecionado{background:#f0fdf4}
+        .ca-os-check-row:last-child{border-bottom:none}
+      </style>
+      <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:12px">
+        <div class="ca-add-tab on" id="ca-tab-prog">
+          <i class="ti ti-clipboard-list"></i> Programação da semana
         </div>
-        <div class="ca-field">
-          <label class="ca-lbl">Tipo</label>
-          <select id="ca-os-tipo" class="ca-select">
+        <div class="ca-add-tab" id="ca-tab-busca">
+          <i class="ti ti-search"></i> Busca livre
+        </div>
+      </div>
+
+      <!-- ABA PROGRAMAÇÃO -->
+      <div id="ca-painel-prog">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="ca-prog-filtro" class="ca-input" placeholder="Filtrar por OS ou descrição…" style="flex:1">
+          <select id="ca-prog-tipo" class="ca-select" style="width:100px">
             <option value="">Todos</option>
             <option value="MCU">MCU</option>
-            <option value="PROG">Programável</option>
           </select>
         </div>
+        <div id="ca-prog-lista" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
+          <div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af"><i class="ti ti-loader-2"></i> Carregando…</div>
+        </div>
+        <div id="ca-selecionadas-badge" style="display:none;margin-top:8px;font-size:11px;font-weight:700;color:var(--green)"></div>
       </div>
-      <div id="ca-os-resultados" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
-        <div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite para buscar…</div>
+
+      <!-- ABA BUSCA LIVRE -->
+      <div id="ca-painel-busca" style="display:none">
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <input id="ca-os-busca" class="ca-input" placeholder="Número da OS ou descrição…" autocomplete="off" style="flex:1">
+          <select id="ca-os-tipo" class="ca-select" style="width:100px">
+            <option value="">Todos</option>
+            <option value="MCU">MCU</option>
+          </select>
+        </div>
+        <div id="ca-os-resultados" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)">
+          <div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite para buscar…</div>
+        </div>
       </div>
-      <div id="ca-os-selecionada" style="display:none;margin-top:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;font-size:11px;color:#166534"></div>
+
       <div style="margin-top:10px" id="ca-os-avulso-wrap">
         <button class="ca-btn" id="ca-os-avulso-btn"><i class="ti ti-plus"></i> Inserir serviço avulso (sem OS)</button>
       </div>`,
       async()=>{
-        const sel=document.getElementById('ca-os-resultados').querySelector('[data-selecionado]');
+        // Coleta selecionados (programação + busca livre)
+        const sels=[
+          ...document.querySelectorAll('.ca-os-check-row.selecionado[data-os]'),
+          ...document.querySelectorAll('.ca-os-opt.selecionado[data-os]'),
+        ];
         const avulso=document.getElementById('ca-avulso-os');
-        let os_val,cod_val,sem_ref=s.semana,ano_ref=s.ano;
 
-        if(sel){
-          os_val=sel.dataset.os; cod_val=sel.dataset.cod;
-        } else if(avulso){
-          os_val=avulso.value.trim()||('AVULSO-'+Date.now());
-          cod_val='1';
-        } else { showToast('Selecione uma OS','erro'); return; }
+        if(!sels.length&&!avulso){ showToast('Selecione ao menos uma OS','erro'); return; }
 
-        // Verifica se já está em outra equipe
-        const jaEsta=Object.values(s.fila).flat().find(f=>f.os===os_val&&f.cod_servico===cod_val);
-        if(jaEsta){ showToast('OS já está na fila de outra equipe','erro'); return; }
-
-        const filaEq=s.fila[equipeId]||[];
-        const maxPos=filaEq.length?Math.max(...filaEq.map(f=>f.posicao)):0;
         const db=getDB();
-        const{error}=await db.from('cal_fila').insert({
-          equipe_id:equipeId, os:os_val, cod_servico:cod_val,
-          posicao:maxPos+1, semana_ref:sem_ref, ano_ref:ano_ref, status:'pendente'
-        });
+        const filaEq=s.fila[equipeId]||[];
+        let maxPos=filaEq.length?Math.max(...filaEq.map(f=>f.posicao)):0;
+        const inserts=[];
+
+        if(sels.length){
+          for(const el of sels){
+            const os_val=el.dataset.os, cod_val=el.dataset.cod||'1';
+            if(jaAlocadas.has(os_val+'|'+cod_val)){ showToast(`OS ${os_val} já está em outra equipe`,'info'); continue; }
+            inserts.push({equipe_id:equipeId,os:os_val,cod_servico:cod_val,posicao:++maxPos,semana_ref:s.semana,ano_ref:s.ano,status:'pendente'});
+          }
+        } else if(avulso){
+          const os_val=avulso.value.trim()||('AVULSO-'+Date.now());
+          inserts.push({equipe_id:equipeId,os:os_val,cod_servico:'1',posicao:++maxPos,semana_ref:s.semana,ano_ref:s.ano,status:'pendente'});
+        }
+
+        if(!inserts.length){ showToast('Nenhuma OS nova para adicionar','info'); return; }
+        const{error}=await db.from('cal_fila').insert(inserts);
         if(error) throw error;
-        showToast('OS adicionada à fila!','ok');
+        showToast(`${inserts.length} OS adicionada(s) à fila!`,'ok');
         this._fecharModal();
         await this._carregar();
-      },'Adicionar');
+      },`Adicionar`);
 
-    // Bind busca
-    setTimeout(()=>{
+    // Bind abas e lógica
+    setTimeout(async()=>{
+      // Abas
+      document.getElementById('ca-tab-prog').addEventListener('click',()=>{
+        document.getElementById('ca-tab-prog').className='ca-add-tab on';
+        document.getElementById('ca-tab-busca').className='ca-add-tab';
+        document.getElementById('ca-painel-prog').style.display='';
+        document.getElementById('ca-painel-busca').style.display='none';
+      });
+      document.getElementById('ca-tab-busca').addEventListener('click',()=>{
+        document.getElementById('ca-tab-busca').className='ca-add-tab on';
+        document.getElementById('ca-tab-prog').className='ca-add-tab';
+        document.getElementById('ca-painel-busca').style.display='';
+        document.getElementById('ca-painel-prog').style.display='none';
+      });
+
+      // Carregar programação da semana
+      const db=getDB();
+      const{data:progRows}=await db.from('programacao_semanal')
+        .select('os,cod_servico,desc_servico,hh_previsto,equipe')
+        .eq('semana',s.semana).eq('ano',s.ano);
+
+      // Enriquecer com tipo_atividade
+      const osNums=[...new Set((progRows||[]).map(p=>p.os))];
+      let tipoMap={};
+      if(osNums.length){
+        const{data:tipoRows}=await db.from('ordens_servico')
+          .select('os,cod_servico,tipo_atividade,modalidade').in('os',osNums.slice(0,500));
+        (tipoRows||[]).forEach(o=>{ tipoMap[o.os+'|'+(o.cod_servico||'1')]=o; });
+      }
+
+      const progCAL=(progRows||[]).filter(p=>{
+        const t=tipoMap[p.os+'|'+(p.cod_servico||'1')];
+        return !t||t.modalidade==='CAL';
+      });
+
+      const renderProg=(filtro='',tipo='')=>{
+        const lista=document.getElementById('ca-prog-lista'); if(!lista) return;
+        let items=progCAL.filter(p=>{
+          const jaEsta=jaAlocadas.has(p.os+'|'+(p.cod_servico||'1'));
+          if(jaEsta) return false;
+          if(filtro&&!p.os.includes(filtro)&&!(p.desc_servico||'').toLowerCase().includes(filtro.toLowerCase())) return false;
+          if(tipo==='MCU'){ const t=tipoMap[p.os+'|'+(p.cod_servico||'1')]; if(t?.tipo_atividade!=='MANUTENÇÃO CORRETIVA DE URGÊNCIA') return false; }
+          return true;
+        });
+        if(!items.length){ lista.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhuma OS disponível.</div>'; return; }
+        lista.innerHTML=items.map(p=>{
+          const t=tipoMap[p.os+'|'+(p.cod_servico||'1')];
+          const mcu=t?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA';
+          return `<div class="ca-os-check-row" data-os="${p.os}" data-cod="${p.cod_servico||'1'}">
+            <input type="checkbox" style="accent-color:var(--yellow);flex-shrink:0">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:11px">${p.os} ${mcu?'<span class="ca-badge ca-badge-mcu">MCU</span>':''}</div>
+              <div style="font-size:11px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.desc_servico||'—'}</div>
+              <div style="font-size:10px;color:#9ca3af">${p.equipe||''} ${p.hh_previsto?'· '+p.hh_previsto+'h':''}</div>
+            </div>
+          </div>`;
+        }).join('');
+
+        // Bind checkbox → toggle selecionado
+        lista.querySelectorAll('.ca-os-check-row').forEach(row=>{
+          const cb=row.querySelector('input[type=checkbox]');
+          const toggle=()=>{
+            row.classList.toggle('selecionado',cb.checked);
+            const n=lista.querySelectorAll('.ca-os-check-row.selecionado').length;
+            const badge=document.getElementById('ca-selecionadas-badge');
+            if(badge){ badge.style.display=n?'':'none'; badge.textContent=n+' OS selecionada(s)'; }
+          };
+          cb.addEventListener('change',toggle);
+          row.addEventListener('click',e=>{ if(e.target===cb) return; cb.checked=!cb.checked; toggle(); });
+        });
+      };
+
+      renderProg();
+      document.getElementById('ca-prog-filtro').addEventListener('input',e=>renderProg(e.target.value,document.getElementById('ca-prog-tipo').value));
+      document.getElementById('ca-prog-tipo').addEventListener('change',e=>renderProg(document.getElementById('ca-prog-filtro').value,e.target.value));
+
+      // Busca livre
       const inp=document.getElementById('ca-os-busca');
       const tipoEl=document.getElementById('ca-os-tipo');
       const res=document.getElementById('ca-os-resultados');
-
       const buscar=async()=>{
         const q=inp.value.trim(); if(q.length<2){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite ao menos 2 caracteres…</div>'; return; }
-        const db=getDB();
         let q2=db.from('ordens_servico').select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,equipamento').eq('modalidade','CAL');
         if(/^\d+/.test(q)) q2=q2.ilike('os','%'+q+'%');
         else q2=q2.or(`desc_servico.ilike.%${q}%,desc_os.ilike.%${q}%`);
         if(tipoEl.value==='MCU') q2=q2.eq('tipo_atividade','MANUTENÇÃO CORRETIVA DE URGÊNCIA');
         const{data}=await q2.limit(20);
         if(!data?.length){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum resultado.</div>'; return; }
-        res.innerHTML=(data||[]).map(o=>`
-          <div class="ca-os-row ca-os-opt" data-os="${o.os}" data-cod="${o.cod_servico||'1'}" style="cursor:pointer">
-            <div style="flex:1">
-              <div style="font-size:11px;font-weight:700">${o.os} <span style="font-size:10px;font-weight:400;color:#6b7280">cód ${o.cod_servico}</span></div>
-              <div style="font-size:11px;color:#374151">${o.desc_servico||o.desc_os||'—'}</div>
+        res.innerHTML=(data||[]).map(o=>{
+          const jaEsta=jaAlocadas.has(o.os+'|'+(o.cod_servico||'1'));
+          return `<div class="ca-os-check-row ${jaEsta?'':'ca-os-opt'}" data-os="${o.os}" data-cod="${o.cod_servico||'1'}" ${jaEsta?'style="opacity:.4;pointer-events:none"':''}>
+            <input type="checkbox" style="accent-color:var(--yellow);flex-shrink:0" ${jaEsta?'disabled':''}>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:700;font-size:11px">${o.os} ${jaEsta?'<span style="font-size:9px;color:#9ca3af">já alocada</span>':''}</div>
+              <div style="font-size:11px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.desc_servico||o.desc_os||'—'}</div>
               <div style="font-size:10px;color:#9ca3af">${o.equipamento||''} ${o.hh_prev_servico?'· '+o.hh_prev_servico+'h':''}</div>
             </div>
-          </div>`).join('');
-        res.querySelectorAll('.ca-os-opt').forEach(row=>row.addEventListener('click',()=>{
-          res.querySelectorAll('.ca-os-opt').forEach(r=>{ delete r.dataset.selecionado; r.style.background=''; });
-          row.dataset.selecionado='1'; row.style.background='#f0fdf4';
-        }));
+          </div>`;
+        }).join('');
+        res.querySelectorAll('.ca-os-opt').forEach(row=>{
+          const cb=row.querySelector('input[type=checkbox]');
+          row.addEventListener('click',e=>{ if(e.target===cb) return; cb.checked=!cb.checked; row.classList.toggle('selecionado',cb.checked); });
+          cb.addEventListener('change',()=>row.classList.toggle('selecionado',cb.checked));
+        });
       };
       inp.addEventListener('input',()=>{ clearTimeout(inp._t); inp._t=setTimeout(buscar,300); });
       tipoEl.addEventListener('change',buscar);
 
+      // Avulso
       document.getElementById('ca-os-avulso-btn').addEventListener('click',()=>{
-        const w=document.getElementById('ca-os-avulso-wrap');
-        w.innerHTML=`
+        document.getElementById('ca-os-avulso-wrap').innerHTML=`
           <div class="ca-row" style="margin-bottom:0">
             <div class="ca-field"><label class="ca-lbl">Nº OS (opcional)</label><input id="ca-avulso-os" class="ca-input" placeholder="Avulso"></div>
-            <div class="ca-field" style="flex:2"><label class="ca-lbl">Tipo</label>
-              <select id="ca-avulso-tipo" class="ca-select">
-                <option>Programável</option><option>MCU</option><option>Inspeção</option>
-              </select>
-            </div>
           </div>`;
       });
     },100);
   },
+
 
   /* ══════════════════════════════════════════════
      PONTOS DE ATENÇÃO
@@ -1259,7 +1380,7 @@ window.Modulos.cal_acomp = {
         <span style="font-weight:700">${f.os}</span>
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f._os?.desc_servico||f._os?.desc_os||'—'}">${f._os?.desc_servico||f._os?.desc_os||'—'}</span>
         <span>${eq?.nome||'—'}</span>
-        <span style="text-align:right">${hh?hh.toFixed(1)+'h':'—'}</span>
+        <span>${hh?hh.toFixed(1)+'h':'—'}</span>
         <span style="color:#6b7280">${iniPrev}</span>
         <span style="color:#6b7280">${fimPrev}</span>
       </div>`;
