@@ -247,44 +247,29 @@ window.Modulos.cal_acomp = {
     return fila.filter(f=>f.status!=='interrompido').reduce((acc,f)=>acc+(parseFloat(f._os?.hh_prev_servico)||0),0);
   },
 
-  /* ── Projeção de data fim da fila ── */
+  /* ── Projeção de data fim da fila (usa mesmo _somarHH da fila) ── */
   _projetarFila(equipeId){
-    const fila=(this._s.fila[equipeId]||[]).filter(f=>f.status!=='interrompido').sort((a,b)=>a.posicao-b.posicao);
+    const fila=(this._s.fila[equipeId]||[])
+      .filter(f=>f.status!=='interrompido'&&f.status!=='encerrado')
+      .sort((a,b)=>a.posicao-b.posicao);
     const mems=this._s.membros[equipeId]||[];
     if(!fila.length||!mems.length) return null;
 
-    // Constrói agenda de HH disponível por dia a partir de hoje ou ini da semana
+    // Se as previsões já foram calculadas pelo _tplFila, usa o _dtFimPrev da última
+    const ultima=fila[fila.length-1];
+    if(ultima._dtFimPrev) return ultima._dtFimPrev.slice(0,10);
+
+    // Fallback: calcular sequencialmente
     const hoje=this._hoje();
-    let diaAtual=hoje<this._s.dataIni?this._s.dataIni:hoje;
-
-    // Pré-calcula HH/dia da equipe para os próximos 60 dias
-    const hhPorDia={};
-    let d=diaAtual;
-    for(let i=0;i<60;i++){
-      hhPorDia[d]=mems.reduce((acc,m)=>{
-        const turno=this._turnoDe(m);
-        const escala=this._escalaDe(m);
-        const ini2=this._addDays(d,-30), fim2=this._addDays(d,30);
-        const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
-        if(folgas.has(d)) return acc;
-        return acc+this._hhTurno(turno,d);
-      },0);
-      d=this._addDays(d,1);
+    let cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00';
+    for(const f of fila){
+      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      if(!hh) continue;
+      if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
+      const dtFim=this._somarHH(cursor,hh,mems);
+      if(dtFim) cursor=dtFim;
     }
-
-    // Distribui HH da fila pelos dias
-    let hhRestante=0;
-    let dFim=diaAtual;
-    for(const item of fila){
-      hhRestante+=(parseFloat(item._os?.hh_prev_servico)||0);
-    }
-    d=diaAtual;
-    while(hhRestante>0&&d<this._addDays(diaAtual,60)){
-      const disp=hhPorDia[d]||0;
-      hhRestante-=disp;
-      if(hhRestante>0) d=this._addDays(d,1);
-    }
-    return d;
+    return cursor?cursor.slice(0,10):null;
   },
 
   /* ══════════════════════════════════════════════
@@ -953,8 +938,20 @@ window.Modulos.cal_acomp = {
         const dt=document.getElementById('ca-dt-ini').value;
         if(!dt){ showToast('Informe a data/hora','erro'); return; }
         const db=getDB();
-        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt)}).eq('id',id);
-        if(error) throw error;
+
+        // Mover para posição 1: empurra as demais para frente
+        const s=this._s;
+        const filaEq=(s.fila[item.equipe_id]||[])
+          .filter(f=>f.id!==id)
+          .sort((a,b)=>a.posicao-b.posicao);
+
+        // Reposicionar sequencialmente a partir de 2
+        const updates=filaEq.map((f,i)=>
+          db.from('cal_fila').update({posicao:i+2}).eq('id',f.id)
+        );
+        updates.push(db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt),posicao:1}).eq('id',id));
+        await Promise.all(updates);
+
         showToast('OS iniciada!','ok');
         this._fecharModal();
         await this._atualizarParcial(item.equipe_id);
