@@ -1,487 +1,331 @@
-/* =============================================================
-   cal_acomp.js — MAN360 · PCM Clealco
-   Módulo: Calendário de Acompanhamento de Equipes
-   Versão reconstruída — campos reais do banco (turno/escala por NOME)
-   ============================================================= */
-
+/* ═══════════════════════════════════════════════════════
+   MAN360 — Módulo: Calendário de Acompanhamento (CAL)
+   Padrão: window.Modulos.cal_acomp · usa getDB() de shared/db.js
+   ═══════════════════════════════════════════════════════ */
 'use strict';
+window.Modulos = window.Modulos || {};
 
-/* ─── Configuração Supabase ─────────────────────────────────── */
-const SUPA_URL  = 'https://gwejwvsmmogzdpgyaggf.supabase.co';
-const SUPA_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3ZWp3dnNtbW9nemRwZ3lhZ2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1NTU0NjIsImV4cCI6MjA5NTEzMTQ2Mn0.HgsOjYyHTOiCtjblADpCcwi7SNkK17jjMTdG4Z7H8Uc';
+window.Modulos.cal_acomp = {
 
-const HEADERS = {
-  'apikey':        SUPA_KEY,
-  'Authorization': 'Bearer ' + SUPA_KEY,
-  'Content-Type':  'application/json',
-  'Prefer':        'return=representation'
-};
+  /* ── Estado ── */
+  _s: {
+    colaboradores: [],  // apt_colaboradores onde modalidade='CAL'
+    escalas: [],        // apt_escalas
+    turnos: [],         // apt_turnos
+    equipes: [],        // cal_equipes
+    membros: {},        // membros[equipe_id] = [...colabs enriquecidos]
+    mesAtual: '',       // 'YYYY-MM'
+    anoMes: null,       // { ano, mes, primDia, ultDia, dias }
+  },
 
-/* ─── Estado do módulo ──────────────────────────────────────── */
-let _turnos  = {};   // indexado por NOME: _turnos["Turno A"] = {...}
-let _escalas = {};   // indexado por NOME: _escalas["5x1"]    = {...}
-let _equipes = [];   // lista de equipes CAL
-let _membros = {};   // _membros[equipe_id] = [{ chapa, nome, ...colab }]
-let _colabs  = {};   // _colabs[cracha] = registro completo de apt_colaboradores
+  /* ── Init ── */
+  async init(container) {
+    const hoje = new Date();
+    this._s.mesAtual = `${hoje.getFullYear()}-${String(hoje.getMonth()+1).padStart(2,'0')}`;
+    container.innerHTML = this._tpl();
+    this._bindNavMes();
+    await this._carregarBase();
+    this._setMes(this._s.mesAtual);
+    await this._carregarEquipes();
+    this._render();
+  },
 
-let _anoMes  = '';   // "YYYY-MM" corrente
-let _diasMes = 0;
-let _primDia = null; // Date do 1º dia do mês
+  /* ── Template raiz ── */
+  _tpl() {
+    return `
+      <style>
+        .cal-nav{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+        .cal-mes-btn{height:28px;width:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:#6b7280;font-size:14px}
+        .cal-mes-btn:hover{background:var(--bg)}
+        .cal-mes-lbl{font-size:14px;font-weight:700;min-width:130px;text-align:center}
+        .cal-equipe{margin-bottom:20px}
+        .cal-equipe-hdr{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;padding:8px 0 6px;display:flex;align-items:center;gap:8px;border-bottom:2px solid var(--yellow);margin-bottom:8px}
+        .cal-equipe-hdr span{flex:1}
+        .cal-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:#fef3c7;color:#92400e}
+        .cal-grid{overflow-x:auto}
+        .cal-table{border-collapse:collapse;font-size:11px;width:100%;min-width:600px}
+        .cal-table th{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;padding:3px 2px;text-align:center;border-bottom:1px solid var(--border);white-space:nowrap}
+        .cal-table td{padding:2px 2px;text-align:center;vertical-align:middle}
+        .cal-table tr:hover td{background:rgba(0,0,0,.02)}
+        .cal-td-nome{text-align:left!important;padding-left:8px!important;font-size:11px;font-weight:600;white-space:nowrap;min-width:160px}
+        .cal-td-turno{font-size:9px;color:#6b7280;text-align:left!important;padding-left:4px!important;min-width:60px}
+        .cal-cell-f{height:22px;width:22px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:#fee2e2;color:#991b1b}
+        .cal-cell-t{height:22px;width:22px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:#dcfce7;color:#166534}
+        .cal-cell-w{height:22px;width:22px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:#f3f4f6;color:#9ca3af}
+        .cal-cell-x{height:22px;width:22px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#d1d5db;background:transparent}
+        .cal-cell-hh{height:22px;min-width:28px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:#eff6ff;color:#1d4ed8;padding:0 3px}
+        .cal-th-fim{background:#fafafa}
+        .cal-th-hoj{color:var(--yellow)!important;font-weight:900!important}
+        .cal-td-hoj{background:rgba(234,179,8,.06)}
+        .cal-aviso{padding:20px;text-align:center;color:#9ca3af;font-size:12px}
+        .cal-sem-dados{font-size:10px;color:#f59e0b;background:#fef3c7;padding:4px 10px;border-radius:8px;display:inline-block}
+      </style>
+      <div class="cal-nav">
+        <button class="cal-mes-btn" id="cal-prev"><i class="ti ti-chevron-left"></i></button>
+        <span class="cal-mes-lbl" id="cal-mes-lbl">—</span>
+        <button class="cal-mes-btn" id="cal-next"><i class="ti ti-chevron-right"></i></button>
+        <span id="cal-status" style="font-size:11px;color:#9ca3af;margin-left:8px"></span>
+      </div>
+      <div id="cal-corpo"></div>`;
+  },
 
-/* ─── Helpers de data ────────────────────────────────────────── */
-function isoDate(d) {
-  // Retorna "YYYY-MM-DD" de um objeto Date
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
+  /* ── Navegação de mês ── */
+  _bindNavMes() {
+    document.getElementById('cal-prev').onclick = () => this._navMes(-1);
+    document.getElementById('cal-next').onclick = () => this._navMes(+1);
+  },
+  async _navMes(delta) {
+    const [y, m] = this._s.mesAtual.split('-').map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    this._s.mesAtual = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    this._setMes(this._s.mesAtual);
+    this._render();
+  },
 
-function parseISO(str) {
-  // Converte "YYYY-MM-DD" para Date (meia-noite local)
-  if (!str) return null;
-  const [y, m, d] = str.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
+  /* ── Helpers de data ── */
+  _addDays(iso, n) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return d.toISOString().slice(0, 10);
+  },
+  _hoje() { return new Date().toISOString().slice(0, 10); },
+  _diaSemN(iso) { return new Date(iso + 'T00:00:00').getDay(); },
+  _fmtMes(anoMes) {
+    const [y, m] = anoMes.split('-').map(Number);
+    const nomes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                   'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+    return `${nomes[m-1]} ${y}`;
+  },
 
-function dtHoraToISO(data, hora) {
-  // Monta ISO sem offset UTC para evitar conversão de fuso
-  // data: "YYYY-MM-DD", hora: "HH:MM"
-  return `${data}T${hora}:00`;
-}
+  /* ── Configura mês corrente ── */
+  _setMes(anoMes) {
+    const [y, m] = anoMes.split('-').map(Number);
+    const primDia = `${y}-${String(m).padStart(2,'0')}-01`;
+    const ultDia  = this._addDays(`${y}-${String(m).padStart(2,'0')}-${new Date(y,m,0).getDate()}`, 0);
+    const dias    = new Date(y, m, 0).getDate();
+    this._s.anoMes = { ano: y, mes: m, primDia, ultDia, dias };
+    const el = document.getElementById('cal-mes-lbl');
+    if (el) el.textContent = this._fmtMes(anoMes);
+  },
 
-function fmtHora(isoStr) {
-  // Extrai "HH:MM" de string ISO sem depender de UTC
-  if (!isoStr) return '--:--';
-  const m = String(isoStr).match(/T(\d{2}):(\d{2})/);
-  if (m) return `${m[1]}:${m[2]}`;
-  // fallback: pode ser só "HH:MM"
-  const m2 = String(isoStr).match(/^(\d{2}):(\d{2})/);
-  if (m2) return `${m2[1]}:${m2[2]}`;
-  return '--:--';
-}
+  /* ── Carregar tabelas base ── */
+  async _carregarBase() {
+    try {
+      const db = getDB();
+      const [r1, r2, r3] = await Promise.all([
+        db.from('apt_colaboradores').select('*').eq('modalidade','CAL').eq('ativo',true).order('nome'),
+        db.from('apt_escalas').select('*').order('nome'),
+        db.from('apt_turnos').select('*').order('nome'),
+      ]);
+      this._s.colaboradores = r1.data || [];
+      this._s.escalas       = r2.data || [];
+      this._s.turnos        = r3.data || [];
+    } catch(e) { console.error('[cal_acomp] _carregarBase:', e); }
+  },
 
-function addDias(date, n) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + n);
-  return d;
-}
+  /* ── Carregar equipes e membros ── */
+  async _carregarEquipes() {
+    try {
+      const db = getDB();
+      const { data: eqs } = await db.from('cal_equipes').select('*').eq('ativo', true).order('nome');
+      this._s.equipes = eqs || [];
 
-function diffDias(a, b) {
-  // Diferença em dias inteiros (b - a)
-  const msDay = 86400000;
-  return Math.round((b.getTime() - a.getTime()) / msDay);
-}
-
-/* ─── Fetch helper ───────────────────────────────────────────── */
-async function supa(tabela, params = '') {
-  const url = `${SUPA_URL}/rest/v1/${tabela}${params ? '?' + params : ''}`;
-  const r = await fetch(url, { headers: HEADERS });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Supabase [${tabela}]: ${r.status} — ${txt}`);
-  }
-  return r.json();
-}
-
-async function supaPost(tabela, body) {
-  const url = `${SUPA_URL}/rest/v1/${tabela}`;
-  const r = await fetch(url, { method: 'POST', headers: HEADERS, body: JSON.stringify(body) });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Supabase POST [${tabela}]: ${r.status} — ${txt}`);
-  }
-  return r.json();
-}
-
-async function supaPatch(tabela, filtro, body) {
-  const url = `${SUPA_URL}/rest/v1/${tabela}?${filtro}`;
-  const r = await fetch(url, { method: 'PATCH', headers: HEADERS, body: JSON.stringify(body) });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Supabase PATCH [${tabela}]: ${r.status} — ${txt}`);
-  }
-  return r.json();
-}
-
-async function supaDelete(tabela, filtro) {
-  const url = `${SUPA_URL}/rest/v1/${tabela}?${filtro}`;
-  const r = await fetch(url, { method: 'DELETE', headers: HEADERS });
-  if (!r.ok) {
-    const txt = await r.text();
-    throw new Error(`Supabase DELETE [${tabela}]: ${r.status} — ${txt}`);
-  }
-  return true;
-}
-
-/* ─── Carregamento de dados base ─────────────────────────────── */
-async function carregarTurnos() {
-  const rows = await supa('apt_turnos', 'select=*&ativo=eq.true');
-  _turnos = {};
-  rows.forEach(t => {
-    _turnos[t.nome] = t;   // CORREÇÃO 1: indexar por nome
-    if (t.id) _turnos[t.id] = t; // manter por id como fallback
-  });
-  console.log('[cal_acomp] Turnos carregados:', Object.keys(_turnos).filter(k => isNaN(k)));
-}
-
-async function carregarEscalas() {
-  const rows = await supa('apt_escalas', 'select=*');
-  _escalas = {};
-  rows.forEach(e => {
-    _escalas[e.nome] = e;  // CORREÇÃO 2: indexar por nome
-    if (e.id) _escalas[e.id] = e; // manter por id como fallback
-  });
-  console.log('[cal_acomp] Escalas carregadas:', Object.keys(_escalas).filter(k => isNaN(k)));
-}
-
-async function carregarColaboradoresCAL() {
-  const rows = await supa(
-    'apt_colaboradores',
-    'select=cracha,nome,modalidade,especialidade_id,escala,primeira_folga,ativo,turno&modalidade=eq.CAL&ativo=eq.true'
-  );
-  _colabs = {};
-  let semEscala = 0, semTurno = 0;
-  rows.forEach(c => {
-    _colabs[c.cracha] = c;
-    if (!c.escala) semEscala++;
-    if (!c.turno)  semTurno++;
-  });
-  if (semEscala || semTurno)
-    console.warn(`[cal_acomp] Colaboradores CAL sem escala: ${semEscala}, sem turno: ${semTurno} — projeção de folgas ficará vazia para estes.`);
-  console.log('[cal_acomp] Colaboradores CAL carregados:', rows.length);
-}
-
-async function carregarEquipesCAL() {
-  // Busca equipes que contenham membros com colaboradores CAL
-  // A tabela cal_equipe_membros tem: equipe_id, chapa, nome
-  const equipes = await supa('cal_equipes', 'select=*&ativo=eq.true');
-  _equipes = equipes || [];
-
-  // Carrega membros de cada equipe
-  _membros = {};
-  for (const eq of _equipes) {
-    const mems = await supa('cal_equipe_membros', `select=*&equipe_id=eq.${eq.id}`);
-    // CORREÇÃO 3: buscar colaborador por cracha === chapa
-    _membros[eq.id] = (mems || []).map(m => {
-      const colab = _colabs[m.chapa]; // chapa = cracha
-      return { ...m, ...colab };      // mescla dados do membro com dados do colaborador
-    }).filter(m => m.cracha);         // remove membros sem colaborador encontrado
-  }
-  console.log('[cal_acomp] Equipes CAL carregadas:', _equipes.length);
-}
-
-/* ─── Projeção de folgas ─────────────────────────────────────── */
-/**
- * Projeta as datas de folga de um colaborador no intervalo [ini, fim].
- * 
- * LÓGICA:
- * - colab.primeira_folga = data de UMA folga real (âncora do ciclo)
- * - âncora → diff=0 → pos=0 → É folga
- * - escala 5x1: ciclo=6 dias. pos 1..5 = trabalho, pos 0 = folga
- * 
- * @param {Object} colab  — registro de apt_colaboradores
- * @param {Date}   ini    — início do intervalo
- * @param {Date}   fim    — fim do intervalo
- * @returns {Set<string>} — conjunto de datas ISO "YYYY-MM-DD" de folgas
- */
-function projetarFolgas(colab, ini, fim) {
-  const folgas = new Set();
-
-  // CORREÇÃO 4: usar colab.escala (nome) não colab.escala_id
-  const nomEsc = colab.escala;
-  if (!nomEsc) return folgas;
-
-  const esc = _escalas[nomEsc];
-  if (!esc) {
-    console.warn(`[projetarFolgas] Escala não encontrada: "${nomEsc}"`);
-    return folgas;
-  }
-
-  // tipo_ciclo é categórico ("ROTATIVO", "ADM") — não é o tamanho do ciclo
-  // ciclo = dias_trabalho + 1 folga  (5x1 → ciclo 6, 6x1 → ciclo 7)
-  const diasTrab    = esc.dias_trabalho || 5;
-  const ciclo       = diasTrab + 1;
-  const ancData     = parseISO(colab.primeira_folga);
-  if (!ancData) return folgas;
-
-  let d = new Date(ini);
-  while (d <= fim) {
-    const diff = diffDias(ancData, d);
-    // Normaliza para positivo dentro do ciclo
-    const pos = ((diff % ciclo) + ciclo) % ciclo;
-
-    // CORREÇÃO 6: pos === 0 é folga (âncora = dia da folga)
-    if (pos === 0) {
-      folgas.add(isoDate(d));
-    }
-
-    d = addDias(d, 1);
-  }
-
-  return folgas;
-}
-
-/* ─── HH disponível por equipe por dia ──────────────────────── */
-/**
- * Calcula HH disponível de uma equipe num determinado dia.
- * Considera: membros presentes (não em folga) × duração do turno.
- * 
- * @param {number} equipeId
- * @param {Date}   dia
- * @returns {number} HH disponível em horas decimais
- */
-function hhDispEquipeDia(equipeId, dia) {
-  const mems = _membros[equipeId] || [];
-  let totalHH = 0;
-
-  for (const c of mems) {
-    // CORREÇÃO 5: usar c.turno (nome) não c.turno_id
-    const nomTurno = c.turno;
-    if (!nomTurno) continue;
-
-    const turno = _turnos[nomTurno];
-    if (!turno) {
-      console.warn(`[hhDispEquipeDia] Turno não encontrado: "${nomTurno}"`);
-      continue;
-    }
-
-    // Verifica se está de folga
-    const folgas = projetarFolgas(c, dia, dia);
-    if (folgas.has(isoDate(dia))) continue; // está de folga
-
-    // Calcula horas do turno
-    // turno tem: hora_saida, intervalo_min, dias_trabalho, saida_sexta
-    // Se não há hora_entrada, deduzir a partir de saída e carga horária típica
-    let horasBase = 8; // padrão
-
-    if (turno.hora_entrada && turno.hora_saida) {
-      const [hE, mE] = turno.hora_entrada.split(':').map(Number);
-      const [hS, mS] = turno.hora_saida.split(':').map(Number);
-      const minTot = (hS * 60 + mS) - (hE * 60 + mE);
-      const minTrab = minTot - (turno.intervalo_min || 0);
-      horasBase = minTrab / 60;
-    } else if (turno.hora_saida) {
-      // Sem hora_entrada: assumir 8h de trabalho - intervalo
-      const minTrab = 480 - (turno.intervalo_min || 60);
-      horasBase = minTrab / 60;
-    }
-
-    // Sexta-feira (dia 5 = Friday) pode ter saída reduzida
-    if (dia.getDay() === 5 && turno.saida_sexta) {
-      const [hS, mS] = turno.saida_sexta.split(':').map(Number);
-      // Recalcular com saída de sexta
-      if (turno.hora_entrada) {
-        const [hE, mE] = turno.hora_entrada.split(':').map(Number);
-        const minTot = (hS * 60 + mS) - (hE * 60 + mE);
-        horasBase = Math.max(0, (minTot - (turno.intervalo_min || 0)) / 60);
+      this._s.membros = {};
+      for (const eq of this._s.equipes) {
+        const { data: mems } = await db.from('cal_equipe_membros').select('*').eq('equipe_id', eq.id);
+        // Enriquecer cada membro com dados do colaborador (chapa = cracha)
+        this._s.membros[eq.id] = (mems || []).map(m => {
+          const colab = this._s.colaboradores.find(c => String(c.cracha) === String(m.chapa));
+          return colab ? { ...m, ...colab } : { ...m, _semCadastro: true };
+        });
       }
-    }
+    } catch(e) { console.error('[cal_acomp] _carregarEquipes:', e); }
+  },
 
-    totalHH += Math.max(0, horasBase);
-  }
+  /* ── Helpers de escala/turno (por NOME — campo real do banco) ── */
+  _escalaDe(colab) {
+    if (!colab.escala) return null;
+    return this._s.escalas.find(e => e.nome === colab.escala) || null;
+  },
+  _turnoDe(colab) {
+    if (!colab.turno) return null;
+    return this._s.turnos.find(t => t.nome === colab.turno) || null;
+  },
 
-  return totalHH;
-}
+  /* ── Projeção de folgas (mesma lógica do apontamentos.js) ── */
+  _gerarFolgas(colab, dataIni, dataFim) {
+    const esc = this._escalaDe(colab);
+    const trn = this._turnoDe(colab);
+    if (!esc) return new Set();
 
-/* ─── Inicialização do mês ───────────────────────────────────── */
-function setMes(anoMes) {
-  // anoMes: "YYYY-MM"
-  _anoMes  = anoMes;
-  const [y, m] = anoMes.split('-').map(Number);
-  _primDia  = new Date(y, m - 1, 1);
-  _diasMes  = new Date(y, m, 0).getDate();
-}
-
-function getMes() { return _anoMes; }
-
-function primDiaMes()  { return _primDia; }
-function ultimoDiaMes() {
-  const [y, m] = _anoMes.split('-').map(Number);
-  return new Date(y, m, 0);
-}
-
-/* ─── Carregamento completo ──────────────────────────────────── */
-async function inicializar(anoMes) {
-  setMes(anoMes);
-  await Promise.all([
-    carregarTurnos(),
-    carregarEscalas(),
-    carregarColaboradoresCAL()
-  ]);
-  await carregarEquipesCAL();
-  console.log('[cal_acomp] Inicialização completa para:', anoMes);
-}
-
-/* ─── Geração de calendário de equipe ───────────────────────── */
-/**
- * Gera a grade de presença/folga de uma equipe para o mês corrente.
- * Retorna array de objetos { membro, dias: [{data, folga, hh}] }
- */
-function gerarCalendarioEquipe(equipeId) {
-  const mems  = _membros[equipeId] || [];
-  const ini   = primDiaMes();
-  const fim   = ultimoDiaMes();
-  const grade = [];
-
-  for (const c of mems) {
-    const folgas = projetarFolgas(c, ini, fim);
-    const dias   = [];
-
-    let d = new Date(ini);
-    while (d <= fim) {
-      const iso   = isoDate(d);
-      const eFolga = folgas.has(iso);
-      const hh    = eFolga ? 0 : hhMembroDia(c, d);
-      dias.push({ data: iso, folga: eFolga, hh });
-      d = addDias(d, 1);
-    }
-
-    grade.push({ membro: c, dias });
-  }
-
-  return grade;
-}
-
-/**
- * HH disponível de um membro específico em um dia.
- */
-function hhMembroDia(colab, dia) {
-  const nomTurno = colab.turno;
-  if (!nomTurno) return 0;
-  const turno = _turnos[nomTurno];
-  if (!turno) return 0;
-
-  let horasBase = 8;
-
-  if (turno.hora_entrada && turno.hora_saida) {
-    const [hE, mE] = turno.hora_entrada.split(':').map(Number);
-    const [hS, mS] = turno.hora_saida.split(':').map(Number);
-    const minTrab = (hS * 60 + mS) - (hE * 60 + mE) - (turno.intervalo_min || 0);
-    horasBase = minTrab / 60;
-  } else if (turno.hora_saida) {
-    horasBase = (480 - (turno.intervalo_min || 60)) / 60;
-  }
-
-  if (dia.getDay() === 5 && turno.saida_sexta && turno.hora_entrada) {
-    const [hE, mE] = turno.hora_entrada.split(':').map(Number);
-    const [hS, mS] = turno.saida_sexta.split(':').map(Number);
-    const minTrab  = (hS * 60 + mS) - (hE * 60 + mE) - (turno.intervalo_min || 0);
-    horasBase = Math.max(0, minTrab / 60);
-  }
-
-  return Math.max(0, horasBase);
-}
-
-/* ─── Totais HH por equipe no mês ───────────────────────────── */
-function totalHHEquipeMes(equipeId) {
-  const ini = primDiaMes();
-  const fim = ultimoDiaMes();
-  let total = 0;
-  let d = new Date(ini);
-  while (d <= fim) {
-    total += hhDispEquipeDia(equipeId, d);
-    d = addDias(d, 1);
-  }
-  return total;
-}
-
-/* ─── Resumo do mês por equipe ───────────────────────────────── */
-function resumoMesEquipe(equipeId) {
-  const mems  = _membros[equipeId] || [];
-  const ini   = primDiaMes();
-  const fim   = ultimoDiaMes();
-  const result = {
-    equipe_id:    equipeId,
-    total_membros: mems.length,
-    hh_total:     0,
-    folgas_total: 0,
-    membros:      []
-  };
-
-  for (const c of mems) {
-    const folgas = projetarFolgas(c, ini, fim);
-    let hhMembro = 0;
-    let d = new Date(ini);
-    while (d <= fim) {
-      if (!folgas.has(isoDate(d))) {
-        hhMembro += hhMembroDia(c, d);
+    // ADM: folga sempre sábado e domingo
+    if (esc.tipo_ciclo === 'ADM' || trn?.nome === 'ADM') {
+      const s = new Set(); let c = dataIni;
+      while (c <= dataFim) {
+        const dw = this._diaSemN(c);
+        if (dw === 0 || dw === 6) s.add(c);
+        c = this._addDays(c, 1);
       }
-      d = addDias(d, 1);
+      return s;
     }
-    result.hh_total     += hhMembro;
-    result.folgas_total += folgas.size;
-    result.membros.push({
-      cracha:       c.cracha,
-      nome:         c.nome,
-      turno:        c.turno,
-      escala:       c.escala,
-      hh_mes:       hhMembro,
-      folgas_mes:   folgas.size,
-      datas_folga:  [...folgas].sort()
-    });
-  }
 
-  return result;
-}
+    // ROTATIVO: ancora = primeira_folga (a data É a própria folga)
+    const ancora = colab.primeira_folga;
+    if (!ancora) return new Set();
 
-/* ─── API pública do módulo ──────────────────────────────────── */
-window.CalAcomp = {
-  // Inicialização
-  inicializar,
-  setMes,
-  getMes,
+    const ciclo = (esc.dias_trabalho || 5) + 1;
+    const s = new Set();
 
-  // Dados
-  getEquipes:   () => _equipes,
-  getMembros:   (eqId) => _membros[eqId] || [],
-  getTurnos:    () => _turnos,
-  getEscalas:   () => _escalas,
-  getColabs:    () => _colabs,
+    // Projetar para frente a partir da âncora
+    let cur = ancora;
+    while (cur <= dataFim) { s.add(cur); cur = this._addDays(cur, ciclo); }
+    // Projetar para trás a partir da âncora
+    cur = this._addDays(ancora, -ciclo);
+    while (cur >= dataIni) { s.add(cur); cur = this._addDays(cur, -ciclo); }
 
-  // Cálculos
-  projetarFolgas,
-  hhDispEquipeDia,
-  hhMembroDia,
-  totalHHEquipeMes,
+    return s;
+  },
 
-  // Geração de calendário
-  gerarCalendarioEquipe,
-  resumoMesEquipe,
+  /* ── HH do turno num dia específico ── */
+  _calcHH(entrada, saida, intervalo) {
+    if (!entrada || !saida) return 8;
+    // Suporta "HH:MM" e "HH:MM:SS"
+    const [eh, em] = entrada.split(':').map(Number);
+    const [sh, sm] = saida.split(':').map(Number);
+    let mins = (sh * 60 + sm) - (eh * 60 + em);
+    if (mins <= 0) mins += 1440;
+    return Math.round((mins - (intervalo || 0)) / 60 * 100) / 100;
+  },
+  _hhTurno(colab, iso) {
+    const trn = this._turnoDe(colab);
+    if (!trn) return 0;
+    if (trn.nome === 'ADM' || trn.tipo_ciclo === 'ADM') {
+      const dw = this._diaSemN(iso);
+      if (dw === 0 || dw === 6) return 0;
+      if (dw === 5 && trn.saida_sexta && trn.hora_entrada)
+        return this._calcHH(trn.hora_entrada, trn.saida_sexta, trn.intervalo_min);
+    }
+    if (!trn.hora_entrada || !trn.hora_saida) return 8;
+    return this._calcHH(trn.hora_entrada, trn.hora_saida, trn.intervalo_min);
+  },
 
-  // Helpers de data
-  isoDate,
-  parseISO,
-  fmtHora,
-  dtHoraToISO,
-  addDias,
-  diffDias,
-  primDiaMes,
-  ultimoDiaMes
+  /* ── Render principal ── */
+  _render() {
+    const corpo = document.getElementById('cal-corpo');
+    if (!corpo) return;
+    const { equipes, membros, anoMes } = this._s;
+
+    if (!anoMes) { corpo.innerHTML = '<div class="cal-aviso">Inicializando…</div>'; return; }
+    if (!equipes.length) { corpo.innerHTML = '<div class="cal-aviso">Nenhuma equipe CAL cadastrada.</div>'; return; }
+
+    const hoje   = this._hoje();
+    const { primDia, ultDia, dias, mes, ano } = anoMes;
+
+    // Cabeçalhos de dias
+    const diasArr = [];
+    for (let d = 1; d <= dias; d++) {
+      const iso = `${ano}-${String(mes).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      diasArr.push(iso);
+    }
+
+    const semNome = ['D','S','T','Q','Q','S','S'];
+    const html = equipes.map(eq => {
+      const mems = (membros[eq.id] || []).filter(m => !m._semCadastro);
+      const semDados = mems.filter(m => !m.escala || !m.turno || !m.primeira_folga);
+
+      // Cabeçalho da tabela
+      const thDias = diasArr.map(iso => {
+        const dw = this._diaSemN(iso);
+        const ehFim = dw === 0 || dw === 6;
+        const ehHoj = iso === hoje;
+        let cls = 'cal-table th';
+        if (ehFim) cls += ' cal-th-fim';
+        if (ehHoj) cls += ' cal-th-hoj';
+        const d = iso.split('-')[2];
+        return `<th class="${ehFim?'cal-th-fim':''} ${ehHoj?'cal-th-hoj':''}">
+          <div>${d}</div>
+          <div style="font-size:8px;color:${ehFim?'#d1d5db':'#9ca3af'}">${semNome[dw]}</div>
+        </th>`;
+      }).join('');
+
+      // Linhas dos membros
+      const linhas = mems.map(c => {
+        const folgas = this._gerarFolgas(c, primDia, ultDia);
+        let hhTotal = 0;
+
+        const cells = diasArr.map(iso => {
+          const dw = this._diaSemN(iso);
+          const ehHoj = iso === hoje;
+          const ehFolga = folgas.has(iso);
+          // ADM: sab/dom = fim de semana, não folga rotativa
+          const esc = this._escalaDe(c);
+          const ehAdm = esc?.tipo_ciclo === 'ADM';
+          const ehFds = dw === 0 || dw === 6;
+
+          let cell;
+          if (ehAdm && ehFds) {
+            cell = `<div class="cal-cell-w" title="Fim de semana">—</div>`;
+          } else if (ehFolga) {
+            cell = `<div class="cal-cell-f" title="Folga">F</div>`;
+          } else {
+            const hh = this._hhTurno(c, iso);
+            hhTotal += hh;
+            cell = `<div class="cal-cell-t" title="${hh.toFixed(1)}h">${hh % 1 === 0 ? hh : hh.toFixed(1)}</div>`;
+          }
+          return `<td class="${ehHoj?'cal-td-hoj':''}">${cell}</td>`;
+        }).join('');
+
+        const nomeTurno = c.turno || '—';
+        const nomeEscala = c.escala || '—';
+        const semConfig = !c.escala || !c.turno || !c.primeira_folga;
+
+        return `<tr>
+          <td class="cal-td-nome">${c.nome || c.chapa}</td>
+          <td class="cal-td-turno">${nomeTurno} · ${nomeEscala}</td>
+          ${semConfig
+            ? `<td colspan="${dias}" style="padding:4px 8px"><span class="cal-sem-dados">⚠ sem turno/escala/folga configurados</span></td>`
+            : cells
+          }
+          <td><div class="cal-cell-hh">${hhTotal.toFixed(0)}h</div></td>
+        </tr>`;
+      }).join('');
+
+      const badgeSemDados = semDados.length
+        ? `<span class="cal-badge">⚠ ${semDados.length} sem config</span>`
+        : '';
+
+      const totalHHMes = mems.reduce((acc, c) => {
+        let hh = 0;
+        const folgas = this._gerarFolgas(c, primDia, ultDia);
+        diasArr.forEach(iso => {
+          if (!folgas.has(iso)) hh += this._hhTurno(c, iso);
+        });
+        return acc + hh;
+      }, 0);
+
+      return `
+        <div class="cal-equipe card" style="padding:16px;margin-bottom:16px">
+          <div class="cal-equipe-hdr">
+            <span>${eq.nome}</span>
+            ${badgeSemDados}
+            <span style="font-size:10px;color:#6b7280">${mems.length} membros · ${totalHHMes.toFixed(0)} HH/mês</span>
+          </div>
+          <div class="cal-grid">
+            <table class="cal-table">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding-left:8px">Colaborador</th>
+                  <th style="text-align:left">Turno · Escala</th>
+                  ${thDias}
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>${linhas || '<tr><td colspan="99" class="cal-aviso">Sem membros.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }).join('');
+
+    corpo.innerHTML = html || '<div class="cal-aviso">Nenhuma equipe encontrada.</div>';
+  },
 };
-
-/* ─── Auto-inicialização se houver indicador no DOM ─────────── */
-document.addEventListener('DOMContentLoaded', () => {
-  const el = document.getElementById('cal-acomp-root');
-  if (!el) return;
-
-  const anoMes = el.dataset.anoMes || (() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}`;
-  })();
-
-  window.CalAcomp.inicializar(anoMes)
-    .then(() => {
-      el.dispatchEvent(new CustomEvent('cal-acomp-ready', {
-        bubbles: true,
-        detail: { anoMes }
-      }));
-    })
-    .catch(err => {
-      console.error('[cal_acomp] Falha na inicialização:', err);
-      el.dispatchEvent(new CustomEvent('cal-acomp-error', {
-        bubbles: true,
-        detail: { err }
-      }));
-    });
-});
