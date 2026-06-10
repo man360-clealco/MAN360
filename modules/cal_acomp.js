@@ -195,8 +195,20 @@ window.Modulos.cal_acomp = {
     while(cur>=dataIni){s.add(cur);cur=this._addDays(cur,-ciclo);}
     return s;
   },
-  _turnoDe(c)  { return this._s.turnos.find(t=>t.nome===c.turno)||null; },
-  _escalaDe(c) { return this._s.escalas.find(e=>e.nome===c.escala)||null; },
+  _turnoDe(c)  { return this._s.turnos.find(t=>t.id===c.turno_id)||null; },
+  _escalaDe(c) { return this._s.escalas.find(e=>e.id===c.escala_id)||null; },
+
+  /* ── Converte datetime-local para ISO com offset local (evita conversão UTC) ── */
+  _dtLocal(dtStr){
+    // dtStr = "YYYY-MM-DDTHH:MM" do input datetime-local
+    if(!dtStr) return null;
+    const d = new Date(dtStr); // interpreta como local
+    const off = -d.getTimezoneOffset(); // minutos
+    const sign = off>=0?'+':'-';
+    const hh = String(Math.floor(Math.abs(off)/60)).padStart(2,'0');
+    const mm = String(Math.abs(off)%60).padStart(2,'0');
+    return dtStr+':00'+sign+hh+':'+mm;
+  },
 
   /* ── HH disponível de um colaborador na semana ── */
   _hhDispSemana(colab){
@@ -598,9 +610,91 @@ window.Modulos.cal_acomp = {
     this._bindAcoesFila(el);
   },
 
-  /* ── Template da fila ── */
+  /* ── Soma HH a partir de um datetime, respeitando dias úteis da equipe ── */
+  _somarHH(dtInicio, hhTotal, mems){
+    if(!dtInicio||!hhTotal) return null;
+    // Parse do datetime de início
+    const dtStr = dtInicio.slice(0,16); // "YYYY-MM-DDTHH:MM"
+    const [datePart, timePart] = dtStr.split('T');
+    const [hIni, mIni] = timePart.split(':').map(Number);
+    let dAtual = datePart;
+    let minRestantes = Math.round(hhTotal * 60);
+    let minCursor = hIni * 60 + mIni;
+
+    for(let i=0; i<60; i++){
+      // HH disponível da equipe neste dia (média por membro presente)
+      const hhDia = mems.reduce((acc,m)=>{
+        const turno=this._turnoDe(m);
+        const escala=this._escalaDe(m);
+        const ini2=this._addDays(dAtual,-30), fim2=this._addDays(dAtual,30);
+        const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
+        if(folgas.has(dAtual)) return acc;
+        return acc+this._hhTurno(turno,dAtual);
+      },0);
+
+      if(hhDia<=0){ dAtual=this._addDays(dAtual,1); minCursor=0; continue; }
+
+      // Minutos disponíveis restantes no dia a partir do cursor
+      const turnoRef = this._turnoDe(mems[0]);
+      let minFimDia = 18*60; // fallback 18:00
+      if(turnoRef?.hora_saida){
+        const [hs,ms]=turnoRef.hora_saida.split(':').map(Number);
+        minFimDia = hs*60+ms;
+      }
+      const minDispDia = Math.max(0, minFimDia - minCursor);
+
+      if(minRestantes <= minDispDia){
+        // Termina neste dia
+        const minFim = minCursor + minRestantes;
+        const hFim = Math.floor(minFim/60);
+        const mFim = minFim%60;
+        return `${dAtual}T${String(hFim).padStart(2,'0')}:${String(mFim).padStart(2,'0')}:00`;
+      }
+
+      minRestantes -= minDispDia;
+      dAtual = this._addDays(dAtual,1);
+      minCursor = 0; // próximo dia começa do início
+      // Ajusta cursor para hora entrada do turno
+      if(turnoRef?.hora_entrada){
+        const [he,me]=turnoRef.hora_entrada.split(':').map(Number);
+        minCursor=he*60+me;
+      }
+    }
+    return null;
+  },
+
+
   _tplFila(eq,fila){
     const s=this._s;
+
+    // Calcular previsões sequenciais
+    // Ponto de partida: OS em execução usa dt_inicio_real, demais encadeiam
+    const mems=s.membros[eq.id]||[];
+    let cursor=null; // ISO datetime do próximo início disponível
+
+    fila.forEach((f,idx)=>{
+      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
+
+      if(f.status==='em_execucao'&&f.dt_inicio_real){
+        // Em execução: início = real, fim = início + HH distribuído por dias úteis
+        cursor=f.dt_inicio_real;
+      } else if(f.status==='pendente'||f.status==='pausado'){
+        // Pendente: início = fim do anterior ou agora
+        if(!cursor){
+          const hoje=this._hoje();
+          cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00';
+        }
+      }
+
+      if(cursor){
+        f._dtIniPrev=cursor;
+        const dtFim=this._somarHH(cursor,hh,mems);
+        f._dtFimPrev=dtFim;
+        cursor=dtFim;
+      }
+    });
+
     const rows=fila.map((f,idx)=>{
       const os=f._os;
       const desc=os?.desc_servico||os?.desc_os||'—';
@@ -709,7 +803,7 @@ window.Modulos.cal_acomp = {
         const dt=document.getElementById('ca-dt-ini').value;
         if(!dt){ showToast('Informe a data/hora','erro'); return; }
         const db=getDB();
-        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00'}).eq('id',id);
+        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt)}).eq('id',id);
         if(error) throw error;
         showToast('OS iniciada!','ok');
         this._fecharModal();
@@ -739,10 +833,10 @@ window.Modulos.cal_acomp = {
         const dt=document.getElementById('ca-dt-fim').value;
         if(!dt){ showToast('Informe a data/hora','erro'); return; }
         const db=getDB();
-        const{error}=await db.from('cal_fila').update({status:'encerrado',dt_fim_real:dt+':00'}).eq('id',id);
+        const{error}=await db.from('cal_fila').update({status:'encerrado',dt_fim_real:this._dtLocal(dt)}).eq('id',id);
         if(error) throw error;
         if(prox&&document.getElementById('ca-prox-check')?.checked){
-          await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00'}).eq('id',prox.id);
+          await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt)}).eq('id',prox.id);
         }
         showToast('OS encerrada!','ok');
         this._fecharModal();
@@ -770,7 +864,7 @@ window.Modulos.cal_acomp = {
       async()=>{
         const dt=document.getElementById('ca-dt-ret').value;
         const db=getDB();
-        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00',dt_pausa:null}).eq('id',id);
+        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt),dt_pausa:null}).eq('id',id);
         if(error) throw error;
         showToast('OS retomada!','ok');
         this._fecharModal();
