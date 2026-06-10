@@ -939,18 +939,20 @@ window.Modulos.cal_acomp = {
         if(!dt){ showToast('Informe a data/hora','erro'); return; }
         const db=getDB();
 
-        // Mover para posição 1: empurra as demais para frente
+        // Mover para posição 1: empurra as demais para frente sequencialmente
         const s=this._s;
         const filaEq=(s.fila[item.equipe_id]||[])
           .filter(f=>f.id!==id)
           .sort((a,b)=>a.posicao-b.posicao);
 
-        // Reposicionar sequencialmente a partir de 2
-        const updates=filaEq.map((f,i)=>
-          db.from('cal_fila').update({posicao:i+2}).eq('id',f.id)
-        );
-        updates.push(db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt),posicao:1}).eq('id',id));
-        await Promise.all(updates);
+        // Usar posições temporárias negativas para evitar conflito UNIQUE
+        for(const f of filaEq){
+          await db.from('cal_fila').update({posicao:-(f.posicao+100)}).eq('id',f.id);
+        }
+        await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:this._dtLocal(dt),posicao:1}).eq('id',id);
+        for(let i=0;i<filaEq.length;i++){
+          await db.from('cal_fila').update({posicao:i+2}).eq('id',filaEq[i].id);
+        }
 
         showToast('OS iniciada!','ok');
         this._fecharModal();
