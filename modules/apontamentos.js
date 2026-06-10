@@ -492,7 +492,14 @@ window.Modulos.apontamentos = {
       }
       return _folgasCache.get(c.cracha).has(dia);
     };
-    const deFerias = (ch,dia) => s.ferias.some(f=>String(f.chapa)===String(ch)&&f.data_inicio<=dia&&f.data_fim>=dia);
+    const deFerias = (ch,dia) => s.ferias.some(f=>{
+      if(String(f.chapa)!==String(ch)) return false;
+      // data_fim efetivo = data_fim - dias_vendidos (venda antecipa o retorno)
+      const fimEfetivo = f.dias_vendidos>0
+        ? this._addDays(f.data_fim, -f.dias_vendidos)
+        : f.data_fim;
+      return f.data_inicio<=dia && fimEfetivo>=dia;
+    });
     const getJust  = (ch,dia) => s.justificativas.find(j=>String(j.chapa)===String(ch)&&j.data_inicio<=dia&&j.data_fim>=dia)||null;
     const hhEsp    = (c,dia)  => this._hhTurno(this._turnoDe(c), dia);
 
