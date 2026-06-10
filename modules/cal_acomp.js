@@ -1,1190 +1,1282 @@
-/* ═══════════════════════════════════════════════════════════════
-   MAN360 — Acompanhamento Caldeiraria v6
-   window.Modulos.cal_acomp = { init(container) }
-   ═══════════════════════════════════════════════════════════════ */
-
+/* ═══════════════════════════════════════════════════════
+   MAN360 — Módulo: CAL Acomp
+   Acompanhamento semanal de OS por equipe — Caldeiraria
+   Padrão: window.Modulos.cal_acomp · usa getDB()
+   ═══════════════════════════════════════════════════════ */
+'use strict';
 window.Modulos = window.Modulos || {};
-window.Modulos.cal_acomp = (() => {
 
-  /* ── Âncora de semanas ── */
-  const ANCORA_SEM  = 9;
-  const ANCORA_DATA = new Date(2026, 4, 25, 12, 0, 0);
+window.Modulos.cal_acomp = {
 
-  function semAtual() {
-    const h = new Date(); h.setHours(12,0,0,0);
-    return ANCORA_SEM + Math.floor((h - ANCORA_DATA) / (7*86400000));
-  }
-  function iniSem(s) {
-    const d = new Date(ANCORA_DATA);
-    d.setDate(d.getDate() + (s - ANCORA_SEM)*7);
-    d.setHours(0,0,0,0); return d;
-  }
-  function fimSem(s) { const d=iniSem(s); d.setDate(d.getDate()+6); return d; }
+  /* ══════════════════════════════════════════════
+     ESTADO
+     ══════════════════════════════════════════════ */
+  _s: {
+    semana: 0, ano: 0,
+    dataIni: '', dataFim: '',
+    modoLeitura: false,
+    equipes: [], membros: {}, fila: {},
+    colaboradores: [], escalas: [], turnos: [],
+    programacao: [], // programacao_semanal da semana
+    filaAberta: null, // equipe_id com fila expandida
+    listaAberta: false,
+    SEM_ANCORA: 9, DATA_ANCORA: '2026-05-25',
+  },
 
-  function isoDate(d) {
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  function fmtDia(d) {
-    if (!d) return '—';
-    const dt = typeof d==='string' ? new Date(d.includes('T')?d:d+'T12:00:00') : new Date(d);
-    const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
-    return `${dias[dt.getDay()]} ${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}`;
-  }
-  function fmtHora(d) {
-    if (!d) return '';
-    const dt = typeof d==='string' ? new Date(d) : new Date(d);
-    return `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
-  }
-  function fmtDiaHora(d) {
-    if (!d) return '—';
-    return `${fmtDia(d)} ${fmtHora(d)}`;
-  }
-  function horaAtual() {
-    const n=new Date();
-    return `${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}`;
-  }
-  function hoje() { const d=new Date(); d.setHours(12,0,0,0); return d; }
+  /* ══════════════════════════════════════════════
+     INIT
+     ══════════════════════════════════════════════ */
+  async init(container) {
+    const s = this._s;
+    s.semana = this._semAtual();
+    s.ano    = new Date().getFullYear();
+    this._recalcPeriodo();
 
-  /* ── Estado ── */
-  let _sem       = semAtual();
-  let _equipes   = [];
-  let _fila      = {};
-  let _progSem   = [];
-  let _progAnt   = [];
-  let _colabs    = [];
-  let _turnos    = {};
-  let _escalas   = {};
-  let _ferias    = [];
-  let _justific  = [];
-  let _container = null;
-  let _itemAberto= null;  // id do item com ações abertas
+    container.innerHTML = this._tplRaiz();
+    await this._carregarBase();
+    await this._carregar();
+  },
 
-  /* ── Semana passada? ── */
-  function semPassada() { return _sem < semAtual(); }
+  /* ══════════════════════════════════════════════
+     TEMPLATE RAIZ
+     ══════════════════════════════════════════════ */
+  _tplRaiz() {
+    return `
+    <style>
+      /* ── Navegação ── */
+      .ca-nav{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+      .ca-nav-btn{height:30px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);cursor:pointer;font-family:var(--font);font-size:11px;font-weight:600;color:#374151;display:inline-flex;align-items:center;gap:5px;transition:background .15s}
+      .ca-nav-btn:hover{background:var(--bg)}
+      .ca-nav-btn.atual{background:var(--yellow);color:#000;border-color:var(--yellow)}
+      .ca-leitura-badge{font-size:10px;font-weight:700;background:#e5e7eb;color:#6b7280;padding:3px 10px;border-radius:10px;letter-spacing:.05em}
+      /* ── KPI cards ── */
+      .ca-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px}
+      .ca-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+      .ca-kpi-lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-bottom:6px}
+      .ca-kpi-val{font-size:22px;font-weight:800;line-height:1;margin-bottom:6px}
+      .ca-kpi-bar{height:5px;border-radius:3px;background:#e5e7eb;overflow:hidden;margin-bottom:4px}
+      .ca-kpi-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+      .ca-kpi-sub{font-size:10px;color:#9ca3af}
+      .ca-kpi-cob{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 16px;display:flex;align-items:center;gap:12px;grid-column:1/-1}
+      /* ── Em andamento ── */
+      .ca-andamento{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:12px 16px;margin-bottom:12px}
+      .ca-and-row{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:12px;border-bottom:1px solid #f3f4f6}
+      .ca-and-row:last-child{border-bottom:none}
+      /* ── Boards ── */
+      .ca-boards-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+      .ca-boards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+      .ca-board{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:border-color .15s}
+      .ca-board:hover{border-color:#d1d5db}
+      .ca-board-hdr{padding:12px 14px;cursor:pointer;user-select:none}
+      .ca-board-nome{font-size:13px;font-weight:700;color:#111;margin-bottom:4px;display:flex;align-items:center;justify-content:space-between}
+      .ca-board-membros{font-size:11px;color:#6b7280;margin-bottom:8px}
+      .ca-board-meta{display:flex;align-items:center;gap:10px}
+      .ca-board-hh{font-size:11px;font-weight:700}
+      .ca-board-bar{flex:1;height:5px;border-radius:3px;background:#e5e7eb;overflow:hidden}
+      .ca-board-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+      .ca-board-conclusao{font-size:10px;color:#6b7280;margin-top:5px}
+      /* ── Fila ── */
+      .ca-fila{border-top:1px solid var(--border);background:#fafafa}
+      .ca-fila-hdr{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--border)}
+      .ca-os-row{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;border-bottom:1px solid #f3f4f6;transition:background .1s}
+      .ca-os-row:last-child{border-bottom:none}
+      .ca-os-row:hover{background:#f9fafb}
+      .ca-os-num{font-size:12px;font-weight:700;color:#111;white-space:nowrap}
+      .ca-os-desc{font-size:11px;color:#374151;margin-top:1px}
+      .ca-os-info{font-size:10px;color:#6b7280;margin-top:2px}
+      .ca-badge{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;display:inline-block;margin-right:3px}
+      .ca-badge-prg{background:#dbeafe;color:#1d4ed8}
+      .ca-badge-rpg{background:#fef3c7;color:#92400e}
+      .ca-badge-npg{background:#f3f4f6;color:#6b7280}
+      .ca-badge-mcu{background:#fee2e2;color:#991b1b}
+      .ca-badge-exe{background:#dcfce7;color:#166534}
+      .ca-badge-pau{background:#fef3c7;color:#b45309}
+      .ca-badge-int{background:#f3f4f6;color:#6b7280}
+      .ca-badge-enc{background:#e5e7eb;color:#374151}
+      .ca-os-acoes{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+      .ca-btn{height:24px;padding:0 8px;font-size:10px;font-weight:600;border-radius:4px;cursor:pointer;border:1px solid var(--border);background:var(--card-bg);font-family:var(--font);color:#374151;display:inline-flex;align-items:center;gap:3px;transition:background .1s}
+      .ca-btn:hover{background:var(--bg)}
+      .ca-btn-green{background:#dcfce7;border-color:#86efac;color:#166534}
+      .ca-btn-green:hover{background:#bbf7d0}
+      .ca-btn-red{background:#fee2e2;border-color:#fca5a5;color:#991b1b}
+      .ca-btn-red:hover{background:#fecaca}
+      .ca-btn-yellow{background:#fef3c7;border-color:#fde68a;color:#92400e}
+      .ca-btn-yellow:hover{background:#fde68a}
+      .ca-reorder{display:flex;flex-direction:column;gap:1px;flex-shrink:0;padding-top:2px}
+      .ca-arr{height:16px;width:16px;border:1px solid var(--border);border-radius:2px;background:var(--card-bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;color:#9ca3af}
+      .ca-arr:hover{background:var(--bg);color:#374151}
+      .ca-arr:disabled{opacity:.3;cursor:default}
+      /* ── Painéis de grupo ── */
+      .ca-grupo{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden}
+      .ca-grupo-hdr{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer;background:#f9fafb;border-bottom:1px solid transparent}
+      .ca-grupo-hdr.open{border-bottom-color:var(--border)}
+      .ca-grupo-titulo{font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#4b5563;display:flex;align-items:center;gap:8px}
+      /* ── Lista geral ── */
+      .ca-lista-row{display:grid;grid-template-columns:100px 1fr 120px 50px 70px 70px;gap:6px;align-items:center;padding:6px 14px;border-bottom:1px solid #f3f4f6;font-size:11px}
+      .ca-lista-row:last-child{border-bottom:none}
+      .ca-lista-hdr{font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9ca3af;background:#f9fafb;border-bottom:1px solid var(--border)}
+      /* ── Pontos de atenção ── */
+      .ca-attn{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px}
+      .ca-attn-row{display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid #f9fafb;font-size:11px}
+      .ca-attn-row:last-child{border-bottom:none}
+      /* ── Leitura ── */
+      .ca-leitura *{pointer-events:none;opacity:.7}
+      .ca-leitura .ca-nav-btn,.ca-leitura .ca-nav-btn *{pointer-events:auto;opacity:1}
+      /* ── Misc ── */
+      .ca-icon-btn{height:26px;width:26px;padding:0;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;color:#6b7280;font-size:13px}
+      .ca-icon-btn:hover{background:var(--bg)}
+      .ca-input{width:100%;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);padding:0 10px;font-family:var(--font);font-size:12px;outline:none}
+      .ca-input:focus{border-color:var(--yellow)}
+      .ca-select{width:100%;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);padding:0 8px;font-family:var(--font);font-size:12px;outline:none;cursor:pointer}
+      .ca-lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:block;margin-bottom:4px}
+      .ca-field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:90px}
+      .ca-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+      .ca-sep{height:1px;background:var(--border);margin:16px 0}
+      @media(max-width:768px){.ca-kpis{grid-template-columns:1fr 1fr}.ca-boards{grid-template-columns:1fr}.ca-lista-row{grid-template-columns:80px 1fr 90px 40px 60px 60px}}
+    </style>
+    <div id="ca-root"></div>`;
+  },
 
-  /* ── Folgas ── */
-  function projetarFolgas(colab, ini, fim) {
-    const folgas = new Set();
-    const esc = _escalas[colab.escala]; if (!esc) return folgas;
-    const di = new Date(ini); di.setHours(12,0,0,0);
-    const df = new Date(fim); df.setHours(12,0,0,0);
-    if (esc.tipo_ciclo==='ADM') {
-      let d=new Date(di);
-      while(d<=df){if(d.getDay()===0||d.getDay()===6)folgas.add(isoDate(d));d.setDate(d.getDate()+1);}
-      return folgas;
+  /* ══════════════════════════════════════════════
+     HELPERS DE DATA (mesmo padrão apontamentos.js)
+     ══════════════════════════════════════════════ */
+  _addDays(iso, n) { const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); },
+  _hoje()    { return new Date().toISOString().slice(0,10); },
+  _fmtDM(iso){ if(!iso)return'—'; const[,m,d]=iso.split('-'); return `${d}/${m}`; },
+  _fmtDMH(iso){ if(!iso)return'—'; const dt=iso.includes('T')?iso:iso+'T00:00:00'; const d=new Date(dt); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; },
+  _diaSem(iso){ return ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][new Date(iso+'T00:00:00').getDay()]; },
+  _diaSemN(iso){ return new Date(iso+'T00:00:00').getDay(); },
+  _semParaDatas(s){ const i=this._addDays(this._s.DATA_ANCORA,(s-this._s.SEM_ANCORA)*7); return {ini:i,fim:this._addDays(i,6)}; },
+  _semAtual(){
+    const ms0=new Date(this._s.DATA_ANCORA+'T00:00:00').getTime();
+    const ms1=new Date(this._hoje()+'T00:00:00').getTime();
+    return this._s.SEM_ANCORA+Math.floor((ms1-ms0)/604800000);
+  },
+  _recalcPeriodo(){
+    const {ini,fim}=this._semParaDatas(this._s.semana);
+    this._s.dataIni=ini; this._s.dataFim=fim;
+    this._s.modoLeitura = this._s.semana < this._semAtual();
+  },
+
+  /* ══════════════════════════════════════════════
+     HELPERS HH / FOLGAS (portado do apontamentos.js)
+     ══════════════════════════════════════════════ */
+  _calcHH(entrada,saida,intervalo){
+    if(!entrada||!saida) return 8;
+    const[eh,em]=entrada.split(':').map(Number);
+    const[sh,sm]=saida.split(':').map(Number);
+    let mins=(sh*60+sm)-(eh*60+em);
+    if(mins<=0) mins+=1440;
+    return Math.round((mins-(intervalo||0))/60*100)/100;
+  },
+  _hhTurno(turno,iso){
+    if(!turno) return 8;
+    if(turno.nome==='ADM'){
+      const dw=this._diaSemN(iso);
+      if(dw===0||dw===6) return 0;
+      if(dw===5&&turno.saida_sexta) return this._calcHH(turno.hora_entrada,turno.saida_sexta,turno.intervalo_min);
+      return this._calcHH(turno.hora_entrada,turno.hora_saida,turno.intervalo_min);
     }
-    const ancora=colab.data_ref_folga||colab.primeira_folga; if(!ancora) return folgas;
-    const ancD=new Date(ancora+'T12:00:00'); const ciclo=(esc.dias_trabalho||5)+1;
-    let d=new Date(di);
-    while(d<=df){
-      const diff=Math.round((d-ancD)/86400000);
-      const pos=((diff%ciclo)+ciclo)%ciclo;
-      if(pos===esc.dias_trabalho)folgas.add(isoDate(d));
-      d.setDate(d.getDate()+1);
+    return this._calcHH(turno.hora_entrada,turno.hora_saida,turno.intervalo_min);
+  },
+  _gerarFolgas(escala,turno,pf,dataIni,dataFim){
+    if(!escala) return new Set();
+    if(escala.tipo_ciclo==='ADM'||turno?.nome==='ADM'){
+      const s=new Set(); let c=dataIni;
+      while(c<=dataFim){const dw=this._diaSemN(c);if(dw===0||dw===6)s.add(c);c=this._addDays(c,1);}
+      return s;
     }
-    return folgas;
-  }
+    const ancora=pf; if(!ancora) return new Set();
+    const ciclo=(escala.dias_trabalho||5)+1;
+    const s=new Set();
+    let cur=ancora;
+    while(cur<=dataFim){s.add(cur);cur=this._addDays(cur,ciclo);}
+    cur=this._addDays(ancora,-ciclo);
+    while(cur>=dataIni){s.add(cur);cur=this._addDays(cur,-ciclo);}
+    return s;
+  },
+  _turnoDe(c)  { return this._s.turnos.find(t=>t.nome===c.turno)||null; },
+  _escalaDe(c) { return this._s.escalas.find(e=>e.nome===c.escala)||null; },
 
-  /* ── HH disponível da equipe num dia ── */
-  function hhEquipeDia(equipe, data) {
-    const iso=isoDate(data); let total=0;
-    for (const m of (equipe.membros||[])) {
-      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-      if(!c||!col.turno) continue;
-      if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
-      if(_justific.some(j=>j.chapa===m.chapa&&iso>=j.data_inicio&&iso<=j.data_fim)) continue;
-      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
-      if(folgas.has(iso)) continue;
-      const t=_turnos[col.turno]; if(!t) continue;
-      const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
-      const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
-      total+=Math.max(0,((sh*60+sm)-(eh*60+em)-(t.intervalo_min||0))/60);
+  /* ── HH disponível de um colaborador na semana ── */
+  _hhDispSemana(colab){
+    const turno  = this._turnoDe(colab);
+    const escala = this._escalaDe(colab);
+    const ini    = this._addDays(this._s.dataIni,-30);
+    const fim    = this._addDays(this._s.dataFim, 30);
+    const folgas = this._gerarFolgas(escala,turno,colab.primeira_folga,ini,fim);
+    let hh=0;
+    let d=this._s.dataIni;
+    while(d<=this._s.dataFim){
+      if(!folgas.has(d)) hh+=this._hhTurno(turno,d);
+      d=this._addDays(d,1);
     }
-    return total;
-  }
+    return hh;
+  },
 
-  /* ── Horário de entrada da equipe num dia ── */
-  function entradaEquipeDia(equipe, data) {
-    let minEntrada = 999;
-    for (const m of (equipe.membros||[])) {
-      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
-      if(!c||!col.turno) continue;
-      const iso=isoDate(data);
-      if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
-      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
-      if(folgas.has(iso)) continue;
-      const t=_turnos[col.turno]; if(!t) continue;
-      const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
-      if(eh*60+em < minEntrada) minEntrada=eh*60+em;
-    }
-    return minEntrada===999 ? null : minEntrada;
-  }
+  /* ── HH disponível de uma equipe na semana ── */
+  _hhDispEquipe(equipeId){
+    const mems=this._s.membros[equipeId]||[];
+    return mems.reduce((acc,m)=>acc+this._hhDispSemana(m),0);
+  },
 
-  /* ── Calcular previsão início/fim de cada item da fila ──
-     Retorna array com {id, inicioCalc, fimCalc} para cada item ativo */
-  function calcularPrevisoes(equipe) {
-    const fila=(_fila[equipe.id]||[]);
-    const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
-    if(!ativos.length) return {};
+  /* ── HH alocado na fila de uma equipe ── */
+  _hhAlocadoEquipe(equipeId){
+    const fila=this._s.fila[equipeId]||[];
+    return fila.filter(f=>f.status!=='interrompido').reduce((acc,f)=>acc+(parseFloat(f._os?.hh_prev_servico)||0),0);
+  },
 
-    const result={};
-    // Cursor de tempo: começa do primeiro disponível
-    let cursorDt = null;
+  /* ── Projeção de data fim da fila ── */
+  _projetarFila(equipeId){
+    const fila=(this._s.fila[equipeId]||[]).filter(f=>f.status!=='interrompido').sort((a,b)=>a.posicao-b.posicao);
+    const mems=this._s.membros[equipeId]||[];
+    if(!fila.length||!mems.length) return null;
 
-    for (let idx=0;idx<ativos.length;idx++) {
-      const item=ativos[idx];
-      const hhPrev=item.hh_previsto||8;
+    // Constrói agenda de HH disponível por dia a partir de hoje ou ini da semana
+    const hoje=this._hoje();
+    let diaAtual=hoje<this._s.dataIni?this._s.dataIni:hoje;
 
-      // Ponto de partida
-      if(idx===0) {
-        if(item.status==='em_execucao'&&item.iniciado_em) {
-          cursorDt=new Date(item.iniciado_em);
-        } else if(item.status==='pausado'&&item.iniciado_em) {
-          cursorDt=new Date(item.iniciado_em);
-        } else {
-          // Começa agora ou no início do próximo dia útil
-          cursorDt=new Date();
-          const hj=hoje(); const hhHj=hhEquipeDia(equipe,hj);
-          if(hhHj===0) {
-            // Hoje é folga, avança para próximo dia útil
-            cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
-            while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
-            const ent=entradaEquipeDia(equipe,cursorDt);
-            if(ent!==null){cursorDt.setHours(Math.floor(ent/60),ent%60,0,0);}
-          }
-        }
-      }
-
-      result[item.id]={inicioCalc:new Date(cursorDt)};
-
-      // Avançar cursor pelo HH previsto, pulando domingos e almoço
-      let hhRestante=hhPrev;
-      let d=new Date(cursorDt);
-
-      while(hhRestante>0) {
-        const hhDia=hhEquipeDia(equipe,d);
-        if(hhDia===0||d.getDay()===0) { // folga ou domingo
-          d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null){d.setHours(Math.floor(ent/60),ent%60,0,0);}
-          continue;
-        }
-        // Calcular horas restantes no dia a partir do cursor
-        const _m0=equipe.membros&&equipe.membros[0];
-        const _c0=_m0?_colabs.find(x=>x.cracha===_m0.chapa):null;
-        const t=(_c0&&_c0.turno&&_turnos[_c0.turno])||{};
-        const [sh,sm]=(t.hora_saida||'17:00').split(':').map(Number);
-        const saidaMin=sh*60+sm;
-        const cursorMin=d.getHours()*60+d.getMinutes();
-        // Pular almoço 12:00-13:00
-        let dispMin=saidaMin-cursorMin;
-        if(cursorMin<720&&saidaMin>780) dispMin-=60; // subtrai 1h de almoço
-        else if(cursorMin>=720&&cursorMin<780) {
-          d.setHours(13,0,0,0); // pula pro fim do almoço
-          dispMin=saidaMin-780;
-          if(dispMin<=0){d.setDate(d.getDate()+1);const ent=entradaEquipeDia(equipe,d);if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);continue;}
-        }
-        const dispHH=Math.max(0,dispMin/60);
-        if(dispHH<=0){
-          d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
-          continue;
-        }
-        if(hhRestante<=dispHH) {
-          // Termina hoje
-          let fimMin=cursorMin+Math.round(hhRestante*60);
-          // Adicionar almoço se atravessa
-          if(cursorMin<720&&fimMin>720) fimMin+=60;
-          d.setHours(Math.floor(fimMin/60),fimMin%60,0,0);
-          hhRestante=0;
-        } else {
-          hhRestante-=dispHH;
-          d.setDate(d.getDate()+1);
-          const ent=entradaEquipeDia(equipe,d);
-          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
-        }
-      }
-
-      result[item.id].fimCalc=new Date(d);
-      cursorDt=new Date(d);
-      // Próximo começa no início do próximo dia útil se fim foi no final do dia
-    }
-    return result;
-  }
-
-  /* ── Tipo de OS ── */
-  function tipoOS(item) {
-    if(item.tipo==='mcu') return 'MCU';
-    // Verificar se está na prog da semana atual
-    const naProgAtual=_progSem.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
-    if(naProgAtual) return 'PRG';
-    // Verificar se estava na prog da semana anterior
-    const naProgAnt=_progAnt.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
-    if(naProgAnt) return 'REP';
-    return item.tipo==='programado'?'PRG':'NPG';
-  }
-
-  function badgeTipo(tipo) {
-    const m={PRG:['#2563eb','#dbeafe'],REP:['#7c3aed','#ede9fe'],NPG:['#d97706','#fef3c7'],MCU:['#dc2626','#fee2e2']};
-    const [c,b]=m[tipo]||['#9ca3af','#f3f4f6'];
-    return `<span class="cd-badge" style="color:${c};background:${b}">${tipo}</span>`;
-  }
-
-  /* ── HH total disponível da equipe na semana ── */
-  function hhSemEquipe(equipe) {
-    let t=0; const ini=iniSem(_sem);
-    for(let i=0;i<7;i++){const d=new Date(ini);d.setDate(d.getDate()+i);t+=hhEquipeDia(equipe,d);}
-    return t;
-  }
-
-  /* ── Previsão de conclusão total da equipe ── */
-  function prevConclusaoEquipe(equipe) {
-    const prev=calcularPrevisoes(equipe);
-    const fila=(_fila[equipe.id]||[]).filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
-    if(!fila.length) return null;
-    const ultimo=fila[fila.length-1];
-    const p=prev[ultimo.id];
-    return p?p.fimCalc:null;
-  }
-
-  /* ── KPIs ── */
-  function calcKPIs() {
-    const osNaSem = new Set(_progSem.map(p=>p.os+'|'+(p.cod_servico||'')));
-    let hhPrevProg=0, hhEncProg=0, hhPrevProj=0;
-    let hhMCU=0, hhREP=0, hhTotal=0;
-
-    for(const eq of _equipes) {
-      const prev=calcularPrevisoes(eq);
-      const fimSemana=fimSem(_sem); fimSemana.setHours(23,59,59);
-      for(const item of (_fila[eq.id]||[])) {
-        const hh=item.hh_previsto||0;
-        const tipo=tipoOS(item);
-        hhTotal+=hh;
-        if(tipo==='MCU') hhMCU+=hh;
-        if(tipo==='REP') hhREP+=hh;
-        const key=item.os+'|'+(item.cod_servico||'');
-        if(osNaSem.has(key)) {
-          hhPrevProg+=hh;
-          if(item.status==='encerrado') hhEncProg+=hh;
-          const p=prev[item.id];
-          if(p&&p.fimCalc<=fimSemana) hhPrevProj+=hh;
-        }
-      }
-    }
-    return {
-      adesAtual:  hhPrevProg>0?Math.round(hhEncProg/hhPrevProg*100):0,
-      adesProj:   hhPrevProg>0?Math.round((hhEncProg+hhPrevProj)/hhPrevProg*100):0,
-      pctMCU:     hhTotal>0?Math.round(hhMCU/hhTotal*100):0,
-      pctREP:     hhTotal>0?Math.round(hhREP/hhTotal*100):0,
-    };
-  }
-
-  /* ══════════════════════════════════════
-     CARREGAR DADOS
-  ══════════════════════════════════════ */
-  async function carregarTudo() {
-    const db=getDB();
-    const ano=iniSem(_sem).getFullYear();
-    const ini=isoDate(iniSem(_sem));
-    const fim=isoDate(fimSem(_sem));
-
-    const {data:colabs}=await db.from('apt_colaboradores').select('*').eq('modalidade','CAL');
-    _colabs=colabs||[];
-    const {data:turnos}=await db.from('apt_turnos').select('*');
-    const {data:escalas}=await db.from('apt_escalas').select('*');
-    _turnos={}; (turnos||[]).forEach(t=>{if(t.id)_turnos[t.id]=t; if(t.nome)_turnos[t.nome]=t;});
-    _escalas={}; (escalas||[]).forEach(e=>{if(e.id)_escalas[e.id]=e; if(e.nome)_escalas[e.nome]=e;});
-
-    const ini2=isoDate(iniSem(_sem-1)); // 2 semanas atrás para folgas
-    const fim2=isoDate(fimSem(_sem+1));
-    const {data:ferias}=await db.from('apt_ferias').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-    const {data:just}=await db.from('apt_justificativas').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-    _ferias=ferias||[]; _justific=just||[];
-
-    const {data:eqs}=await db.from('cal_equipes').select('*').eq('ativo',true);
-    const {data:mbs}=await db.from('cal_equipe_membros').select('*');
-    _equipes=(eqs||[]).map(e=>({...e,he_ativo:e.he_ativo||false,membros:(mbs||[]).filter(m=>m.equipe_id===e.id).map(m=>({chapa:m.chapa,nome:m.nome}))}));
-
-    const {data:fila}=await db.from('cal_fila').select('*').eq('semana',_sem).eq('ano',ano).order('ordem',{ascending:true});
-    _fila={};
-    (fila||[]).forEach(item=>{if(!_fila[item.equipe_id])_fila[item.equipe_id]=[];_fila[item.equipe_id].push(item);});
-
-    const {data:prog}=await db.from('programacao_semanal').select('*').eq('semana',_sem).eq('ano',ano).like('equipe','CAL%');
-    _progSem=prog||[];
-    const anoAnt=iniSem(_sem-1).getFullYear();
-    const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
-    _progAnt=progAnt||[];
-  }
-
-  async function salvarOrdem(equipeId) {
-    const db=getDB(); const fila=_fila[equipeId]||[];
-    for(let i=0;i<fila.length;i++){if(!fila[i]||!fila[i].id)continue;await db.from('cal_fila').update({ordem:i+1}).eq('id',fila[i].id);}
-  }
-
-  async function atualizarStatus(id,status,extra={}) {
-    const db=getDB(); const nid=parseInt(id); const p={status,...extra};
-    await db.from('cal_fila').update(p).eq('id',nid);
-    for(const eqId in _fila){const idx=_fila[eqId].findIndex(i=>parseInt(i.id)===nid);if(idx>=0){Object.assign(_fila[eqId][idx],p);break;}}
-  }
-
-  async function inserirNaFila(equipeId,item,posicao) {
-    const db=getDB(); const ano=iniSem(_sem).getFullYear();
-    if(!_fila[equipeId])_fila[equipeId]=[];
-    const fila=_fila[equipeId];
-    const {data,error}=await db.from('cal_fila').insert({equipe_id:equipeId,semana:_sem,ano,ordem:fila.length+1,...item}).select().single();
-    if(error||!data){console.error('inserir:',error);return null;}
-    if(posicao==='fim'){fila.push(data);}
-    else{const pos=typeof posicao==='number'?posicao:0;fila.splice(pos,0,data);await salvarOrdem(equipeId);}
-    return data;
-  }
-
-  async function removerDaFila(id) {
-    const db=getDB(); const nid=parseInt(id);
-    await db.from('cal_fila').delete().eq('id',nid);
-    for(const eqId in _fila)_fila[eqId]=_fila[eqId].filter(i=>parseInt(i.id)!==nid);
-  }
-
-  /* ══════════════════════════════════════
-     HTML
-  ══════════════════════════════════════ */
-
-  /* Ícone de data/hora */
-  function htmlDtHora(dt, tipo) {
-    if(!dt) return '<span class="cd-dt-vazio">—</span>';
-    const icone = tipo==='exec'?'▶':tipo==='fim'?'🏁':'🕐';
-    return `<span class="cd-dt">${icone} ${fmtDia(dt)} ${fmtHora(dt)}</span>`;
-  }
-
-  /* ── Linha de serviço ── */
-  function htmlItemFila(item, equipeId, pos, total, prev) {
-    const isExec  = item.status==='em_execucao';
-    const isPause = item.status==='pausado';
-    const isInter = item.status==='interrompido';
-    const isEnc   = item.status==='encerrado';
-    const tipo    = tipoOS(item);
-    const p       = prev[item.id];
-    const inicioDt= isExec||isPause ? item.iniciado_em : (p?p.inicioCalc:null);
-    const fimDt   = isEnc ? item.encerrado_em : (p?p.fimCalc:null);
-    const aberto  = _itemAberto===item.id;
-
-    let rowCls='cd-svc-row';
-    if(isExec)  rowCls+=' exec';
-    if(isPause) rowCls+=' pausado';
-    if(isEnc)   rowCls+=' encerrado';
-    if(isInter) rowCls+=' interrompido';
-    if(semPassada()) rowCls+=' sempassada';
-
-    // Setas de posição — só para ativos não encerrados
-    const podeMover = !isEnc && !isExec;
-    const posBtn = podeMover ? `<div class="cd-pos">
-      <button class="cd-pos-btn" data-action="mover-cima" data-id="${item.id}" data-eq="${equipeId}" ${pos===0?'disabled':''}title="Subir">▲</button>
-      <button class="cd-pos-btn" data-action="mover-baixo" data-id="${item.id}" data-eq="${equipeId}" ${pos===total-1?'disabled':''}title="Descer">▼</button>
-    </div>` : `<div class="cd-pos cd-pos-empty"></div>`;
-
-    // Datas
-    const dtInicio = htmlDtHora(inicioDt, isExec||isPause?'exec':'inicio');
-    const dtFim    = htmlDtHora(fimDt, 'fim');
-
-    // Ações
-    let acoes='';
-    if(isExec) {
-      acoes=`<button class="cd-act green" data-action="encerrar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-check"></i> Encerrar</button>
-        <button class="cd-act amber" data-action="pausar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-pause"></i> Pausar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
-    } else if(isPause) {
-      acoes=`<button class="cd-act green" data-action="retomar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Retomar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
-    } else if(isEnc) {
-      if(semPassada()) acoes=`<button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>`;
-    } else if(isInter) {
-      acoes=`<button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
-        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
-    } else {
-      acoes=`<button class="cd-act green" data-action="iniciar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Iniciar</button>
-        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
-        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>
-        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
+    // Pré-calcula HH/dia da equipe para os próximos 60 dias
+    const hhPorDia={};
+    let d=diaAtual;
+    for(let i=0;i<60;i++){
+      hhPorDia[d]=mems.reduce((acc,m)=>{
+        const turno=this._turnoDe(m);
+        const escala=this._escalaDe(m);
+        const ini2=this._addDays(d,-30), fim2=this._addDays(d,30);
+        const folgas=this._gerarFolgas(escala,turno,m.primeira_folga,ini2,fim2);
+        if(folgas.has(d)) return acc;
+        return acc+this._hhTurno(turno,d);
+      },0);
+      d=this._addDays(d,1);
     }
 
-    return `<div class="${rowCls}" data-id="${item.id}">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
-        ${posBtn}
-        <div class="cd-svc-body">
-          <span class="cd-svc-os">${item.os||'S/N'}</span>
-          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-          ${badgeTipo(tipo)}
-        </div>
-        <div class="cd-svc-datas">
-          ${dtInicio}
-          ${dtFim}
-        </div>
-      </div>
-      ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
-    </div>`;
-  }
-
-  /* ── Fila de uma equipe ── */
-  function htmlFila(equipe) {
-    const fila=_fila[equipe.id]||[];
-    const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
-    const prev=calcularPrevisoes(equipe);
-
-    const rows=ativos.map((item,idx)=>htmlItemFila(item,equipe.id,idx,ativos.length,prev)).join('');
-    return rows+`<div class="cd-add-os" data-action="add-os" data-eq="${equipe.id}">
-      <i class="ti ti-plus"></i> Inserir OS na fila
-    </div>`;
-  }
-
-  /* ── Board de equipe ── */
-  function htmlBoard(equipe) {
-    const fila=_fila[equipe.id]||[];
-    const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
-    const hhDisp=hhSemEquipe(equipe);
-    const hhAloc=ativos.reduce((s,i)=>s+(i.hh_previsto||0),0);
-    const estouro=hhAloc>hhDisp;
-    const prev=prevConclusaoEquipe(equipe);
-    const prevStr=prev?`${String(prev.getDate()).padStart(2,'0')}/${String(prev.getMonth()+1).padStart(2,'0')}`:'—';
-    const aberto=_itemAberto===`eq-${equipe.id}`;
-
-    const hhCls=estouro?'over':hhAloc>hhDisp*0.85?'warn':'ok';
-    const membros=(equipe.membros||[]).map(m=>`<span class="cd-membro">${(m.nome||m.chapa||'').split(' ')[0]}</span>`).join('');
-
-    return `<div class="cd-board" data-eq-id="${equipe.id}">
-      <div class="cd-board-hdr${semPassada()?' passada':''}" data-action="toggle-eq" data-eq="${equipe.id}">
-        <div class="cd-board-info">
-          <span class="cd-board-nome">${equipe.nome}</span>
-          <div class="cd-board-membros">${membros||'<span class="cd-membro">Sem membros</span>'}</div>
-        </div>
-        <div class="cd-board-meta">
-          <span class="cd-board-hh ${hhCls}">${hhAloc.toFixed(0)}h / ${hhDisp.toFixed(0)}h</span>
-          <span class="cd-board-prev"><i class="ti ti-calendar-due"></i> ${prevStr}</span>
-          <button class="cd-cfg-btn" data-action="config-equipe" data-eq="${equipe.id}"><i class="ti ti-settings"></i></button>
-          <i class="ti ti-chevron-down cd-board-chev${aberto?' rot':''}"></i>
-        </div>
-      </div>
-      <div class="cd-board-fila${aberto?' open':''}" id="board-fila-${equipe.id}">
-        ${htmlFila(equipe)}
-      </div>
-    </div>`;
-  }
-
-  /* ── Grupo Interrompidos ── */
-  function htmlInterrompidos() {
-    const items=[];
-    for(const eq of _equipes) {
-      for(const item of (_fila[eq.id]||[]).filter(i=>i.status==='interrompido')) {
-        items.push({...item,equipeNome:eq.nome,equipeId:eq.id});
-      }
+    // Distribui HH da fila pelos dias
+    let hhRestante=0;
+    let dFim=diaAtual;
+    for(const item of fila){
+      hhRestante+=(parseFloat(item._os?.hh_prev_servico)||0);
     }
-    if(!items.length) return '';
-    const aberto=_itemAberto==='grupo-inter';
-    const rows=items.map(item=>`<div class="cd-svc-row interrompido">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
-        <div class="cd-pos cd-pos-empty"></div>
-        <div class="cd-svc-body">
-          <span class="cd-svc-os">${item.os||'S/N'}</span>
-          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-          ${badgeTipo(tipoOS(item))}
-          <span class="cd-eq-tag">${item.equipeNome}</span>
-        </div>
-        <div class="cd-svc-datas"><span class="cd-dt-motivo">${item.obs||'—'}</span></div>
-      </div>
-      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
-        <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
-        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>
-      </div>`:''}
-    </div>`).join('');
-
-    return `<div class="cd-board cd-board-inter">
-      <div class="cd-board-hdr inter" data-action="toggle-eq" data-eq="grupo-inter">
-        <div class="cd-board-info">
-          <span class="cd-board-nome"><i class="ti ti-player-pause" style="font-size:12px;margin-right:5px"></i> Interrompidos</span>
-        </div>
-        <div class="cd-board-meta">
-          <span class="cd-board-hh" style="color:#fde047">${items.length} serviço${items.length>1?'s':''}</span>
-          <i class="ti ti-chevron-down cd-board-chev${aberto?' rot':''}"></i>
-        </div>
-      </div>
-      <div class="cd-board-fila${aberto?' open':''}">${rows}</div>
-    </div>`;
-  }
-
-  /* ── Grupo Encerrados ── */
-  function htmlEncerrados() {
-    const items=[];
-    for(const eq of _equipes) {
-      for(const item of (_fila[eq.id]||[]).filter(i=>i.status==='encerrado')) {
-        items.push({...item,equipeNome:eq.nome,equipeId:eq.id});
-      }
+    d=diaAtual;
+    while(hhRestante>0&&d<this._addDays(diaAtual,60)){
+      const disp=hhPorDia[d]||0;
+      hhRestante-=disp;
+      if(hhRestante>0) d=this._addDays(d,1);
     }
-    if(!items.length) return '';
-    const aberto=_itemAberto==='grupo-enc';
-    const rows=items.map(item=>`<div class="cd-svc-row encerrado">
-      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
-        <div class="cd-pos cd-pos-empty"></div>
-        <div class="cd-svc-body">
-          <span class="cd-svc-os">${item.os||'S/N'}</span>
-          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-          ${badgeTipo(tipoOS(item))}
-          <span class="cd-eq-tag">${item.equipeNome}</span>
-        </div>
-        <div class="cd-svc-datas">${htmlDtHora(item.encerrado_em,'fim')}</div>
-      </div>
-      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
-        <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
-      </div>`:''}
-    </div>`).join('');
+    return d;
+  },
 
-    return `<div class="cd-board cd-board-enc">
-      <div class="cd-board-hdr enc" data-action="toggle-eq" data-eq="grupo-enc">
-        <div class="cd-board-info">
-          <span class="cd-board-nome"><i class="ti ti-circle-check" style="font-size:12px;margin-right:5px"></i> Encerrados nesta semana</span>
-        </div>
-        <div class="cd-board-meta">
-          <span class="cd-board-hh" style="color:#86efac">${items.length} serviço${items.length>1?'s':''}</span>
-          <i class="ti ti-chevron-down cd-board-chev${aberto?' rot':''}"></i>
-        </div>
-      </div>
-      <div class="cd-board-fila${aberto?' open':''}">${rows}</div>
-    </div>`;
-  }
+  /* ══════════════════════════════════════════════
+     BADGES
+     ══════════════════════════════════════════════ */
+  _badgeTipo(item){
+    if(item._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA')
+      return `<span class="ca-badge ca-badge-mcu">MCU</span>`;
+    // Reprogramado: semana_ref < semana atual selecionada
+    if(item.semana_ref < this._s.semana)
+      return `<span class="ca-badge ca-badge-rpg">RPG</span>`;
+    // Programado: está em programacao_semanal desta semana
+    const prog=this._s.programacao.find(p=>p.os===item.os&&p.cod_servico===item.cod_servico);
+    if(prog) return `<span class="ca-badge ca-badge-prg">PRG</span>`;
+    return `<span class="ca-badge ca-badge-npg">NPG</span>`;
+  },
+  _badgeStatus(status){
+    const m={em_execucao:'ca-badge-exe',pausado:'ca-badge-pau',interrompido:'ca-badge-int',encerrado:'ca-badge-enc'};
+    const l={em_execucao:'EM EXEC',pausado:'PAUSADO',interrompido:'INTERR.',encerrado:'ENCERRADO',pendente:''};
+    if(status==='pendente') return '';
+    return `<span class="ca-badge ${m[status]||''}">${l[status]||status}</span>`;
+  },
 
-  /* ── Resumo rápido ── */
-  function htmlResumo() {
-    const cards=_equipes.map(eq=>{
-      const fila=_fila[eq.id]||[];
-      const exec=fila.find(i=>i.status==='em_execucao');
-      const pause=fila.find(i=>i.status==='pausado');
-      const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
-      const prev=calcularPrevisoes(eq);
-      // Próximo = segundo ativo (primeiro depois do em execução)
-      const emAndamento=exec||pause;
-      const proximo=ativos.find(i=>i.id!==(emAndamento&&emAndamento.id)&&i.status==='pendente');
-      const proxPrev=proximo&&prev[proximo.id]?prev[proximo.id].inicioCalc:null;
-
-      if(!emAndamento&&!proximo) return '';
-
-      return `<div class="cd-resumo-eq">
-        <div class="cd-resumo-nome">${eq.nome}</div>
-        ${emAndamento?`<div class="cd-resumo-exec">
-          <div class="cd-resumo-dot${emAndamento.status==='pausado'?' pausado':''}"></div>
-          <span>${emAndamento.os||'S/N'} · ${(emAndamento.desc_servico||'—').substring(0,35)}</span>
-        </div>`:''}
-        ${proximo?`<div class="cd-resumo-prox">
-          <i class="ti ti-arrow-right" style="font-size:10px"></i>
-          <span>${proximo.os||'S/N'} · ${(proximo.desc_servico||'').substring(0,30)}${proxPrev?' · 🕐 '+fmtDia(proxPrev)+' '+fmtHora(proxPrev):''}</span>
-        </div>`:''}
-      </div>`;
-    }).filter(Boolean).join('');
-
-    if(!cards) return '';
-    return `<div class="cd-resumo">
-      <div class="cd-resumo-hdr"><i class="ti ti-activity"></i> Em andamento agora</div>
-      <div class="cd-resumo-body">${cards}</div>
-    </div>`;
-  }
-
-  /* ── Pontos de atenção ── */
-  function htmlPontos() {
-    const pontos=[];
-    const fimDomingo=fimSem(_sem); fimDomingo.setHours(23,59,59);
-    const sabado=new Date(fimDomingo); sabado.setDate(sabado.getDate()-1); sabado.setHours(0,0,0,0);
-
-    if(semPassada()) {
-      // Semana passada: mostrar OS não encerradas
-      for(const eq of _equipes) {
-        for(const item of (_fila[eq.id]||[]).filter(i=>i.status!=='encerrado')) {
-          pontos.push({tipo:'warn',txt:`OS ${item.os||'S/N'} — ${(item.desc_servico||'').substring(0,40)} não foi encerrada`,sub:`Equipe: ${eq.nome}`,});
-        }
-      }
-    } else {
-      // Semana atual: zona de risco + capacidade disponível
-      const eqComEspaco=[];
-      for(const eq of _equipes) {
-        const prev=calcularPrevisoes(eq);
-        for(const item of (_fila[eq.id]||[]).filter(i=>i.status!=='encerrado'&&i.status!=='interrompido')) {
-          const p=prev[item.id];
-          if(p&&p.fimCalc>=sabado&&p.fimCalc<=fimDomingo) {
-            pontos.push({tipo:'risco',txt:`OS ${item.os||'S/N'} (${eq.nome}) tem prev. fim no fim de semana`,sub:'Zona de risco — considerar reprogramar para próxima semana'});
-          }
-        }
-        const hhDisp=hhSemEquipe(eq);
-        const hhAloc=(_fila[eq.id]||[]).filter(i=>i.status!=='encerrado'&&i.status!=='interrompido').reduce((s,i)=>s+(i.hh_previsto||0),0);
-        if(hhDisp-hhAloc>16) eqComEspaco.push({nome:eq.nome,livre:(hhDisp-hhAloc).toFixed(0)});
-      }
-      if(eqComEspaco.length&&pontos.some(p=>p.tipo==='risco')) {
-        eqComEspaco.forEach(e=>{pontos.push({tipo:'ok',txt:`${e.nome} tem ${e.livre}h disponíveis para absorver serviços em risco`,sub:'Capacidade suficiente'});});
-      }
-    }
-
-    if(!pontos.length) return '';
-
-    const titulo=semPassada()?'OS Pendentes de Execução':'Pontos de Atenção';
-    const rows=pontos.map(p=>`<div class="cd-ponto">
-      <div class="cd-ponto-dot ${p.tipo}"></div>
-      <div><div class="cd-ponto-txt">${p.txt}</div><div class="cd-ponto-sub">${p.sub}</div></div>
-    </div>`).join('');
-
-    return `<div class="cd-pontos">
-      <div class="cd-pontos-hdr"><i class="ti ti-alert-triangle"></i> ${titulo}</div>
-      ${rows}
-    </div>`;
-  }
-
-  /* ══════════════════════════════════════
-     RENDERIZAR
-  ══════════════════════════════════════ */
-  function renderizar() {
-    const kpi=calcKPIs();
-    const cor=p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
-    const semAnt=_sem-1,semProx=_sem+1;
-    const passada=semPassada();
-
-    _container.innerHTML=`<div class="cd-mod${passada?' passada':''}">
-
-      <!-- Filtro semana -->
-      <div class="cd-filtros">
-        <div class="cd-week-nav">
-          <button class="cd-wbtn" id="btn-sem-ant"><i class="ti ti-chevron-left"></i></button>
-          <div class="cd-week-chip" id="btn-sem-prev">Sem ${semAnt} · ${fmtDia(iniSem(semAnt))}–${fmtDia(fimSem(semAnt))}</div>
-          <div class="cd-week-atual${passada?' passada':''}"><i class="ti ti-calendar-week"></i> Sem ${_sem} · ${fmtDia(iniSem(_sem))} – ${fmtDia(fimSem(_sem))}${passada?' · Semana passada':''}</div>
-          <div class="cd-week-chip" id="btn-sem-prox">Sem ${semProx} · ${fmtDia(iniSem(semProx))}–${fmtDia(fimSem(semProx))}</div>
-          <button class="cd-wbtn" id="btn-sem-prox2"><i class="ti ti-chevron-right"></i></button>
-        </div>
-        <button class="cd-btn-primary" id="btn-nova-equipe"><i class="ti ti-plus"></i> Nova equipe</button>
-      </div>
-
-      <!-- KPIs -->
-      <div class="cd-kpi-grid">
-        <div class="cd-kpi"><div class="cd-kpi-lbl">Aderência Atual</div><div class="cd-kpi-val" style="color:${cor(kpi.adesAtual)}">${kpi.adesAtual}%</div><div class="cd-kpi-sub">HH enc. prog. / HH prev. prog.</div><div class="cd-kpi-bar"><div class="cd-kpi-fill" style="width:${kpi.adesAtual}%;background:${cor(kpi.adesAtual)}"></div></div></div>
-        <div class="cd-kpi"><div class="cd-kpi-lbl">Aderência Projetada</div><div class="cd-kpi-val" style="color:${cor(kpi.adesProj)}">${kpi.adesProj}%</div><div class="cd-kpi-sub">Incl. prev. conclusão até domingo</div><div class="cd-kpi-bar"><div class="cd-kpi-fill" style="width:${kpi.adesProj}%;background:${cor(kpi.adesProj)}"></div></div></div>
-        <div class="cd-kpi"><div class="cd-kpi-lbl">% HH MCU</div><div class="cd-kpi-val" style="color:var(--red)">${kpi.pctMCU}%</div><div class="cd-kpi-sub">MCU sobre total da fila</div><div class="cd-kpi-bar"><div class="cd-kpi-fill" style="width:${kpi.pctMCU}%;background:var(--red)"></div></div></div>
-        <div class="cd-kpi"><div class="cd-kpi-lbl">% HH Reprogramado</div><div class="cd-kpi-val" style="color:var(--purple)">${kpi.pctREP}%</div><div class="cd-kpi-sub">REP sobre total da fila</div><div class="cd-kpi-bar"><div class="cd-kpi-fill" style="width:${kpi.pctREP}%;background:var(--purple)"></div></div></div>
-      </div>
-
-      <!-- Resumo -->
-      ${htmlResumo()}
-
-      <!-- Boards -->
-      <div class="cd-boards">
-        ${_equipes.map(htmlBoard).join('')}
-        ${htmlInterrompidos()}
-        ${htmlEncerrados()}
-        ${!_equipes.length?'<div class="cd-vazio"><i class="ti ti-users-group"></i><span>Nenhuma equipe cadastrada.</span><button class="cd-btn-primary" id="btn-nova-equipe-vazio"><i class="ti ti-plus"></i> Criar primeira equipe</button></div>':''}
-      </div>
-
-      <!-- Pontos de atenção -->
-      ${htmlPontos()}
-
-    </div>`;
-
-    bindEventos();
-  }
-
-  /* ══════════════════════════════════════
-     EVENTOS
-  ══════════════════════════════════════ */
-  function bindEventos() {
-    const c=_container;
-
-    c.querySelector('#btn-sem-ant').addEventListener('click',()=>trocarSemana(_sem-1));
-    c.querySelector('#btn-sem-prox2').addEventListener('click',()=>trocarSemana(_sem+1));
-    c.querySelector('#btn-sem-prev').addEventListener('click',()=>trocarSemana(_sem-1));
-    c.querySelector('#btn-sem-prox').addEventListener('click',()=>trocarSemana(_sem+1));
-    c.querySelector('#btn-nova-equipe').addEventListener('click',()=>abrirModalEquipe(null));
-    const bv=c.querySelector('#btn-nova-equipe-vazio');
-    if(bv)bv.addEventListener('click',()=>abrirModalEquipe(null));
-
-    c.querySelectorAll('[data-action]').forEach(btn=>{
-      btn.addEventListener('click',e=>{
-        e.stopPropagation();
-        const {action,id,eq}=btn.dataset;
-        const iid=id?parseInt(id):null; const ieq=eq?parseInt(eq):null;
-        switch(action){
-          case 'toggle-eq':
-            _itemAberto=_itemAberto===eq?null:eq; renderizar(); break;
-          case 'toggle-item':
-            _itemAberto=_itemAberto===iid?null:iid; renderizar(); break;
-          case 'iniciar':       acaoIniciar(iid); break;
-          case 'encerrar':      acaoEncerrar(iid); break;
-          case 'pausar':        acaoPausar(iid,ieq); break;
-          case 'retomar':       acaoRetomar(iid); break;
-          case 'interromper':   acaoInterromper(iid,ieq); break;
-          case 'reabrir':       acaoReabrir(iid,ieq); break;
-          case 'remover':       acaoRemover(iid); break;
-          case 'mover-cima':    acaoMoverPos(iid,ieq,-1); break;
-          case 'mover-baixo':   acaoMoverPos(iid,ieq,+1); break;
-          case 'mover-equipe':  acaoMoverEquipe(iid,ieq); break;
-          case 'add-os':        abrirModalOS(ieq); break;
-          case 'config-equipe': abrirModalEquipe(ieq); break;
-        }
-      });
-    });
-  }
-
-  /* ══════════════════════════════════════
-     AÇÕES
-  ══════════════════════════════════════ */
-  async function acaoIniciar(id) {
-    const hora=await modalHora('Hora de início',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoEncerrar(id) {
-    const hora=await modalHora('Hora de encerramento',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'encerrado',{encerrado_em:dt.toISOString()});
-    // Perguntar se inicia o próximo
-    let equipeId=null;
-    for(const eqId in _fila)if(_fila[eqId].some(i=>parseInt(i.id)===id)){equipeId=parseInt(eqId);break;}
-    if(equipeId){
-      const prox=(_fila[equipeId]||[]).find(i=>parseInt(i.id)!==id&&i.status==='pendente');
-      if(prox){
-        const sim=await modalConfirm(`Iniciar próximo serviço?\n${prox.os||'S/N'} · ${prox.desc_servico||''}`);
-        if(sim){
-          const dt2=new Date(); dt2.setHours(dt.getHours(),dt.getMinutes(),0,0);
-          await atualizarStatus(prox.id,'em_execucao',{iniciado_em:dt2.toISOString()});
-        }
-      }
-    }
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoPausar(id,equipeId) {
-    await atualizarStatus(id,'pausado');
-    // Mover para posição 2 (logo após o em execução se houver, ou posição 1)
-    const fila=_fila[equipeId]||[];
-    const idx=fila.findIndex(i=>parseInt(i.id)===id);
-    if(idx>=0){
-      const [item]=fila.splice(idx,1);
-      const posExec=fila.findIndex(i=>i.status==='em_execucao');
-      fila.splice(posExec>=0?posExec+1:0,0,item);
-      await salvarOrdem(equipeId);
-    }
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoRetomar(id) {
-    const hora=await modalHora('Hora de retomada',horaAtual()); if(!hora)return;
-    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoInterromper(id,equipeId) {
-    const motivo=await modalOpcoes('Motivo da interrupção',['Falta de Material','Falta de Acesso','Segurança Comprometida']);
-    if(!motivo)return;
-    const fila=_fila[equipeId]||[];
-    const idx=fila.findIndex(i=>parseInt(i.id)===id);
-    if(idx>=0){const [item]=fila.splice(idx,1);fila.push(item);await salvarOrdem(equipeId);}
-    await atualizarStatus(id,'interrompido',{obs:motivo});
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoReabrir(id,equipeId) {
-    // Selecionar equipe destino
-    const opcoes=_equipes.map(e=>e.nome);
-    if(!opcoes.length){alert('Nenhuma equipe ativa.');return;}
-    const escolha=await modalOpcoes('Selecionar equipe destino',opcoes); if(!escolha)return;
-    const novaEq=_equipes.find(e=>e.nome===escolha); if(!novaEq)return;
-    const db=getDB();
-    const nova_ordem=(_fila[novaEq.id]||[]).length+1;
-    await db.from('cal_fila').update({equipe_id:novaEq.id,ordem:nova_ordem,status:'pendente',obs:null,encerrado_em:null}).eq('id',id);
-    for(const eqId in _fila){const idx=_fila[eqId].findIndex(i=>parseInt(i.id)===id);if(idx>=0){const [item]=_fila[eqId].splice(idx,1);item.equipe_id=novaEq.id;item.status='pendente';item.ordem=nova_ordem;if(!_fila[novaEq.id])_fila[novaEq.id]=[];_fila[novaEq.id].push(item);break;}}
-    _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoRemover(id) {
-    if(!confirm('Remover da fila?'))return;
-    await removerDaFila(id); _itemAberto=null; await recarregarDados();
-  }
-
-  async function acaoMoverPos(id,equipeId,delta) {
-    const fila=_fila[equipeId]||[];
-    const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido'&&i.status!=='em_execucao');
-    const idx=ativos.findIndex(i=>parseInt(i.id)===id); if(idx<0)return;
-    const nova=idx+delta; if(nova<0||nova>=ativos.length)return;
-    // Reordenar no array completo
-    const idxFila=fila.findIndex(i=>parseInt(i.id)===id);
-    const idxAlvo=fila.findIndex(i=>parseInt(i.id)===parseInt(ativos[nova].id));
-    if(idxFila<0||idxAlvo<0)return;
-    const [item]=fila.splice(idxFila,1); fila.splice(idxAlvo,0,item);
-    await salvarOrdem(equipeId); await recarregarDados();
-  }
-
-  async function acaoMoverEquipe(id,equipeAtualId) {
-    const opcoes=_equipes.filter(e=>e.id!==equipeAtualId).map(e=>e.nome);
-    if(!opcoes.length){alert('Sem outras equipes.');return;}
-    const escolha=await modalOpcoes('Mover para qual equipe?',opcoes); if(!escolha)return;
-    const novaEq=_equipes.find(e=>e.nome===escolha); if(!novaEq)return;
-    const db=getDB(); const nova_ordem=(_fila[novaEq.id]||[]).length+1;
-    await db.from('cal_fila').update({equipe_id:novaEq.id,ordem:nova_ordem}).eq('id',id);
-    for(const eqId in _fila){const idx=_fila[eqId].findIndex(i=>parseInt(i.id)===id);if(idx>=0){const [item]=_fila[eqId].splice(idx,1);item.equipe_id=novaEq.id;if(!_fila[novaEq.id])_fila[novaEq.id]=[];_fila[novaEq.id].push(item);break;}}
-    _itemAberto=null; await recarregarDados();
-  }
-
-  /* ══════════════════════════════════════
-     MODAIS
-  ══════════════════════════════════════ */
-  function modalHora(titulo,padrao) {
-    return new Promise(resolve=>{
-      const o=document.createElement('div'); o.className='cd-overlay';
-      o.innerHTML=`<div class="cd-modal" style="width:260px">
-        <div class="cd-modal-titulo">${titulo}</div>
-        <input type="time" id="mh" class="cd-form-input" style="font-size:22px;height:48px;text-align:center" value="${padrao}">
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="cd-modal-cancel" style="flex:1">Cancelar</button>
-          <button class="cd-btn-primary" id="mh-ok" style="flex:2"><i class="ti ti-check"></i> Confirmar</button>
-        </div>
-      </div>`;
-      o.querySelector('#mh-ok').addEventListener('click',()=>{const v=o.querySelector('#mh').value;o.remove();resolve(v||null);});
-      o.querySelector('.cd-modal-cancel').addEventListener('click',()=>{o.remove();resolve(null);});
-      o.addEventListener('click',e=>{if(e.target===o){o.remove();resolve(null);}});
-      document.body.appendChild(o); o.querySelector('#mh').focus();
-    });
-  }
-
-  function modalOpcoes(titulo,opcoes) {
-    return new Promise(resolve=>{
-      const o=document.createElement('div'); o.className='cd-overlay';
-      o.innerHTML=`<div class="cd-modal"><div class="cd-modal-titulo">${titulo}</div>
-        <div class="cd-modal-opcoes">${opcoes.map((op,i)=>`<button class="cd-modal-opt" data-i="${i}">${op}</button>`).join('')}</div>
-        <button class="cd-modal-cancel">Cancelar</button></div>`;
-      o.querySelectorAll('.cd-modal-opt').forEach((btn,i)=>{btn.addEventListener('click',()=>{o.remove();resolve(opcoes[i]);});});
-      o.querySelector('.cd-modal-cancel').addEventListener('click',()=>{o.remove();resolve(null);});
-      o.addEventListener('click',e=>{if(e.target===o){o.remove();resolve(null);}});
-      document.body.appendChild(o);
-    });
-  }
-
-  function modalConfirm(msg) {
-    return new Promise(resolve=>{
-      const o=document.createElement('div'); o.className='cd-overlay';
-      o.innerHTML=`<div class="cd-modal"><div class="cd-modal-titulo" style="white-space:pre-line">${msg}</div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="cd-modal-cancel" style="flex:1">Não</button>
-          <button class="cd-btn-primary" id="mc-sim" style="flex:2"><i class="ti ti-check"></i> Sim</button>
-        </div></div>`;
-      o.querySelector('#mc-sim').addEventListener('click',()=>{o.remove();resolve(true);});
-      o.querySelector('.cd-modal-cancel').addEventListener('click',()=>{o.remove();resolve(false);});
-      o.addEventListener('click',e=>{if(e.target===o){o.remove();resolve(false);}});
-      document.body.appendChild(o);
-    });
-  }
-
-  /* ── Modal inserir OS ── */
-  function abrirModalOS(equipeId) {
-    const o=document.createElement('div'); o.className='cd-overlay';
-    // Semanas disponíveis para filtro
-    const sems=[_sem-1,_sem,_sem+1].map(s=>`<option value="${s}"${s===_sem?' selected':''}>Sem ${s}</option>`).join('');
-    o.innerHTML=`<div class="cd-modal" style="width:380px;max-height:85vh;overflow-y:auto">
-      <div class="cd-modal-titulo">Inserir OS na fila</div>
-      <div class="cd-os-filtros">
-        <select class="cd-form-input cd-form-sel" id="mos-sem">${sems}</select>
-        <select class="cd-form-input cd-form-sel" id="mos-tipo">
-          <option value="">Todos os tipos</option>
-          <option value="MCU">MCU</option>
-          <option value="prog">Programável</option>
-        </select>
-        <select class="cd-form-input cd-form-sel" id="mos-cart">
-          <option value="">Todas as carteiras</option>
-          ${['CAL1','CAL2','CAL3','CAL4'].map(c=>`<option value="${c}">${c}</option>`).join('')}
-        </select>
-        <input type="text" id="mos-busca" class="cd-form-input" placeholder="Pesquisar OS ou descrição...">
-        <button class="cd-btn-primary" id="mos-buscar" style="width:100%"><i class="ti ti-search"></i> Buscar</button>
-      </div>
-      <div id="mos-resultados" style="margin-top:10px;max-height:280px;overflow-y:auto"></div>
-      <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
-        <div class="cd-modal-titulo" style="font-size:11px">Ou inserir sem número de OS:</div>
-        <input type="text" id="mos-desc-manual" class="cd-form-input" placeholder="Descrição do serviço" style="margin-top:6px">
-        <input type="number" id="mos-hh-manual" class="cd-form-input" placeholder="HH estimado" style="margin-top:6px">
-        <div class="cd-tipo-opts" style="margin-top:6px">
-          <button class="cd-tipo-btn active" data-tipo="programado">Prog.</button>
-          <button class="cd-tipo-btn" data-tipo="fora_prog">NPG</button>
-          <button class="cd-tipo-btn" data-tipo="mcu">MCU</button>
-        </div>
-        <button class="cd-btn-primary" id="mos-manual-ok" style="width:100%;margin-top:8px"><i class="ti ti-plus"></i> Inserir sem OS</button>
-      </div>
-      <button class="cd-modal-cancel" style="width:100%;margin-top:8px">Fechar</button>
-    </div>`;
-
-    let tipoSel='programado';
-    o.querySelectorAll('.cd-tipo-btn').forEach(btn=>{
-      btn.addEventListener('click',()=>{o.querySelectorAll('.cd-tipo-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');tipoSel=btn.dataset.tipo;});
-    });
-
-    o.querySelector('#mos-buscar').addEventListener('click',async()=>{
+  /* ══════════════════════════════════════════════
+     CARREGAR BASE
+     ══════════════════════════════════════════════ */
+  async _carregarBase(){
+    try{
       const db=getDB();
-      const sem=parseInt(o.querySelector('#mos-sem').value);
-      const tipo=o.querySelector('#mos-tipo').value;
-      const cart=o.querySelector('#mos-cart').value;
-      const busca=o.querySelector('#mos-busca').value.trim();
-      const ano=iniSem(sem).getFullYear();
+      const [r1,r2,r3]=await Promise.all([
+        db.from('apt_colaboradores').select('*').eq('modalidade','CAL').eq('ativo',true).order('nome'),
+        db.from('apt_escalas').select('*').order('nome'),
+        db.from('apt_turnos').select('*').order('nome'),
+      ]);
+      this._s.colaboradores=r1.data||[];
+      this._s.escalas      =r2.data||[];
+      this._s.turnos       =r3.data||[];
+    }catch(e){console.error('[cal_acomp] carregarBase:',e);}
+  },
 
-      let q=db.from('ordens_servico').select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe').limit(30);
-      if(cart) q=q.eq('equipe',cart);
-      if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
-      else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
-      if(busca) {
-        const num=busca.replace(/^0+/,'');
-        if(/^\d+$/.test(num)) q=q.eq('os',num);
-        else q=q.ilike('desc_servico','%'+busca+'%');
+  /* ══════════════════════════════════════════════
+     CARREGAR TUDO DA SEMANA
+     ══════════════════════════════════════════════ */
+  async _carregar(){
+    const root=document.getElementById('ca-root');
+    if(!root) return;
+    root.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-loader-2" style="font-size:24px;animation:spin 1s linear infinite"></i><p style="margin-top:8px;font-size:12px">Carregando…</p></div>`;
+
+    try{
+      const db=getDB();
+      const s=this._s;
+
+      const [rEq,rProg]=await Promise.all([
+        db.from('cal_equipes').select('*').eq('ativo',true).order('nome'),
+        db.from('programacao_semanal').select('*').eq('semana',s.semana).eq('ano',s.ano),
+      ]);
+      s.equipes    =rEq.data||[];
+      s.programacao=rProg.data||[];
+
+      // Membros enriquecidos
+      s.membros={};
+      if(s.equipes.length){
+        const eqIds=s.equipes.map(e=>e.id);
+        const {data:mems}=await db.from('cal_equipe_membros').select('*').in('equipe_id',eqIds);
+        (mems||[]).forEach(m=>{
+          if(!s.membros[m.equipe_id]) s.membros[m.equipe_id]=[];
+          const colab=s.colaboradores.find(c=>String(c.cracha)===String(m.chapa));
+          if(colab) s.membros[m.equipe_id].push({...colab,_mem:m});
+        });
       }
 
-      const {data}=await q;
-      const res=o.querySelector('#mos-resultados');
-      if(!data||!data.length){res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Nenhuma OS encontrada</div>';return;}
-      res.innerHTML=data.map(r=>`<div class="cd-os-result" data-os="${r.os}" data-cod="${r.cod_servico||''}" data-desc="${(r.desc_servico||'').replace(/"/g,'&quot;')}" data-hh="${r.hh_prev_servico||0}" data-tipo="${r.tipo_atividade==='MCU'?'mcu':'programado'}">
-        <span class="cd-os-result-num">${r.os}</span>
-        <span class="cd-os-result-desc">${r.desc_servico||'—'}</span>
-        <span class="cd-os-result-hh">${r.hh_prev_servico||0}h</span>
-      </div>`).join('');
-      res.querySelectorAll('.cd-os-result').forEach(row=>{
-        row.addEventListener('click',async()=>{
-          const {os,cod,desc,hh,tipo:t}=row.dataset;
-          await inserirNaFila(equipeId,{os,cod_servico:cod||null,desc_servico:desc,hh_previsto:parseFloat(hh)||null,tipo:t,status:'pendente',vinculado:true},'fim');
-          o.remove(); await recarregarDados();
-        });
+      // Fila com OS enriquecida
+      s.fila={};
+      if(s.equipes.length){
+        const eqIds=s.equipes.map(e=>e.id);
+        const {data:filaRows}=await db.from('cal_fila').select('*').in('equipe_id',eqIds).order('posicao');
+        if(filaRows?.length){
+          const osKeys=[...new Set(filaRows.map(f=>f.os))];
+          const {data:osRows}=await db.from('ordens_servico').select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,status_os,equipamento,desc_equipamento').in('os',osKeys);
+          const osMap={};
+          (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; });
+          filaRows.forEach(f=>{
+            if(!s.fila[f.equipe_id]) s.fila[f.equipe_id]=[];
+            f._os=osMap[f.os+'|'+f.cod_servico]||null;
+            s.fila[f.equipe_id].push(f);
+          });
+        }
+      }
+
+      this._render();
+    }catch(e){
+      console.error('[cal_acomp] _carregar:',e);
+      document.getElementById('ca-root').innerHTML=`<div style="padding:20px;color:var(--red);font-size:12px"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
+    }
+  },
+
+  /* ══════════════════════════════════════════════
+     RENDER PRINCIPAL
+     ══════════════════════════════════════════════ */
+  _render(){
+    const root=document.getElementById('ca-root');
+    if(!root) return;
+    const s=this._s;
+    const semAtual=this._semAtual();
+    const {ini,fim}=this._semParaDatas(s.semana);
+
+    const navHtml=`
+      <div class="ca-nav">
+        <button class="ca-nav-btn" id="ca-prev"><i class="ti ti-chevron-left"></i> Sem ${s.semana-1}</button>
+        <button class="ca-nav-btn ${s.semana===semAtual?'atual':''}" id="ca-hoje">
+          Sem ${s.semana} · ${this._fmtDM(ini)}–${this._fmtDM(fim)} ${s.semana===semAtual?'★':''}
+        </button>
+        <button class="ca-nav-btn" id="ca-next">Sem ${s.semana+1} <i class="ti ti-chevron-right"></i></button>
+        ${s.modoLeitura?'<span class="ca-leitura-badge"><i class="ti ti-lock" style="font-size:10px"></i> LEITURA</span>':''}
+      </div>`;
+
+    root.innerHTML = navHtml +
+      `<div id="ca-kpis-wrap"></div>` +
+      `<div id="ca-andamento-wrap"></div>` +
+      `<div id="ca-boards-wrap"></div>` +
+      `<div id="ca-pontos-wrap"></div>` +
+      `<div id="ca-interrompidos-wrap"></div>` +
+      `<div id="ca-encerrados-wrap"></div>` +
+      `<div id="ca-lista-wrap"></div>`;
+
+    // Bind navegação
+    document.getElementById('ca-prev').onclick=()=>this._navSem(-1);
+    document.getElementById('ca-next').onclick=()=>this._navSem(+1);
+    document.getElementById('ca-hoje').onclick=()=>{ s.semana=semAtual; this._recalcPeriodo(); this._carregar(); };
+
+    this._renderKpis();
+    this._renderAndamento();
+    this._renderBoards();
+    this._renderPontos();
+    this._renderGrupoInterrompidos();
+    this._renderGrupoEncerrados();
+    this._renderListaGeral();
+
+    if(s.modoLeitura){
+      document.getElementById('ca-boards-wrap').classList.add('ca-leitura');
+    }
+  },
+
+  _navSem(delta){
+    this._s.semana+=delta;
+    this._recalcPeriodo();
+    this._s.filaAberta=null;
+    this._carregar();
+  },
+
+  /* ══════════════════════════════════════════════
+     KPIs
+     ══════════════════════════════════════════════ */
+  _renderKpis(){
+    const el=document.getElementById('ca-kpis-wrap'); if(!el) return;
+    const s=this._s;
+
+    // Toda a fila (exceto interrompidos)
+    const todasOS=Object.values(s.fila).flat().filter(f=>f.status!=='interrompido');
+    const hhTotal=todasOS.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+
+    // Aderência atual: encerradas / total programadas
+    const encerradas=todasOS.filter(f=>f.status==='encerrado');
+    const hhEnc=encerradas.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const aderAtual=hhTotal>0?hhEnc/hhTotal:null;
+
+    // Aderência projetada: encerradas + em execução que terminam até domingo
+    const domingo=s.dataFim;
+    const hhProj=todasOS.filter(f=>f.status==='encerrado'||f.status==='em_execucao').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const aderProj=hhTotal>0?hhProj/hhTotal:null;
+
+    // % HH MCU
+    const hhMCU=todasOS.filter(f=>f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const pctMCU=hhTotal>0?hhMCU/hhTotal:null;
+
+    // % HH Reprogramado (semana_ref < semana atual)
+    const hhRpg=todasOS.filter(f=>f.semana_ref<s.semana).reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const pctRpg=hhTotal>0?hhRpg/hhTotal:null;
+
+    // Cobertura da programação
+    const totalProg=s.programacao.length;
+    const alocadas=s.programacao.filter(p=>todasOS.find(f=>f.os===p.os&&f.cod_servico===p.cod_servico)).length;
+    const pctCob=totalProg>0?alocadas/totalProg:null;
+
+    const _pct=(v)=>v===null?'—':Math.round(v*100)+'%';
+    const _cor=(v,inv=false)=>{
+      if(v===null) return '#9ca3af';
+      const p=v*100;
+      if(!inv) return p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
+      return p<=20?'var(--green)':p<=40?'var(--amber)':'var(--red)';
+    };
+    const _bar=(v,inv=false)=>{
+      if(v===null) return '';
+      const p=Math.min(100,Math.round(v*100));
+      const cor=_cor(v,inv);
+      return `<div class="ca-kpi-bar"><div class="ca-kpi-bar-fill" style="width:${p}%;background:${cor}"></div></div>`;
+    };
+
+    el.innerHTML=`
+      <div class="ca-kpis">
+        <div class="ca-kpi">
+          <div class="ca-kpi-lbl">Aderência Atual</div>
+          <div class="ca-kpi-val" style="color:${_cor(aderAtual)}">${_pct(aderAtual)}</div>
+          ${_bar(aderAtual)}
+          <div class="ca-kpi-sub">${hhEnc.toFixed(1)}h enc. / ${hhTotal.toFixed(1)}h total</div>
+        </div>
+        <div class="ca-kpi">
+          <div class="ca-kpi-lbl">Aderência Projetada</div>
+          <div class="ca-kpi-val" style="color:${_cor(aderProj)}">${_pct(aderProj)}</div>
+          ${_bar(aderProj)}
+          <div class="ca-kpi-sub">Inclui em execução</div>
+        </div>
+        <div class="ca-kpi">
+          <div class="ca-kpi-lbl">% HH MCU</div>
+          <div class="ca-kpi-val" style="color:${_cor(pctMCU,true)}">${_pct(pctMCU)}</div>
+          ${_bar(pctMCU,true)}
+          <div class="ca-kpi-sub">${hhMCU.toFixed(1)}h corretivas urgentes</div>
+        </div>
+        <div class="ca-kpi">
+          <div class="ca-kpi-lbl">% HH Reprogramado</div>
+          <div class="ca-kpi-val" style="color:${_cor(pctRpg,true)}">${_pct(pctRpg)}</div>
+          ${_bar(pctRpg,true)}
+          <div class="ca-kpi-sub">${hhRpg.toFixed(1)}h de semanas anteriores</div>
+        </div>
+        ${pctCob!==null?`
+        <div class="ca-kpi-cob">
+          <i class="ti ti-clipboard-list" style="font-size:16px;color:#6b7280;flex-shrink:0"></i>
+          <div style="flex:1">
+            <span style="font-size:11px;font-weight:700;color:#374151">Cobertura da programação</span>
+            <div class="ca-kpi-bar" style="margin-top:4px"><div class="ca-kpi-bar-fill" style="width:${Math.round((pctCob||0)*100)}%;background:var(--yellow)"></div></div>
+          </div>
+          <div style="font-size:13px;font-weight:800;color:var(--yellow);white-space:nowrap">${alocadas} / ${totalProg} OS</div>
+        </div>`:''}
+      </div>`;
+  },
+
+  /* ══════════════════════════════════════════════
+     EM ANDAMENTO AGORA
+     ══════════════════════════════════════════════ */
+  _renderAndamento(){
+    const el=document.getElementById('ca-andamento-wrap'); if(!el) return;
+    const s=this._s;
+    const linhas=[];
+
+    s.equipes.forEach(eq=>{
+      const fila=(s.fila[eq.id]||[]).filter(f=>f.status!=='interrompido'&&f.status!=='encerrado').sort((a,b)=>a.posicao-b.posicao);
+      const exec=fila.find(f=>f.status==='em_execucao');
+      if(!exec) return;
+      const prox=fila.find(f=>f.status==='pendente'||f.status==='pausado');
+      linhas.push(`
+        <div class="ca-and-row">
+          <span style="font-size:11px;font-weight:700;color:#374151;min-width:100px">${eq.nome}</span>
+          <span style="font-size:11px"><i class="ti ti-player-play" style="color:var(--green);font-size:10px"></i> <strong>${exec.os}</strong> — ${exec._os?.desc_servico||exec._os?.desc_os||'—'}</span>
+          ${prox?`<span style="font-size:10px;color:#6b7280;margin-left:auto;white-space:nowrap">Próxima: <strong>${prox.os}</strong></span>`:''}
+        </div>`);
+    });
+
+    if(!linhas.length){ el.innerHTML=''; return; }
+    el.innerHTML=`
+      <div class="ca-andamento" style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;margin-bottom:8px"><i class="ti ti-activity" style="color:var(--green)"></i> Em andamento agora</div>
+        ${linhas.join('')}
+      </div>`;
+  },
+
+  /* ══════════════════════════════════════════════
+     BOARDS DE EQUIPE
+     ══════════════════════════════════════════════ */
+  _renderBoards(){
+    const el=document.getElementById('ca-boards-wrap'); if(!el) return;
+    const s=this._s;
+
+    const cardsHtml=s.equipes.map(eq=>{
+      const mems=s.membros[eq.id]||[];
+      const hhDisp=this._hhDispEquipe(eq.id);
+      const hhAloc=this._hhAlocadoEquipe(eq.id);
+      const pct=hhDisp>0?Math.min(1,hhAloc/hhDisp):0;
+      const corHH=pct>=1?'var(--red)':pct>=0.8?'var(--amber)':'var(--green)';
+      const dfim=this._projetarFila(eq.id);
+      const aberta=s.filaAberta===eq.id;
+
+      const nomesStr=mems.map(m=>(m.nome||'').split(' ')[0]).join(', ')||'Sem membros';
+      const filaEq=(s.fila[eq.id]||[]).filter(f=>f.status!=='interrompido'&&f.status!=='encerrado').sort((a,b)=>a.posicao-b.posicao);
+
+      return `
+        <div class="ca-board" id="ca-board-${eq.id}">
+          <div class="ca-board-hdr" data-eq="${eq.id}">
+            <div class="ca-board-nome">
+              <span>${eq.nome}</span>
+              <div style="display:flex;gap:4px">
+                ${!s.modoLeitura?`<button class="ca-icon-btn ca-cfg-eq" data-eq="${eq.id}" title="Configurar equipe"><i class="ti ti-settings"></i></button>`:''}
+                <button class="ca-icon-btn ca-toggle-fila" data-eq="${eq.id}"><i class="ti ti-chevron-${aberta?'up':'down'}"></i></button>
+              </div>
+            </div>
+            <div class="ca-board-membros">${nomesStr}</div>
+            <div class="ca-board-meta">
+              <span class="ca-board-hh" style="color:${corHH}">${hhAloc.toFixed(1)}h / ${hhDisp.toFixed(1)}h</span>
+              <div class="ca-board-bar"><div class="ca-board-bar-fill" style="width:${Math.round(pct*100)}%;background:${corHH}"></div></div>
+            </div>
+            ${dfim?`<div class="ca-board-conclusao"><i class="ti ti-calendar-due" style="font-size:10px"></i> Conclusão prevista: ${this._diaSem(dfim)} ${this._fmtDM(dfim)}</div>`:''}
+          </div>
+          ${aberta?this._tplFila(eq,filaEq):''}
+        </div>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div class="ca-boards-hdr">
+        <span style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#4b5563">${s.equipes.length} Equipe(s)</span>
+        ${!s.modoLeitura?`<button class="ca-nav-btn" id="ca-add-equipe"><i class="ti ti-plus"></i> Equipe</button>`:''}
+      </div>
+      <div class="ca-boards">${cardsHtml||'<div style="grid-column:1/-1;padding:30px;text-align:center;color:#9ca3af;font-size:12px">Nenhuma equipe cadastrada.</div>'}</div>`;
+
+    // Bind boards
+    el.querySelectorAll('.ca-toggle-fila,.ca-board-hdr').forEach(btn=>{
+      btn.addEventListener('click',e=>{
+        const eqId=parseInt(btn.dataset.eq||btn.closest('[data-eq]')?.dataset.eq);
+        if(!eqId) return;
+        if(e.target.closest('.ca-cfg-eq')) return;
+        s.filaAberta=s.filaAberta===eqId?null:eqId;
+        this._renderBoards();
+        this._renderGrupoInterrompidos();
+        this._renderGrupoEncerrados();
       });
     });
+    el.querySelectorAll('.ca-cfg-eq').forEach(btn=>btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      this._modalConfigEquipe(parseInt(btn.dataset.eq));
+    }));
+    document.getElementById('ca-add-equipe')?.addEventListener('click',()=>this._modalNovaEquipe());
 
-    o.querySelector('#mos-manual-ok').addEventListener('click',async()=>{
-      const desc=o.querySelector('#mos-desc-manual').value.trim();
-      const hh=parseFloat(o.querySelector('#mos-hh-manual').value)||null;
-      if(!desc){alert('Informe a descrição');return;}
-      await inserirNaFila(equipeId,{os:null,desc_servico:desc,hh_previsto:hh,tipo:tipoSel,status:'pendente',vinculado:false},'fim');
-      o.remove(); await recarregarDados();
-    });
+    // Bind ações da fila
+    this._bindAcoesFila(el);
+  },
 
-    o.querySelector('.cd-modal-cancel').addEventListener('click',()=>o.remove());
-    o.addEventListener('click',e=>{if(e.target===o)o.remove();});
-    document.body.appendChild(o);
-  }
+  /* ── Template da fila ── */
+  _tplFila(eq,fila){
+    const s=this._s;
+    const rows=fila.map((f,idx)=>{
+      const os=f._os;
+      const desc=os?.desc_servico||os?.desc_os||'—';
+      const hh=parseFloat(os?.hh_prev_servico||0);
+      const dt_ini=f.dt_inicio_real?this._fmtDMH(f.dt_inicio_real):'—';
+      // Previsão calculada sequencialmente
+      const dtFimPrev=f._dtFimPrev?this._fmtDMH(f._dtFimPrev):'—';
+      const total=fila.length;
 
-  /* ── Modal equipe ── */
-  function abrirModalEquipe(equipeId) {
-    const eq=equipeId?_equipes.find(e=>e.id===equipeId):null;
-    const chapasNaEq=new Set((eq&&eq.membros?eq.membros:[]).map(m=>m.chapa));
-    const membHtml=_colabs.map(c=>{
-      const cracha=c.cracha||c.chapa; const naEq=chapasNaEq.has(cracha);
-      return `<label class="cd-colab-item${naEq?' checked':''}"><input type="checkbox" value="${cracha}"${naEq?' checked':''}><span>${c.nome||cracha}</span></label>`;
+      let acoes='';
+      if(!s.modoLeitura){
+        if(f.status==='pendente'){
+          acoes=`
+            <button class="ca-btn ca-btn-green ca-ac" data-ac="iniciar" data-id="${f.id}"><i class="ti ti-player-play"></i> Iniciar</button>
+            <button class="ca-btn ca-ac" data-ac="mover" data-id="${f.id}"><i class="ti ti-arrows-transfer-up"></i> Mover</button>
+            <button class="ca-btn ca-btn-red ca-ac" data-ac="remover" data-id="${f.id}"><i class="ti ti-x"></i></button>`;
+        } else if(f.status==='em_execucao'){
+          acoes=`
+            <button class="ca-btn ca-btn-green ca-ac" data-ac="encerrar" data-id="${f.id}"><i class="ti ti-check"></i> Encerrar</button>
+            <button class="ca-btn ca-btn-yellow ca-ac" data-ac="pausar" data-id="${f.id}"><i class="ti ti-player-pause"></i> Pausar</button>
+            <button class="ca-btn ca-ac" data-ac="interromper" data-id="${f.id}"><i class="ti ti-ban"></i> Interromper</button>
+            <button class="ca-btn ca-ac" data-ac="mover" data-id="${f.id}"><i class="ti ti-arrows-transfer-up"></i> Mover</button>`;
+        } else if(f.status==='pausado'){
+          acoes=`
+            <button class="ca-btn ca-btn-green ca-ac" data-ac="retomar" data-id="${f.id}"><i class="ti ti-player-play"></i> Retomar</button>
+            <button class="ca-btn ca-ac" data-ac="interromper" data-id="${f.id}"><i class="ti ti-ban"></i> Interromper</button>
+            <button class="ca-btn ca-ac" data-ac="mover" data-id="${f.id}"><i class="ti ti-arrows-transfer-up"></i> Mover</button>`;
+        }
+      }
+
+      return `
+        <div class="ca-os-row" data-fila-id="${f.id}">
+          <div class="ca-reorder">
+            <button class="ca-arr ca-arr-up" data-id="${f.id}" data-eq="${eq.id}" ${idx===0?'disabled':''}>▲</button>
+            <button class="ca-arr ca-arr-dn" data-id="${f.id}" data-eq="${eq.id}" ${idx===total-1?'disabled':''}>▼</button>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+              <span class="ca-os-num">${f.os}</span>
+              ${this._badgeTipo(f)}
+              ${this._badgeStatus(f.status)}
+            </div>
+            <div class="ca-os-desc">${desc}</div>
+            <div class="ca-os-info">
+              ${os?.equipamento?`<span>${os.equipamento}</span> · `:''}
+              ${hh?`<strong>${hh.toFixed(1)}h</strong> · `:''}
+              Início: ${dt_ini} · Fim prev.: ${dtFimPrev}
+            </div>
+            ${acoes?`<div class="ca-os-acoes">${acoes}</div>`:''}
+          </div>
+        </div>`;
     }).join('');
-    const o=document.createElement('div'); o.className='cd-overlay';
-    o.innerHTML=`<div class="cd-modal" style="width:340px;max-height:80vh;overflow-y:auto">
-      <div class="cd-modal-titulo">${eq?'Configurar: '+eq.nome:'Nova Equipe'}</div>
-      <div class="cd-modal-form">
-        <label class="cd-form-lbl">Nome</label>
-        <input type="text" id="meq-nome" class="cd-form-input" value="${eq?eq.nome:''}" placeholder="Ex: Eq. Marcelo">
-        <label class="cd-form-lbl" style="margin-top:10px">Colaboradores CAL</label>
-        <div class="cd-colab-list">${membHtml}</div>
+
+    return `
+      <div class="ca-fila">
+        <div class="ca-fila-hdr">
+          <span style="font-size:10px;font-weight:700;color:#6b7280">${fila.length} serviço(s) na fila</span>
+          ${!s.modoLeitura?`<button class="ca-btn ca-add-os" data-eq="${eq.id}"><i class="ti ti-plus"></i> Add OS</button>`:''}
+        </div>
+        ${rows||'<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Fila vazia.</div>'}
+      </div>`;
+  },
+
+  /* ── Bind ações da fila ── */
+  _bindAcoesFila(root){
+    root.querySelectorAll('.ca-ac').forEach(btn=>btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      const ac=btn.dataset.ac, id=parseInt(btn.dataset.id);
+      if(ac==='iniciar')      this._acIniciar(id);
+      else if(ac==='encerrar')this._acEncerrar(id);
+      else if(ac==='pausar')  this._acPausar(id);
+      else if(ac==='retomar') this._acRetomar(id);
+      else if(ac==='interromper') this._acInterromper(id);
+      else if(ac==='mover')   this._acMover(id);
+      else if(ac==='remover') this._acRemover(id);
+    }));
+    root.querySelectorAll('.ca-arr-up').forEach(btn=>btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      if(!btn.disabled) this._reordenar(parseInt(btn.dataset.id),parseInt(btn.dataset.eq),-1);
+    }));
+    root.querySelectorAll('.ca-arr-dn').forEach(btn=>btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      if(!btn.disabled) this._reordenar(parseInt(btn.dataset.id),parseInt(btn.dataset.eq),+1);
+    }));
+    root.querySelectorAll('.ca-add-os').forEach(btn=>btn.addEventListener('click',e=>{
+      e.stopPropagation();
+      this._modalAddOS(parseInt(btn.dataset.eq));
+    }));
+  },
+
+  /* ══════════════════════════════════════════════
+     AÇÕES DA FILA
+     ══════════════════════════════════════════════ */
+  _filaItem(id){ return Object.values(this._s.fila).flat().find(f=>f.id===id); },
+
+  async _acIniciar(id){
+    const item=this._filaItem(id); if(!item) return;
+    const now=this._hoje()+'T'+new Date().toTimeString().slice(0,5);
+    this._modal('Iniciar OS '+item.os,`
+      <div class="ca-row">
+        <div class="ca-field"><label class="ca-lbl">Data/hora de início</label>
+          <input type="datetime-local" id="ca-dt-ini" class="ca-input" value="${now}">
+        </div>
+      </div>`,
+      async()=>{
+        const dt=document.getElementById('ca-dt-ini').value;
+        if(!dt){ showToast('Informe a data/hora','erro'); return; }
+        const db=getDB();
+        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00'}).eq('id',id);
+        if(error) throw error;
+        showToast('OS iniciada!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Iniciar');
+  },
+
+  async _acEncerrar(id){
+    const item=this._filaItem(id); if(!item) return;
+    const now=this._hoje()+'T'+new Date().toTimeString().slice(0,5);
+    const s=this._s;
+    const eqFila=(s.fila[item.equipe_id]||[]).filter(f=>f.status==='pendente'||f.status==='pausado').sort((a,b)=>a.posicao-b.posicao);
+    const prox=eqFila[0];
+    this._modal('Encerrar OS '+item.os,`
+      <div class="ca-row">
+        <div class="ca-field"><label class="ca-lbl">Data/hora de encerramento</label>
+          <input type="datetime-local" id="ca-dt-fim" class="ca-input" value="${now}">
+        </div>
       </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="cd-modal-cancel" style="flex:1">Cancelar</button>
-        ${eq?`<button class="cd-act red" id="meq-del"><i class="ti ti-trash"></i> Desativar</button>`:''}
-        <button class="cd-btn-primary" id="meq-ok" style="flex:2"><i class="ti ti-check"></i> Salvar</button>
+      ${prox?`<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;font-size:11px;color:#166534;display:flex;align-items:center;gap:8px;margin-top:4px">
+        <i class="ti ti-player-play"></i> Iniciar próxima automaticamente?
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;margin-left:auto">
+          <input type="checkbox" id="ca-prox-check" checked> OS ${prox.os}
+        </label>
+      </div>`:''}`,
+      async()=>{
+        const dt=document.getElementById('ca-dt-fim').value;
+        if(!dt){ showToast('Informe a data/hora','erro'); return; }
+        const db=getDB();
+        const{error}=await db.from('cal_fila').update({status:'encerrado',dt_fim_real:dt+':00'}).eq('id',id);
+        if(error) throw error;
+        if(prox&&document.getElementById('ca-prox-check')?.checked){
+          await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00'}).eq('id',prox.id);
+        }
+        showToast('OS encerrada!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Encerrar');
+  },
+
+  async _acPausar(id){
+    const db=getDB();
+    const{error}=await db.from('cal_fila').update({status:'pausado',dt_pausa:new Date().toISOString()}).eq('id',id);
+    if(error){ showToast('Erro: '+error.message,'erro'); return; }
+    showToast('OS pausada','ok');
+    await this._carregar();
+  },
+
+  async _acRetomar(id){
+    const item=this._filaItem(id); if(!item) return;
+    const now=this._hoje()+'T'+new Date().toTimeString().slice(0,5);
+    this._modal('Retomar OS '+item.os,`
+      <div class="ca-row">
+        <div class="ca-field"><label class="ca-lbl">Data/hora de retomada</label>
+          <input type="datetime-local" id="ca-dt-ret" class="ca-input" value="${now}">
+        </div>
+      </div>`,
+      async()=>{
+        const dt=document.getElementById('ca-dt-ret').value;
+        const db=getDB();
+        const{error}=await db.from('cal_fila').update({status:'em_execucao',dt_inicio_real:dt+':00',dt_pausa:null}).eq('id',id);
+        if(error) throw error;
+        showToast('OS retomada!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Retomar');
+  },
+
+  async _acInterromper(id){
+    const item=this._filaItem(id); if(!item) return;
+    const motivos=['Falta de Material','Falta de Acesso','Segurança Comprometida'];
+    this._modal('Interromper OS '+item.os,`
+      <div class="ca-field"><label class="ca-lbl">Motivo (obrigatório)</label>
+        <select id="ca-motivo" class="ca-select">
+          <option value="">Selecione…</option>
+          ${motivos.map(m=>`<option value="${m}">${m}</option>`).join('')}
+        </select>
+      </div>`,
+      async()=>{
+        const motivo=document.getElementById('ca-motivo').value;
+        if(!motivo){ showToast('Selecione o motivo','erro'); return; }
+        const db=getDB();
+        const{error}=await db.from('cal_fila').update({status:'interrompido',motivo_interrupcao:motivo}).eq('id',id);
+        if(error) throw error;
+        showToast('OS interrompida','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Interromper');
+  },
+
+  async _acMover(id){
+    const item=this._filaItem(id); if(!item) return;
+    const s=this._s;
+    const outrasEqs=s.equipes.filter(e=>e.id!==item.equipe_id);
+    if(!outrasEqs.length){ showToast('Nenhuma outra equipe disponível','info'); return; }
+    this._modal('Mover OS '+item.os,`
+      <div class="ca-field"><label class="ca-lbl">Mover para equipe</label>
+        <select id="ca-eq-dest" class="ca-select">
+          ${outrasEqs.map(e=>`<option value="${e.id}">${e.nome}</option>`).join('')}
+        </select>
+      </div>`,
+      async()=>{
+        const destId=parseInt(document.getElementById('ca-eq-dest').value);
+        const filaDestino=(s.fila[destId]||[]);
+        const maxPos=filaDestino.length?Math.max(...filaDestino.map(f=>f.posicao)):0;
+        const db=getDB();
+        const{error}=await db.from('cal_fila').update({equipe_id:destId,posicao:maxPos+1,status:'pendente'}).eq('id',id);
+        if(error) throw error;
+        showToast('OS movida!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Mover');
+  },
+
+  async _acRemover(id){
+    if(!confirm('Remover OS da fila?')) return;
+    const db=getDB();
+    const{error}=await db.from('cal_fila').delete().eq('id',id);
+    if(error){ showToast('Erro: '+error.message,'erro'); return; }
+    showToast('OS removida da fila','ok');
+    await this._carregar();
+  },
+
+  async _reordenar(id,equipeId,delta){
+    const s=this._s;
+    const fila=[...(s.fila[equipeId]||[])].sort((a,b)=>a.posicao-b.posicao);
+    const idx=fila.findIndex(f=>f.id===id);
+    const novoIdx=idx+delta;
+    if(novoIdx<0||novoIdx>=fila.length) return;
+    // Troca posições
+    const a=fila[idx],b=fila[novoIdx];
+    const db=getDB();
+    await Promise.all([
+      db.from('cal_fila').update({posicao:b.posicao}).eq('id',a.id),
+      db.from('cal_fila').update({posicao:a.posicao}).eq('id',b.id),
+    ]);
+    await this._carregar();
+  },
+
+  /* ══════════════════════════════════════════════
+     ADD OS NA FILA
+     ══════════════════════════════════════════════ */
+  async _modalAddOS(equipeId){
+    const s=this._s;
+    const eq=s.equipes.find(e=>e.id===equipeId);
+    this._modal('Adicionar OS — '+eq?.nome,`
+      <div class="ca-row">
+        <div class="ca-field" style="flex:2">
+          <label class="ca-lbl">Buscar OS</label>
+          <input id="ca-os-busca" class="ca-input" placeholder="Número da OS ou descrição…" autocomplete="off">
+        </div>
+        <div class="ca-field">
+          <label class="ca-lbl">Tipo</label>
+          <select id="ca-os-tipo" class="ca-select">
+            <option value="">Todos</option>
+            <option value="MCU">MCU</option>
+            <option value="PROG">Programável</option>
+          </select>
+        </div>
       </div>
-    </div>`;
-    o.querySelectorAll('.cd-colab-item').forEach(l=>{l.addEventListener('click',()=>{setTimeout(()=>l.classList.toggle('checked',l.querySelector('input').checked),0);});});
-    o.querySelector('#meq-ok').addEventListener('click',async()=>{
-      const nome=o.querySelector('#meq-nome').value.trim(); if(!nome){alert('Informe o nome');return;}
-      const sel=[...o.querySelectorAll('.cd-colab-list input:checked')].map(i=>i.value);
-      await salvarEquipe(equipeId,nome,sel); o.remove(); await recarregarDados();
+      <div id="ca-os-resultados" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)">
+        <div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite para buscar…</div>
+      </div>
+      <div id="ca-os-selecionada" style="display:none;margin-top:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 12px;font-size:11px;color:#166534"></div>
+      <div style="margin-top:10px" id="ca-os-avulso-wrap">
+        <button class="ca-btn" id="ca-os-avulso-btn"><i class="ti ti-plus"></i> Inserir serviço avulso (sem OS)</button>
+      </div>`,
+      async()=>{
+        const sel=document.getElementById('ca-os-resultados').querySelector('[data-selecionado]');
+        const avulso=document.getElementById('ca-avulso-os');
+        let os_val,cod_val,sem_ref=s.semana,ano_ref=s.ano;
+
+        if(sel){
+          os_val=sel.dataset.os; cod_val=sel.dataset.cod;
+        } else if(avulso){
+          os_val=avulso.value.trim()||('AVULSO-'+Date.now());
+          cod_val='1';
+        } else { showToast('Selecione uma OS','erro'); return; }
+
+        // Verifica se já está em outra equipe
+        const jaEsta=Object.values(s.fila).flat().find(f=>f.os===os_val&&f.cod_servico===cod_val);
+        if(jaEsta){ showToast('OS já está na fila de outra equipe','erro'); return; }
+
+        const filaEq=s.fila[equipeId]||[];
+        const maxPos=filaEq.length?Math.max(...filaEq.map(f=>f.posicao)):0;
+        const db=getDB();
+        const{error}=await db.from('cal_fila').insert({
+          equipe_id:equipeId, os:os_val, cod_servico:cod_val,
+          posicao:maxPos+1, semana_ref:sem_ref, ano_ref:ano_ref, status:'pendente'
+        });
+        if(error) throw error;
+        showToast('OS adicionada à fila!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Adicionar');
+
+    // Bind busca
+    setTimeout(()=>{
+      const inp=document.getElementById('ca-os-busca');
+      const tipoEl=document.getElementById('ca-os-tipo');
+      const res=document.getElementById('ca-os-resultados');
+
+      const buscar=async()=>{
+        const q=inp.value.trim(); if(q.length<2){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite ao menos 2 caracteres…</div>'; return; }
+        const db=getDB();
+        let q2=db.from('ordens_servico').select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,equipamento').eq('modalidade','CAL');
+        if(/^\d+/.test(q)) q2=q2.ilike('os','%'+q+'%');
+        else q2=q2.or(`desc_servico.ilike.%${q}%,desc_os.ilike.%${q}%`);
+        if(tipoEl.value==='MCU') q2=q2.eq('tipo_atividade','MANUTENÇÃO CORRETIVA DE URGÊNCIA');
+        const{data}=await q2.limit(20);
+        if(!data?.length){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum resultado.</div>'; return; }
+        res.innerHTML=(data||[]).map(o=>`
+          <div class="ca-os-row ca-os-opt" data-os="${o.os}" data-cod="${o.cod_servico||'1'}" style="cursor:pointer">
+            <div style="flex:1">
+              <div style="font-size:11px;font-weight:700">${o.os} <span style="font-size:10px;font-weight:400;color:#6b7280">cód ${o.cod_servico}</span></div>
+              <div style="font-size:11px;color:#374151">${o.desc_servico||o.desc_os||'—'}</div>
+              <div style="font-size:10px;color:#9ca3af">${o.equipamento||''} ${o.hh_prev_servico?'· '+o.hh_prev_servico+'h':''}</div>
+            </div>
+          </div>`).join('');
+        res.querySelectorAll('.ca-os-opt').forEach(row=>row.addEventListener('click',()=>{
+          res.querySelectorAll('.ca-os-opt').forEach(r=>{ delete r.dataset.selecionado; r.style.background=''; });
+          row.dataset.selecionado='1'; row.style.background='#f0fdf4';
+        }));
+      };
+      inp.addEventListener('input',()=>{ clearTimeout(inp._t); inp._t=setTimeout(buscar,300); });
+      tipoEl.addEventListener('change',buscar);
+
+      document.getElementById('ca-os-avulso-btn').addEventListener('click',()=>{
+        const w=document.getElementById('ca-os-avulso-wrap');
+        w.innerHTML=`
+          <div class="ca-row" style="margin-bottom:0">
+            <div class="ca-field"><label class="ca-lbl">Nº OS (opcional)</label><input id="ca-avulso-os" class="ca-input" placeholder="Avulso"></div>
+            <div class="ca-field" style="flex:2"><label class="ca-lbl">Tipo</label>
+              <select id="ca-avulso-tipo" class="ca-select">
+                <option>Programável</option><option>MCU</option><option>Inspeção</option>
+              </select>
+            </div>
+          </div>`;
+      });
+    },100);
+  },
+
+  /* ══════════════════════════════════════════════
+     PONTOS DE ATENÇÃO
+     ══════════════════════════════════════════════ */
+  _renderPontos(){
+    const el=document.getElementById('ca-pontos-wrap'); if(!el) return;
+    const s=this._s;
+    const hoje=this._hoje();
+    const alertas=[];
+
+    // Zona de risco: término previsto sab/dom
+    const sab=this._addDays(s.dataFim,-1); // sábado
+    const dom=s.dataFim;                    // domingo
+
+    s.equipes.forEach(eq=>{
+      const dfim=this._projetarFila(eq.id);
+      if(dfim===sab||dfim===dom){
+        alertas.push(`<div class="ca-attn-row"><span style="color:var(--amber);font-size:14px">⚠</span><div><strong>Zona de risco — ${eq.nome}</strong>: conclusão prevista em ${this._diaSem(dfim)} ${this._fmtDM(dfim)}. Considere reprogramar.</div></div>`);
+      }
     });
-    const del=o.querySelector('#meq-del');
-    if(del)del.addEventListener('click',async()=>{if(!confirm('Desativar?'))return;await getDB().from('cal_equipes').update({ativo:false}).eq('id',equipeId);o.remove();await recarregarDados();});
-    o.querySelector('.cd-modal-cancel').addEventListener('click',()=>o.remove());
-    o.addEventListener('click',e=>{if(e.target===o)o.remove();});
-    document.body.appendChild(o);
-  }
 
-  async function salvarEquipe(equipeId,nome,chapas) {
-    const db=getDB(); let eqId=equipeId;
-    if(!eqId){const {data}=await db.from('cal_equipes').insert({nome,ativo:true,he_ativo:false}).select().single();if(!data)return;eqId=data.id;}
-    else await db.from('cal_equipes').update({nome}).eq('id',eqId);
-    const {data:ma}=await db.from('cal_equipe_membros').select('*').eq('equipe_id',eqId);
-    const ca=new Set((ma||[]).map(m=>m.chapa));
-    for(const ch of chapas)if(!ca.has(ch)){const cv=_colabs.find(x=>(x.cracha||x.chapa)===ch);await db.from('cal_equipe_membros').insert({equipe_id:eqId,chapa:ch,nome:cv&&cv.nome?cv.nome:null,vigencia_inicio:new Date().toISOString()});}
-    for(const ch of ca)if(!chapas.includes(ch))await db.from('cal_equipe_membros').delete().eq('equipe_id',eqId).eq('chapa',ch);
-  }
-
-  async function trocarSemana(nova) {
-    _sem=nova; _itemAberto=null;
-    _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
-    await carregarTudo(); renderizar();
-  }
-  async function recarregarDados() { await carregarTudo(); renderizar(); }
-
-  /* ══════════════════════════════════════
-     CSS
-  ══════════════════════════════════════ */
-  function injetarCSS() {
-    if(document.getElementById('cd-style'))return;
-    const s=document.createElement('style'); s.id='cd-style';
-    s.textContent=`
-:root{--green:#16a34a;--blue:#2563eb;--red:#dc2626;--amber:#d97706;--purple:#7c3aed;}
-.cd-mod{display:flex;flex-direction:column;gap:10px;}
-.cd-mod.passada{opacity:.9;}
-@keyframes cd-spin{to{transform:rotate(360deg)}}
-
-/* Filtros */
-.cd-filtros{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:9px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;box-shadow:var(--shadow);}
-.cd-week-nav{display:flex;align-items:center;gap:4px;flex:1;}
-.cd-wbtn{width:26px;height:26px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:#6b7280;}
-.cd-week-atual{height:26px;padding:0 10px;background:var(--yellow);border-radius:var(--radius-sm);font-size:10px;font-weight:700;color:var(--dark1,#1e1e1e);display:flex;align-items:center;gap:5px;white-space:nowrap;}
-.cd-week-atual.passada{background:#9ca3af;color:#fff;}
-.cd-week-chip{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-size:9px;font-weight:500;color:#6b7280;display:flex;align-items:center;cursor:pointer;white-space:nowrap;}
-.cd-btn-primary{height:26px;padding:0 10px;border:none;border-radius:var(--radius-sm);background:var(--yellow);font-family:var(--font);font-size:10px;font-weight:700;color:#1a1a1a;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;}
-
-/* KPIs */
-.cd-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
-@media(max-width:600px){.cd-kpi-grid{grid-template-columns:repeat(2,1fr);}}
-.cd-kpi{padding:12px 13px;border-right:1px solid var(--border);}
-.cd-kpi:last-child{border-right:none;}
-.cd-kpi-lbl{font-size:8px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px;}
-.cd-kpi-val{font-size:22px;font-weight:700;line-height:1;margin-bottom:2px;color:#1a1a1a;}
-.cd-kpi-sub{font-size:8px;color:#9ca3af;}
-.cd-kpi-bar{height:3px;border-radius:2px;background:var(--border);margin-top:6px;overflow:hidden;}
-.cd-kpi-fill{height:100%;border-radius:2px;}
-
-/* Resumo */
-.cd-resumo{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
-.cd-resumo-hdr{padding:7px 14px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;display:flex;align-items:center;gap:5px;}
-.cd-resumo-hdr i{font-size:12px;}
-.cd-resumo-body{display:flex;flex-wrap:wrap;}
-.cd-resumo-eq{padding:8px 14px;border-right:1px solid var(--border);min-width:180px;flex:1;}
-.cd-resumo-eq:last-child{border-right:none;}
-.cd-resumo-nome{font-size:10px;font-weight:700;color:#374151;margin-bottom:4px;}
-.cd-resumo-exec{display:flex;align-items:center;gap:5px;font-size:10px;color:#374151;margin-bottom:3px;}
-.cd-resumo-dot{width:6px;height:6px;border-radius:50%;background:#0891b2;flex-shrink:0;animation:cd-pulse 1.5s infinite;}
-.cd-resumo-dot.pausado{background:var(--amber);animation:none;}
-@keyframes cd-pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.cd-resumo-prox{font-size:9px;color:#9ca3af;display:flex;align-items:center;gap:3px;}
-.cd-resumo-prox i{font-size:10px;}
-
-/* Boards */
-.cd-boards{display:flex;flex-direction:column;gap:6px;}
-.cd-board{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
-.cd-board-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--dark2,#2a2a2a);color:#f0f0f0;cursor:pointer;user-select:none;}
-.cd-board-hdr.passada{background:#4b4b4b;}
-.cd-board-hdr.inter{background:#3b2c1a;}
-.cd-board-hdr.enc{background:#1a2e1a;}
-.cd-board-info{flex:1;display:flex;flex-direction:column;gap:3px;}
-.cd-board-nome{font-size:12px;font-weight:700;letter-spacing:.03em;}
-.cd-board-membros{display:flex;gap:4px;flex-wrap:wrap;}
-.cd-membro{padding:1px 6px;border-radius:8px;background:rgba(255,255,255,.1);font-size:9px;color:#9ca3af;}
-.cd-board-meta{display:flex;align-items:center;gap:8px;flex-shrink:0;}
-.cd-board-hh{font-size:10px;font-weight:700;}
-.cd-board-hh.ok{color:#86efac;} .cd-board-hh.warn{color:#fde047;} .cd-board-hh.over{color:#fca5a5;}
-.cd-board-prev{font-size:10px;color:#9ca3af;display:flex;align-items:center;gap:3px;white-space:nowrap;}
-.cd-board-prev i{font-size:11px;}
-.cd-cfg-btn{width:20px;height:20px;border:1px solid rgba(255,255,255,.15);border-radius:3px;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:11px;padding:0;}
-.cd-board-chev{font-size:14px;color:#9ca3af;transition:transform .2s;}
-.cd-board-chev.rot{transform:rotate(180deg);}
-.cd-board-fila{display:none;}
-.cd-board-fila.open{display:block;}
-
-/* Linhas de serviço */
-.cd-svc-row{border-bottom:1px solid var(--border);}
-.cd-svc-row:last-child{border-bottom:none;}
-.cd-svc-row.exec{border-left:3px solid #0891b2;background:#f0fdff;}
-.cd-svc-row.pausado{border-left:3px solid var(--amber);background:#fffdf0;}
-.cd-svc-row.encerrado{background:#f0fdf4;opacity:.65;}
-.cd-svc-row.interrompido{background:#fef9ee;}
-.cd-svc-row.sempassada{filter:grayscale(.4);}
-.cd-svc-main{display:flex;align-items:stretch;cursor:pointer;}
-.cd-svc-main:hover{background:rgba(0,0,0,.02);}
-.cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 6px;border-right:1px solid var(--border);justify-content:center;background:#fafafa;flex-shrink:0;}
-.cd-pos-empty{width:32px;background:#fafafa;border-right:1px solid var(--border);}
-.cd-pos-btn{width:18px;height:13px;border:1px solid var(--border);border-radius:2px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;padding:0;}
-.cd-pos-btn:not(:disabled):hover{background:var(--dark1,#1e1e1e);color:#fff;border-color:var(--dark1,#1e1e1e);}
-.cd-pos-btn:disabled{opacity:.3;cursor:not-allowed;}
-.cd-svc-body{display:flex;align-items:center;gap:7px;padding:8px 10px;flex:1;min-width:0;}
-.cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:58px;font-variant-numeric:tabular-nums;}
-.cd-svc-desc{font-size:10px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cd-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;flex-shrink:0;}
-.cd-eq-tag{font-size:8px;padding:1px 5px;border-radius:3px;background:#f3f4f6;color:#9ca3af;flex-shrink:0;}
-.cd-svc-datas{display:flex;flex-direction:column;gap:2px;align-items:flex-end;padding:6px 10px;flex-shrink:0;min-width:120px;}
-.cd-dt{font-size:9px;color:#374151;white-space:nowrap;font-variant-numeric:tabular-nums;}
-.cd-dt-vazio{font-size:9px;color:#d1d5db;}
-.cd-dt-motivo{font-size:8px;color:var(--amber);max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cd-svc-acoes{display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px 8px 36px;border-top:1px solid var(--border);background:#f9fafb;}
-.cd-act{height:24px;padding:0 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg);font-family:var(--font);font-size:9px;font-weight:600;color:#374151;cursor:pointer;display:flex;align-items:center;gap:3px;white-space:nowrap;}
-.cd-act i{font-size:10px;}
-.cd-act.green{background:#dcfce7;border-color:#86efac;color:#16a34a;}
-.cd-act.amber{background:#fef3c7;border-color:#fcd34d;color:#d97706;}
-.cd-act.blue{background:#dbeafe;border-color:#93c5fd;color:#2563eb;}
-.cd-act.red{background:#fee2e2;border-color:#fca5a5;color:#dc2626;}
-.cd-act.ghost{background:transparent;border-color:var(--border);color:#9ca3af;}
-.cd-add-os{display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:10px;color:#9ca3af;border-top:1px dashed var(--border);}
-.cd-add-os:hover{background:#fffbeb;color:#1a1a1a;}
-.cd-add-os i{font-size:13px;}
-
-/* Pontos de atenção */
-.cd-pontos{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
-.cd-pontos-hdr{padding:9px 14px;border-bottom:1px solid var(--border);font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#d97706;display:flex;align-items:center;gap:5px;}
-.cd-ponto{display:flex;align-items:flex-start;gap:8px;padding:8px 14px;border-bottom:1px solid var(--border);}
-.cd-ponto:last-child{border-bottom:none;}
-.cd-ponto-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:3px;}
-.cd-ponto-dot.risco{background:#d97706;} .cd-ponto-dot.ok{background:#16a34a;} .cd-ponto-dot.warn{background:#dc2626;}
-.cd-ponto-txt{font-size:11px;color:#374151;}
-.cd-ponto-sub{font-size:9px;color:#9ca3af;margin-top:1px;}
-.cd-vazio{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:40px;color:#9ca3af;text-align:center;}
-.cd-vazio i{font-size:28px;}
-
-/* Modais */
-.cd-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
-.cd-modal{background:var(--card-bg);border-radius:var(--radius);box-shadow:0 8px 30px rgba(0,0,0,.15);padding:18px;width:300px;max-width:100%;}
-.cd-modal-titulo{font-size:13px;font-weight:700;margin-bottom:12px;color:#1a1a1a;}
-.cd-modal-opcoes{display:flex;flex-direction:column;gap:5px;margin-bottom:8px;}
-.cd-modal-opt{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:11px;font-weight:500;color:#374151;cursor:pointer;text-align:left;}
-.cd-modal-opt:hover{border-color:var(--yellow);background:#fffbeb;}
-.cd-modal-cancel{width:100%;padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;margin-top:4px;}
-.cd-modal-form{display:flex;flex-direction:column;gap:5px;}
-.cd-form-lbl{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;}
-.cd-form-input{width:100%;height:32px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
-.cd-form-sel{height:30px;}
-.cd-colab-list{display:flex;flex-direction:column;gap:3px;max-height:240px;overflow-y:auto;}
-.cd-colab-item{display:flex;align-items:center;gap:7px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:10px;color:#374151;font-weight:500;}
-.cd-colab-item.checked{background:#dbeafe;border-color:#93c5fd;}
-.cd-colab-item input{accent-color:var(--yellow);}
-.cd-os-filtros{display:flex;flex-direction:column;gap:5px;}
-.cd-os-result{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--border);cursor:pointer;font-size:11px;}
-.cd-os-result:hover{background:#fffbeb;}
-.cd-os-result:last-child{border-bottom:none;}
-.cd-os-result-num{font-weight:700;color:#374151;flex-shrink:0;width:70px;}
-.cd-os-result-desc{flex:1;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.cd-os-result-hh{font-size:10px;color:#9ca3af;flex-shrink:0;}
-.cd-tipo-opts{display:flex;gap:4px;}
-.cd-tipo-btn{flex:1;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
-.cd-tipo-btn.active{background:var(--yellow);border-color:#daa900;color:#1a1a1a;}
-
-/* Mobile */
-@media(max-width:600px){
-  .cd-week-chip{display:none;}
-  .cd-svc-datas{min-width:100px;}
-  .cd-svc-os{width:48px;}
-  .cd-resumo-body{flex-direction:column;}
-  .cd-resumo-eq{border-right:none;border-bottom:1px solid var(--border);}
-  .cd-resumo-eq:last-child{border-bottom:none;}
-}
-    `;
-    document.head.appendChild(s);
-  }
-
-  async function init(container) {
-    _container=container; injetarCSS();
-    _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
-    try { await carregarTudo(); renderizar(); }
-    catch(e) {
-      console.error('cal_acomp:',e);
-      _container.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
+    // Capacidade disponível: equipe com >16h livre pode absorver
+    const eqsComFolga=s.equipes.filter(eq=>{
+      const disp=this._hhDispEquipe(eq.id);
+      const aloc=this._hhAlocadoEquipe(eq.id);
+      return disp-aloc>16;
+    });
+    const eqsRisco=s.equipes.filter(eq=>{
+      const dfim=this._projetarFila(eq.id);
+      return dfim===sab||dfim===dom;
+    });
+    if(eqsComFolga.length&&eqsRisco.length){
+      eqsComFolga.forEach(eq=>{
+        const livre=this._hhDispEquipe(eq.id)-this._hhAlocadoEquipe(eq.id);
+        alertas.push(`<div class="ca-attn-row"><span style="color:var(--green);font-size:14px">💡</span><div><strong>${eq.nome}</strong> tem ${livre.toFixed(0)}h disponíveis — pode absorver OS de equipes em zona de risco.</div></div>`);
+      });
     }
-  }
 
-  return { init };
-})();
+    // Semana passada: OS não encerradas
+    if(s.modoLeitura){
+      const pendentes=Object.values(s.fila).flat().filter(f=>f.status==='pendente'||f.status==='em_execucao'||f.status==='pausado');
+      if(pendentes.length){
+        pendentes.forEach(f=>{
+          const eq=s.equipes.find(e=>e.id===f.equipe_id);
+          alertas.push(`<div class="ca-attn-row"><span style="color:var(--red);font-size:14px">📋</span><div><strong>${f.os}</strong> (${eq?.nome||'—'}) — não foi encerrada na semana.</div></div>`);
+        });
+      }
+    }
+
+    if(!alertas.length){ el.innerHTML=''; return; }
+    el.innerHTML=`
+      <div class="ca-attn" style="margin-bottom:12px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:10px"><i class="ti ti-alert-triangle" style="color:var(--amber)"></i> Pontos de Atenção</div>
+        ${alertas.join('')}
+      </div>`;
+  },
+
+  /* ══════════════════════════════════════════════
+     GRUPOS INTERROMPIDOS / ENCERRADOS
+     ══════════════════════════════════════════════ */
+  _renderGrupoInterrompidos(){
+    const el=document.getElementById('ca-interrompidos-wrap'); if(!el) return;
+    const s=this._s;
+    const items=Object.values(s.fila).flat().filter(f=>f.status==='interrompido');
+    if(!items.length){ el.innerHTML=''; return; }
+
+    const rows=items.map(f=>{
+      const eq=s.equipes.find(e=>e.id===f.equipe_id);
+      return `<div class="ca-os-row">
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700">${f.os} <span style="font-size:10px;font-weight:400;color:#6b7280">${eq?.nome||'—'}</span></div>
+          <div style="font-size:11px;color:#374151">${f._os?.desc_servico||f._os?.desc_os||'—'}</div>
+          <div style="font-size:10px;color:var(--red)">${f.motivo_interrupcao||'Sem motivo'}</div>
+        </div>
+        ${!s.modoLeitura?`<div style="display:flex;gap:4px">
+          <button class="ca-btn ca-btn-green ca-ac" data-ac="retomar" data-id="${f.id}"><i class="ti ti-player-play"></i> Reabrir</button>
+          <button class="ca-btn ca-btn-red ca-ac" data-ac="remover" data-id="${f.id}"><i class="ti ti-x"></i></button>
+        </div>`:''}
+      </div>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div class="ca-grupo" style="margin-bottom:10px">
+        <div class="ca-grupo-hdr" id="ca-int-hdr">
+          <span class="ca-grupo-titulo"><span style="width:8px;height:8px;border-radius:50%;background:#6b7280;display:inline-block"></span> Interrompidos <span style="background:#e5e7eb;color:#374151;font-size:9px;padding:1px 7px;border-radius:10px">${items.length}</span></span>
+          <i class="ti ti-chevron-down" id="ca-int-arr"></i>
+        </div>
+        <div id="ca-int-body" style="display:none">${rows}</div>
+      </div>`;
+    document.getElementById('ca-int-hdr').addEventListener('click',()=>{
+      const b=document.getElementById('ca-int-body');
+      const open=b.style.display==='block';
+      b.style.display=open?'none':'block';
+      document.getElementById('ca-int-arr').className='ti ti-chevron-'+(open?'down':'up');
+      document.getElementById('ca-int-hdr').classList.toggle('open',!open);
+    });
+    this._bindAcoesFila(el);
+  },
+
+  _renderGrupoEncerrados(){
+    const el=document.getElementById('ca-encerrados-wrap'); if(!el) return;
+    const s=this._s;
+    const items=Object.values(s.fila).flat().filter(f=>f.status==='encerrado');
+    if(!items.length){ el.innerHTML=''; return; }
+
+    const rows=items.map(f=>{
+      const eq=s.equipes.find(e=>e.id===f.equipe_id);
+      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      return `<div class="ca-os-row">
+        <div style="flex:1">
+          <div style="font-size:12px;font-weight:700">${f.os} <span style="font-size:10px;font-weight:400;color:#6b7280">${eq?.nome||'—'}</span></div>
+          <div style="font-size:11px;color:#374151">${f._os?.desc_servico||f._os?.desc_os||'—'}</div>
+          <div style="font-size:10px;color:#9ca3af">${hh?hh.toFixed(1)+'h · ':''}Encerrado ${f.dt_fim_real?this._fmtDMH(f.dt_fim_real):''}</div>
+        </div>
+        ${!s.modoLeitura?`<button class="ca-btn ca-ac" data-ac="reabrir" data-id="${f.id}"><i class="ti ti-refresh"></i> Reabrir</button>`:''}
+      </div>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div class="ca-grupo" style="margin-bottom:10px">
+        <div class="ca-grupo-hdr" id="ca-enc-hdr">
+          <span class="ca-grupo-titulo"><span style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block"></span> Encerrados na semana <span style="background:#dcfce7;color:#166534;font-size:9px;padding:1px 7px;border-radius:10px">${items.length}</span></span>
+          <i class="ti ti-chevron-down" id="ca-enc-arr"></i>
+        </div>
+        <div id="ca-enc-body" style="display:none">${rows}</div>
+      </div>`;
+    document.getElementById('ca-enc-hdr').addEventListener('click',()=>{
+      const b=document.getElementById('ca-enc-body');
+      const open=b.style.display==='block';
+      b.style.display=open?'none':'block';
+      document.getElementById('ca-enc-arr').className='ti ti-chevron-'+(open?'down':'up');
+      document.getElementById('ca-enc-hdr').classList.toggle('open',!open);
+    });
+    // Bind reabrir (encerrado → pendente)
+    el.querySelectorAll('.ca-ac[data-ac="reabrir"]').forEach(btn=>btn.addEventListener('click',async e=>{
+      e.stopPropagation();
+      const db=getDB();
+      const{error}=await db.from('cal_fila').update({status:'pendente',dt_fim_real:null}).eq('id',parseInt(btn.dataset.id));
+      if(error){ showToast('Erro: '+error.message,'erro'); return; }
+      showToast('OS reaberta','ok');
+      await this._carregar();
+    }));
+  },
+
+  /* ══════════════════════════════════════════════
+     LISTA GERAL (retraída)
+     ══════════════════════════════════════════════ */
+  _renderListaGeral(){
+    const el=document.getElementById('ca-lista-wrap'); if(!el) return;
+    const s=this._s;
+    const todos=Object.values(s.fila).flat().sort((a,b)=>{
+      // Ordena por equipe depois posição
+      if(a.equipe_id!==b.equipe_id) return a.equipe_id-b.equipe_id;
+      return a.posicao-b.posicao;
+    });
+
+    const rows=todos.map(f=>{
+      const eq=s.equipes.find(e=>e.id===f.equipe_id);
+      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      return `<div class="ca-lista-row">
+        <span style="font-weight:700">${f.os}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f._os?.desc_servico||f._os?.desc_os||'—'}">${f._os?.desc_servico||f._os?.desc_os||'—'}</span>
+        <span>${eq?.nome||'—'}</span>
+        <span style="text-align:right">${hh?hh.toFixed(1)+'h':'—'}</span>
+        <span style="color:#9ca3af">—</span>
+        <span style="color:#9ca3af">—</span>
+      </div>`;
+    }).join('');
+
+    el.innerHTML=`
+      <div class="ca-grupo">
+        <div class="ca-grupo-hdr" id="ca-lista-hdr">
+          <span class="ca-grupo-titulo"><i class="ti ti-list" style="font-size:12px"></i> Todos os serviços alocados <span style="background:#e5e7eb;color:#374151;font-size:9px;padding:1px 7px;border-radius:10px">${todos.length}</span></span>
+          <i class="ti ti-chevron-down" id="ca-lista-arr"></i>
+        </div>
+        <div id="ca-lista-body" style="display:none">
+          <div class="ca-lista-row ca-lista-hdr"><span>OS</span><span>Serviço</span><span>Equipe</span><span>HH</span><span>Início</span><span>Fim prev.</span></div>
+          ${rows||'<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum serviço alocado.</div>'}
+        </div>
+      </div>`;
+
+    document.getElementById('ca-lista-hdr').addEventListener('click',()=>{
+      const b=document.getElementById('ca-lista-body');
+      const open=b.style.display==='block';
+      b.style.display=open?'none':'block';
+      document.getElementById('ca-lista-arr').className='ti ti-chevron-'+(open?'down':'up');
+      document.getElementById('ca-lista-hdr').classList.toggle('open',!open);
+      s.listaAberta=!open;
+    });
+    if(s.listaAberta){
+      document.getElementById('ca-lista-body').style.display='block';
+      document.getElementById('ca-lista-arr').className='ti ti-chevron-up';
+      document.getElementById('ca-lista-hdr').classList.add('open');
+    }
+  },
+
+  /* ══════════════════════════════════════════════
+     MODAL NOVA EQUIPE
+     ══════════════════════════════════════════════ */
+  async _modalNovaEquipe(){
+    const s=this._s;
+    const dispColabs=s.colaboradores.filter(c=>{
+      // Não está em nenhuma equipe
+      return !Object.values(s.membros).flat().find(m=>String(m.cracha)===String(c.cracha));
+    });
+
+    this._modal('Nova equipe',`
+      <div class="ca-row">
+        <div class="ca-field"><label class="ca-lbl">Nome da equipe</label>
+          <input id="ca-eq-nome" class="ca-input" placeholder="Ex: Equipe A">
+        </div>
+      </div>
+      <label class="ca-lbl">Colaboradores</label>
+      <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);padding:4px">
+        ${dispColabs.length?dispColabs.map(c=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:12px;border-radius:4px" class="ca-colab-opt">
+            <input type="checkbox" class="ca-mem-cb" value="${c.cracha}" style="accent-color:var(--yellow)">
+            <span style="flex:1">${c.nome}</span>
+            <span style="font-size:10px;color:#9ca3af">${c.turno||'—'} · ${c.escala||'—'}</span>
+          </label>`).join('')
+        :'<div style="padding:10px;font-size:11px;color:#9ca3af;text-align:center">Todos os colaboradores já estão alocados.</div>'}
+      </div>`,
+      async()=>{
+        const nome=document.getElementById('ca-eq-nome').value.trim();
+        if(!nome){ showToast('Informe o nome da equipe','erro'); return; }
+        const chapas=[...document.querySelectorAll('.ca-mem-cb:checked')].map(cb=>cb.value);
+        const db=getDB();
+        const{data:eqCriada,error}=await db.from('cal_equipes').insert({nome}).select().single();
+        if(error) throw error;
+        if(chapas.length){
+          const{error:e2}=await db.from('cal_equipe_membros').insert(chapas.map(ch=>({equipe_id:eqCriada.id,chapa:ch})));
+          if(e2) throw e2;
+        }
+        showToast('Equipe criada!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Criar equipe');
+  },
+
+  /* ── Modal config equipe (editar membros) ── */
+  async _modalConfigEquipe(equipeId){
+    const s=this._s;
+    const eq=s.equipes.find(e=>e.id===equipeId);
+    const memsAtuais=(s.membros[equipeId]||[]).map(m=>String(m.cracha));
+
+    const colabs=s.colaboradores.filter(c=>{
+      // Disponível = não está em outra equipe
+      const emOutra=Object.entries(s.membros).find(([eId,ms])=>parseInt(eId)!==equipeId&&ms.find(m=>String(m.cracha)===String(c.cracha)));
+      return !emOutra;
+    });
+
+    this._modal('Configurar — '+eq?.nome,`
+      <div class="ca-row">
+        <div class="ca-field"><label class="ca-lbl">Nome</label>
+          <input id="ca-eq-edit-nome" class="ca-input" value="${eq?.nome||''}">
+        </div>
+      </div>
+      <label class="ca-lbl">Membros</label>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);padding:4px">
+        ${colabs.map(c=>`
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;cursor:pointer;font-size:12px;border-radius:4px">
+            <input type="checkbox" class="ca-mem-edit-cb" value="${c.cracha}" ${memsAtuais.includes(String(c.cracha))?'checked':''} style="accent-color:var(--yellow)">
+            <span style="flex:1">${c.nome}</span>
+            <span style="font-size:10px;color:#9ca3af">${c.turno||'—'} · ${c.escala||'—'}</span>
+          </label>`).join('')}
+      </div>
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <button class="ca-btn ca-btn-red" id="ca-eq-excluir"><i class="ti ti-trash"></i> Excluir equipe</button>
+      </div>`,
+      async()=>{
+        const nome=document.getElementById('ca-eq-edit-nome').value.trim();
+        if(!nome){ showToast('Informe o nome','erro'); return; }
+        const novasChapas=[...document.querySelectorAll('.ca-mem-edit-cb:checked')].map(cb=>cb.value);
+        const db=getDB();
+        await db.from('cal_equipes').update({nome}).eq('id',equipeId);
+        // Reconstruir membros
+        await db.from('cal_equipe_membros').delete().eq('equipe_id',equipeId);
+        if(novasChapas.length){
+          await db.from('cal_equipe_membros').insert(novasChapas.map(ch=>({equipe_id:equipeId,chapa:ch})));
+        }
+        showToast('Equipe atualizada!','ok');
+        this._fecharModal();
+        await this._carregar();
+      },'Salvar');
+
+    setTimeout(()=>{
+      document.getElementById('ca-eq-excluir')?.addEventListener('click',async()=>{
+        if(!confirm(`Excluir "${eq?.nome}" e toda a fila?`)) return;
+        const db=getDB();
+        await db.from('cal_equipes').update({ativo:false}).eq('id',equipeId);
+        showToast('Equipe excluída','ok');
+        this._fecharModal();
+        await this._carregar();
+      });
+    },50);
+  },
+
+  /* ══════════════════════════════════════════════
+     MODAL GENÉRICO (mesmo padrão apontamentos.js)
+     ══════════════════════════════════════════════ */
+  _lbl(txt){ return `<label class="ca-lbl">${txt}</label>`; },
+
+  _modal(titulo,html,onOk=null,btnLabel='Confirmar'){
+    this._fecharModal();
+    const ov=document.createElement('div'); ov.id='ca-modal-ov';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML=`
+      <div style="background:var(--card-bg);border-radius:var(--radius);padding:24px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-md);font-family:var(--font)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
+          <div style="font-size:14px;font-weight:700;color:#111">${titulo}</div>
+          <button id="ca-modal-x" class="ca-icon-btn"><i class="ti ti-x"></i></button>
+        </div>
+        <div>${html}</div>
+        ${onOk?`<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">
+          <button id="ca-modal-cancel" class="dd-action-btn secondary" style="height:30px;padding:0 14px;font-family:var(--font)">Cancelar</button>
+          <button id="ca-modal-ok" class="dd-action-btn primary" style="height:30px;padding:0 16px;font-family:var(--font)">${btnLabel}</button>
+        </div>`:''}
+      </div>`;
+    document.body.appendChild(ov);
+    document.getElementById('ca-modal-x').onclick=()=>this._fecharModal();
+    document.getElementById('ca-modal-cancel')?.addEventListener('click',()=>this._fecharModal());
+    document.getElementById('ca-modal-ok')?.addEventListener('click',async()=>{
+      try{ await onOk(); }catch(e){ showToast('Erro: '+e.message,'erro'); console.error(e); }
+    });
+    ov.addEventListener('click',e=>{ if(e.target===ov) this._fecharModal(); });
+  },
+
+  _fecharModal(){ document.getElementById('ca-modal-ov')?.remove(); },
+};
