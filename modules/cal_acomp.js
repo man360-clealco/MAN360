@@ -1257,18 +1257,38 @@ window.Modulos.cal_acomp = {
       const res=document.getElementById('ca-os-resultados');
       const buscar=async()=>{
         const q=inp.value.trim(); if(q.length<2){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Digite ao menos 2 caracteres…</div>'; return; }
-        let q2=db.from('ordens_servico').select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,equipamento').eq('modalidade','CAL');
-        if(/^\d+/.test(q)) q2=q2.ilike('os','%'+q+'%');
-        else q2=q2.or(`desc_servico.ilike.%${q}%,desc_os.ilike.%${q}%`);
+
+        // Busca por número ou descrição
+        const isByNum=/^\d+/.test(q);
+        const termoBusca=isByNum
+          ?`os.ilike.%${q}%`
+          :`desc_servico.ilike.%${q}%,desc_os.ilike.%${q}%`;
+
+        // Aceita modalidade=CAL ou (modalidade nula com equipe CAL)
+        let q2=db.from('ordens_servico')
+          .select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,equipamento,status_os,status_servico,modalidade')
+          .or(`modalidade.eq.CAL,and(modalidade.is.null,equipe.ilike.%CAL%)`)
+          .or(termoBusca);
+
         if(tipoEl.value==='MCU') q2=q2.eq('tipo_atividade','MANUTENÇÃO CORRETIVA DE URGÊNCIA');
-        const{data}=await q2.limit(20);
+        const{data}=await q2.limit(30);
         if(!data?.length){ res.innerHTML='<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum resultado.</div>'; return; }
+
         res.innerHTML=(data||[]).map(o=>{
           const jaEsta=jaAlocadas.has(o.os+'|'+(o.cod_servico||'1'));
-          return `<div class="ca-os-check-row ${jaEsta?'':'ca-os-opt'}" data-os="${o.os}" data-cod="${o.cod_servico||'1'}" ${jaEsta?'style="opacity:.4;pointer-events:none"':''}>
-            <input type="checkbox" style="accent-color:var(--yellow);flex-shrink:0" ${jaEsta?'disabled':''}>
+          const bloqueado=o.status_os==='4 - Encerrada'||o.status_os==='5 - Cancelada'||
+                          o.status_servico==='Encerrado'||o.status_servico==='Cancelado';
+          const motivo=bloqueado?(o.status_os||o.status_servico):'';
+          const disabled=jaEsta||bloqueado;
+          return `<div class="ca-os-check-row ${!disabled?'ca-os-opt':''}" data-os="${o.os}" data-cod="${o.cod_servico||'1'}"
+            ${disabled?'style="opacity:.45;pointer-events:none"':''}>
+            <input type="checkbox" style="accent-color:var(--yellow);flex-shrink:0" ${disabled?'disabled':''}>
             <div style="flex:1;min-width:0">
-              <div style="font-weight:700;font-size:11px">${o.os} ${jaEsta?'<span style="font-size:9px;color:#9ca3af">já alocada</span>':''}</div>
+              <div style="font-weight:700;font-size:11px;display:flex;align-items:center;gap:5px">
+                ${o.os}
+                ${jaEsta?'<span style="font-size:9px;color:#9ca3af">já alocada</span>':''}
+                ${bloqueado?`<span style="font-size:9px;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:6px">${motivo}</span>`:''}
+              </div>
               <div style="font-size:11px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.desc_servico||o.desc_os||'—'}</div>
               <div style="font-size:10px;color:#9ca3af">${o.equipamento||''} ${o.hh_prev_servico?'· '+o.hh_prev_servico+'h':''}</div>
             </div>
