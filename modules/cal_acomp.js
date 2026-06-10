@@ -1071,13 +1071,13 @@ window.Modulos.cal_acomp = {
     const idx=fila.findIndex(f=>f.id===id);
     const novoIdx=idx+delta;
     if(novoIdx<0||novoIdx>=fila.length) return;
-    // Troca posições
-    const a=fila[idx],b=fila[novoIdx];
+    const a=fila[idx], b=fila[novoIdx];
     const db=getDB();
-    await Promise.all([
-      db.from('cal_fila').update({posicao:b.posicao}).eq('id',a.id),
-      db.from('cal_fila').update({posicao:a.posicao}).eq('id',b.id),
-    ]);
+    // Usa posição temporária negativa para evitar conflito de UNIQUE
+    const tmpPos = -(a.posicao + b.posicao + 1);
+    await db.from('cal_fila').update({posicao:tmpPos}).eq('id',a.id);
+    await db.from('cal_fila').update({posicao:a.posicao}).eq('id',b.id);
+    await db.from('cal_fila').update({posicao:b.posicao}).eq('id',a.id);
     await this._atualizarParcial(equipeId);
   },
 
