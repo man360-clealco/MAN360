@@ -294,7 +294,7 @@ window.Modulos.cal_acomp = {
     try{
       const db=getDB();
       const [r1,r2,r3]=await Promise.all([
-        db.from('apt_colaboradores').select('*').eq('modalidade','CAL').eq('ativo',true).order('nome'),
+        db.from('apt_colaboradores').select('*').eq('modalidade','CAL').order('nome'),
         db.from('apt_escalas').select('*').order('nome'),
         db.from('apt_turnos').select('*').order('nome'),
       ]);
@@ -325,7 +325,7 @@ window.Modulos.cal_acomp = {
 
       // Membros enriquecidos
       s.membros={};
-      if(s.equipes.length){
+        if(s.equipes.length){
         const eqIds=s.equipes.map(e=>e.id);
         const {data:mems}=await db.from('cal_equipe_membros').select('*').in('equipe_id',eqIds);
         (mems||[]).forEach(m=>{
