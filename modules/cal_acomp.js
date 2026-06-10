@@ -366,19 +366,28 @@ window.Modulos.cal_acomp = {
           const osKeys=[...new Set(filaRows.map(f=>f.os))];
           const {data:osRows}=await db.from('ordens_servico').select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,status_os,equipamento,desc_equipamento').in('os',osKeys);
           const osMap={};
-          (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; osMap[o.os+'|1']=o; });
+          (osRows||[]).forEach(o=>{
+            const key=o.os+'|'+o.cod_servico;
+            osMap[key]=o;
+            // Para lookup por '1': prefere registro com HH preenchido
+            if(!osMap[o.os+'|1']||(!osMap[o.os+'|1'].hh_prev_servico&&o.hh_prev_servico))
+              osMap[o.os+'|1']=o;
+          });
 
-          // Buscar programação para OS sem dados em ordens_servico
-          const osSemDados=osKeys.filter(os=>!osRows?.find(o=>o.os===os));
+          // Buscar programação para OS sem HH (ausentes ou com hh_prev_servico NULL)
+          const osSemHH=osKeys.filter(os=>{
+            const found=osRows?.find(o=>o.os===os);
+            return !found||!found.hh_prev_servico;
+          });
           let progMapFila={};
-          if(osSemDados.length){
+          if(osSemHH.length){
             const{data:progRows}=await db.from('programacao_semanal')
-              .select('os,cod_servico,desc_servico,hh_previsto').in('os',osSemDados)
+              .select('os,cod_servico,desc_servico,hh_previsto').in('os',osSemHH)
               .eq('semana',s.semana).eq('ano',s.ano);
             (progRows||[]).forEach(p=>{
               const cod=(p.cod_servico==='?'||!p.cod_servico)?'1':p.cod_servico;
               progMapFila[p.os+'|'+cod]=p;
-              progMapFila[p.os+'|1']=p; // sempre mapeia por '1' também
+              progMapFila[p.os+'|1']=p;
             });
           }
 
@@ -388,7 +397,12 @@ window.Modulos.cal_acomp = {
             if(!f._os){
               const prog=progMapFila[f.os+'|'+(f.cod_servico||'1')]||progMapFila[f.os+'|1']||
                          s.programacao.find(p=>p.os===f.os);
-              if(prog) f._os={os:f.os,cod_servico:f.cod_servico,desc_servico:prog.desc_servico,hh_prev_servico:prog.hh_previsto||prog.hh_previsto};
+              if(prog) f._os={os:f.os,cod_servico:f.cod_servico,desc_servico:prog.desc_servico,hh_prev_servico:prog.hh_previsto};
+            } else if(!f._os.hh_prev_servico){
+              // OS encontrada mas sem HH — complementar com programação
+              const prog=progMapFila[f.os+'|'+(f.cod_servico||'1')]||progMapFila[f.os+'|1']||
+                         s.programacao.find(p=>p.os===f.os);
+              if(prog?.hh_previsto) f._os={...f._os, hh_prev_servico:prog.hh_previsto};
             }
             s.fila[f.equipe_id].push(f);
           });
@@ -866,15 +880,22 @@ window.Modulos.cal_acomp = {
         .select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,status_os,equipamento,desc_equipamento')
         .in('os',osKeys);
       const osMap={};
-      (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; osMap[o.os+'|1']=o; });
+      (osRows||[]).forEach(o=>{
+        osMap[o.os+'|'+o.cod_servico]=o;
+        if(!osMap[o.os+'|1']||(!osMap[o.os+'|1'].hh_prev_servico&&o.hh_prev_servico))
+          osMap[o.os+'|1']=o;
+      });
 
-      // Buscar dados da programação para OS não encontradas em ordens_servico
-      const osSemDados=osKeys.filter(os=>!osRows?.find(o=>o.os===os));
+      // Buscar programação para OS sem HH (ausentes ou com hh_prev_servico NULL)
+      const osSemHH=osKeys.filter(os=>{
+        const found=osRows?.find(o=>o.os===os);
+        return !found||!found.hh_prev_servico;
+      });
       let progMap={};
-      if(osSemDados.length){
+      if(osSemHH.length){
         const{data:progRows}=await db.from('programacao_semanal')
           .select('os,cod_servico,desc_servico,hh_previsto')
-          .in('os',osSemDados)
+          .in('os',osSemHH)
           .eq('semana',s.semana).eq('ano',s.ano);
         (progRows||[]).forEach(p=>{
           const cod=(p.cod_servico==='?'||!p.cod_servico)?'1':p.cod_servico;
@@ -888,6 +909,9 @@ window.Modulos.cal_acomp = {
         if(!f._os){
           const prog=progMap[f.os+'|'+(f.cod_servico||'1')]||progMap[f.os+'|1'];
           if(prog) f._os={os:f.os,cod_servico:f.cod_servico,desc_servico:prog.desc_servico,hh_prev_servico:prog.hh_previsto};
+        } else if(!f._os.hh_prev_servico){
+          const prog=progMap[f.os+'|'+(f.cod_servico||'1')]||progMap[f.os+'|1'];
+          if(prog?.hh_previsto) f._os={...f._os, hh_prev_servico:prog.hh_previsto};
         }
       });
       s.fila[equipeId]=filaRows;
