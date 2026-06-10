@@ -26,26 +26,14 @@ window.Modulos.cal_acomp = (() => {
   }
   function fmtDia(d) {
     if (!d) return '—';
-    let dt;
-    if (typeof d === 'string') {
-      // Forçar leitura como local adicionando T12:00:00 se só data, ou removendo Z/offset
-      const s = d.includes('T') ? d.replace('Z','').replace(/[+-]\d{2}:\d{2}$/,'') : d+'T12:00:00';
-      dt = new Date(s);
-    } else {
-      dt = d instanceof Date ? d : new Date(d);
-    }
+    const dt = typeof d==='string' ? new Date(d.includes('T')?d:d+'T12:00:00') : new Date(d);
     const dias=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
     return `${dias[dt.getDay()]} ${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}`;
   }
   function fmtHora(d) {
     if (!d) return '';
-    if (typeof d === 'string') {
-      // Extrair hora diretamente da string ISO se tiver formato T
-      const m = d.match(/T(\d{2}):(\d{2})/);
-      if (m) return m[1] + ':' + m[2];
-    }
-    const dt = d instanceof Date ? d : new Date(d);
-    return String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
+    const dt = typeof d==='string' ? new Date(d) : new Date(d);
+    return `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
   }
   function fmtDiaHora(d) {
     if (!d) return '—';
@@ -68,7 +56,6 @@ window.Modulos.cal_acomp = (() => {
   let _escalas   = {};
   let _ferias    = [];
   let _justific  = [];
-  let _folgasCache = {}; // cache: chapa -> Set de datas de folga
   let _container = null;
   let _itemAberto= null;  // id do item com ações abertas
 
@@ -92,8 +79,7 @@ window.Modulos.cal_acomp = (() => {
     while(d<=df){
       const diff=Math.round((d-ancD)/86400000);
       const pos=((diff%ciclo)+ciclo)%ciclo;
-      // ancora É a data da folga → pos===0 significa folga
-      if(pos===0)folgas.add(isoDate(d));
+      if(pos===esc.dias_trabalho)folgas.add(isoDate(d));
       d.setDate(d.getDate()+1);
     }
     return folgas;
@@ -103,13 +89,13 @@ window.Modulos.cal_acomp = (() => {
   function hhEquipeDia(equipe, data) {
     const iso=isoDate(data); let total=0;
     for (const m of (equipe.membros||[])) {
-      const col=_colabs.find(x=>x.cracha===m.chapa);
-      if(!col||!col.turno) continue;
+      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
+      if(!c||!col.turno) continue;
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
       if(_justific.some(j=>j.chapa===m.chapa&&iso>=j.data_inicio&&iso<=j.data_fim)) continue;
-      const folgas=_folgasCache[col.cracha]||new Set();
+      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
       if(folgas.has(iso)) continue;
-      const t=_turnos[col.turno]||{hora_entrada:'07:00',hora_saida:'15:20',intervalo_min:0};
+      const t=_turnos[col.turno]; if(!t) continue;
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
       const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
       total+=Math.max(0,((sh*60+sm)-(eh*60+em)-(t.intervalo_min||0))/60);
@@ -121,11 +107,11 @@ window.Modulos.cal_acomp = (() => {
   function entradaEquipeDia(equipe, data) {
     let minEntrada = 999;
     for (const m of (equipe.membros||[])) {
-      const col=_colabs.find(x=>x.cracha===m.chapa);
-      if(!col||!col.turno) continue;
+      const c=_colabs.find(x=>(x.cracha||x.chapa)===m.chapa);
+      if(!c||!col.turno) continue;
       const iso=isoDate(data);
       if(_ferias.some(f=>f.chapa===m.chapa&&iso>=f.data_inicio&&iso<=f.data_fim)) continue;
-      const folgas=_folgasCache[col.cracha]||new Set();
+      const folgas=projetarFolgas(c,iniSem(_sem),fimSem(_sem+1));
       if(folgas.has(iso)) continue;
       const t=_turnos[col.turno]; if(!t) continue;
       const [eh,em]=(t.hora_entrada||'07:00').split(':').map(Number);
@@ -136,134 +122,107 @@ window.Modulos.cal_acomp = (() => {
 
   /* ── Calcular previsão início/fim de cada item da fila ──
      Retorna array com {id, inicioCalc, fimCalc} para cada item ativo */
-      function calcularPrevisoes(equipe) {
+  function calcularPrevisoes(equipe) {
     const fila=(_fila[equipe.id]||[]);
     const ativos=fila.filter(i=>i.status!=='encerrado'&&i.status!=='interrompido');
     if(!ativos.length) return {};
 
     const result={};
-    let cursorDt=null;
+    // Cursor de tempo: começa do primeiro disponível
+    let cursorDt = null;
 
-    // Horário de saída real do turno (do primeiro membro com turno)
-    function horaSaidaTurno() {
-      for(const m of (equipe.membros||[])){
-        const col=_colabs.find(x=>x.cracha===m.chapa);
-        if(!col||!col.turno) continue;
-        const t=_turnos[col.turno]; if(!t) continue;
-        const [sh,sm]=(t.hora_saida||'15:20').split(':').map(Number);
-        return sh*60+sm;
-      }
-      return 15*60+20; // fallback 15:20
-    }
-    const SAIDA_MIN=horaSaidaTurno();
-
-    for(let idx=0;idx<ativos.length;idx++){
+    for (let idx=0;idx<ativos.length;idx++) {
       const item=ativos[idx];
       const hhPrev=item.hh_previsto||8;
 
-      // ── Cursor inicial ──
-      if(idx===0){
-        if((item.status==='em_execucao'||item.status==='pausado')&&item.iniciado_em){
+      // Ponto de partida
+      if(idx===0) {
+        if(item.status==='em_execucao'&&item.iniciado_em) {
+          cursorDt=new Date(item.iniciado_em);
+        } else if(item.status==='pausado'&&item.iniciado_em) {
           cursorDt=new Date(item.iniciado_em);
         } else {
-          const agora=new Date();
-          const hj=hoje();
-          const entHj=entradaEquipeDia(equipe,hj);
-          const agorMin=agora.getHours()*60+agora.getMinutes();
-
-          if(hhEquipeDia(equipe,hj)===0){
-            cursorDt=new Date(hj);
-            cursorDt.setDate(cursorDt.getDate()+1);
-            while(hhEquipeDia(equipe,cursorDt)===0)
-              cursorDt.setDate(cursorDt.getDate()+1);
-            const e=entradaEquipeDia(equipe,cursorDt)||420;
-            cursorDt.setHours(Math.floor(e/60),e%60,0,0);
-          } else if(entHj!==null&&agorMin<entHj){
-            cursorDt=new Date(hj);
-            cursorDt.setHours(Math.floor(entHj/60),entHj%60,0,0);
-          } else {
-            cursorDt=new Date(agora);
+          // Começa agora ou no início do próximo dia útil
+          cursorDt=new Date();
+          const hj=hoje(); const hhHj=hhEquipeDia(equipe,hj);
+          if(hhHj===0) {
+            // Hoje é folga, avança para próximo dia útil
+            cursorDt=new Date(hj); cursorDt.setDate(cursorDt.getDate()+1);
+            while(hhEquipeDia(equipe,cursorDt)===0) cursorDt.setDate(cursorDt.getDate()+1);
+            const ent=entradaEquipeDia(equipe,cursorDt);
+            if(ent!==null){cursorDt.setHours(Math.floor(ent/60),ent%60,0,0);}
           }
         }
       }
 
       result[item.id]={inicioCalc:new Date(cursorDt)};
 
-      // ── Consumir HH dia a dia ──
-      // hhEquipeDia = soma real de todos os membros disponíveis
-      // Avançar dias completos; no último dia, hora final = horário de saída do turno
+      // Avançar cursor pelo HH previsto, pulando domingos e almoço
       let hhRestante=hhPrev;
       let d=new Date(cursorDt);
 
-      while(hhRestante>0){
+      while(hhRestante>0) {
         const hhDia=hhEquipeDia(equipe,d);
-
-        if(hhDia===0){
-          // Sem disponibilidade — próximo dia
-          d=new Date(d); d.setDate(d.getDate()+1);
-          const e=entradaEquipeDia(equipe,d)||420;
-          d.setHours(Math.floor(e/60),e%60,0,0);
+        if(hhDia===0||d.getDay()===0) { // folga ou domingo
+          d.setDate(d.getDate()+1);
+          const ent=entradaEquipeDia(equipe,d);
+          if(ent!==null){d.setHours(Math.floor(ent/60),ent%60,0,0);}
           continue;
         }
-
-        // HH disponível hoje a partir do cursor
-        // Comparar cursor com entrada do turno
-        const entMin=entradaEquipeDia(equipe,d)||420;
+        // Calcular horas restantes no dia a partir do cursor
+        const _m0=equipe.membros&&equipe.membros[0];
+        const _c0=_m0?_colabs.find(x=>x.cracha===_m0.chapa):null;
+        const t=(_c0&&_c0.turno&&_turnos[_c0.turno])||{};
+        const [sh,sm]=(t.hora_saida||'17:00').split(':').map(Number);
+        const saidaMin=sh*60+sm;
         const cursorMin=d.getHours()*60+d.getMinutes();
-
-        let hhDispHoje;
-        if(cursorMin<=entMin){
-          // Cursor antes ou na entrada: dia completo
-          hhDispHoje=hhDia;
-        } else if(cursorMin>=SAIDA_MIN){
-          // Cursor depois da saída: nada hoje
-          d=new Date(d); d.setDate(d.getDate()+1);
-          const e=entradaEquipeDia(equipe,d)||420;
-          d.setHours(Math.floor(e/60),e%60,0,0);
-          continue;
-        } else {
-          // Cursor dentro do turno: fração proporcional
-          const fracaoRestante=(SAIDA_MIN-cursorMin)/(SAIDA_MIN-entMin);
-          hhDispHoje=hhDia*fracaoRestante;
+        // Pular almoço 12:00-13:00
+        let dispMin=saidaMin-cursorMin;
+        if(cursorMin<720&&saidaMin>780) dispMin-=60; // subtrai 1h de almoço
+        else if(cursorMin>=720&&cursorMin<780) {
+          d.setHours(13,0,0,0); // pula pro fim do almoço
+          dispMin=saidaMin-780;
+          if(dispMin<=0){d.setDate(d.getDate()+1);const ent=entradaEquipeDia(equipe,d);if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);continue;}
         }
-
-        if(hhRestante<=hhDispHoje){
-          // Termina hoje — hora de fim proporcional dentro do turno
-          const fracaoUsada=hhRestante/hhDia;
-          const duracaoTurnoMin=SAIDA_MIN-entMin;
-          const inicioEfetivoMin=Math.max(cursorMin,entMin);
-          const fimMin=inicioEfetivoMin+Math.round(fracaoUsada*duracaoTurnoMin);
-          d=new Date(d);
+        const dispHH=Math.max(0,dispMin/60);
+        if(dispHH<=0){
+          d.setDate(d.getDate()+1);
+          const ent=entradaEquipeDia(equipe,d);
+          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
+          continue;
+        }
+        if(hhRestante<=dispHH) {
+          // Termina hoje
+          let fimMin=cursorMin+Math.round(hhRestante*60);
+          // Adicionar almoço se atravessa
+          if(cursorMin<720&&fimMin>720) fimMin+=60;
           d.setHours(Math.floor(fimMin/60),fimMin%60,0,0);
           hhRestante=0;
         } else {
-          // Consome dia inteiro
-          hhRestante-=hhDispHoje;
-          d=new Date(d); d.setDate(d.getDate()+1);
-          const e=entradaEquipeDia(equipe,d)||420;
-          d.setHours(Math.floor(e/60),e%60,0,0);
+          hhRestante-=dispHH;
+          d.setDate(d.getDate()+1);
+          const ent=entradaEquipeDia(equipe,d);
+          if(ent!==null)d.setHours(Math.floor(ent/60),ent%60,0,0);
         }
       }
 
       result[item.id].fimCalc=new Date(d);
       cursorDt=new Date(d);
+      // Próximo começa no início do próximo dia útil se fim foi no final do dia
     }
     return result;
   }
 
-
-
   /* ── Tipo de OS ── */
   function tipoOS(item) {
     if(item.tipo==='mcu') return 'MCU';
-    if(item.tipo==='rep') return 'REP';
     // Verificar se está na prog da semana atual
     const naProgAtual=_progSem.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
     if(naProgAtual) return 'PRG';
     // Verificar se estava na prog da semana anterior
     const naProgAnt=_progAnt.some(p=>p.os===item.os&&(p.cod_servico||'')===(item.cod_servico||''));
     if(naProgAnt) return 'REP';
-    return item.tipo==='programado'||item.tipo==='fora_prog'?'NPG':'NPG';
+    return item.tipo==='programado'?'PRG':'NPG';
   }
 
   function badgeTipo(tipo) {
@@ -332,62 +291,30 @@ window.Modulos.cal_acomp = (() => {
 
     const {data:colabs}=await db.from('apt_colaboradores').select('*').eq('modalidade','CAL');
     _colabs=colabs||[];
+    const {data:turnos}=await db.from('apt_turnos').select('*');
+    const {data:escalas}=await db.from('apt_escalas').select('*');
+    _turnos={}; (turnos||[]).forEach(t=>{if(t.id)_turnos[t.id]=t; if(t.nome)_turnos[t.nome]=t;});
+    _escalas={}; (escalas||[]).forEach(e=>{if(e.id)_escalas[e.id]=e; if(e.nome)_escalas[e.nome]=e;});
 
-    // Turnos — tolerante a falha, fallback embutido
-    _turnos={};
-    try {
-      const {data:turnos}=await db.from('apt_turnos').select('*');
-      (turnos||[]).forEach(t=>{
-        if(t.id)   _turnos[t.id]=t;
-        if(t.nome) _turnos[t.nome]=t;
-      });
-    } catch(e){ console.warn('apt_turnos indisponível'); }
-
-    // Escalas — tolerante a falha, fallback embutido
-    _escalas={};
-    try {
-      const {data:escalas}=await db.from('apt_escalas').select('*');
-      (escalas||[]).forEach(e=>{
-        if(e.id)   _escalas[e.id]=e;
-        if(e.nome) _escalas[e.nome]=e;
-      });
-    } catch(e){ console.warn('apt_escalas indisponível'); }
-
-    // Férias e justificativas — tolerante a falha
-    const ini2=isoDate(iniSem(_sem-1));
+    const ini2=isoDate(iniSem(_sem-1)); // 2 semanas atrás para folgas
     const fim2=isoDate(fimSem(_sem+1));
-    try {
-      const {data:ferias}=await db.from('apt_ferias').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-      _ferias=ferias||[];
-    } catch(e){ console.warn('apt_ferias não encontrada'); _ferias=[]; }
-    try {
-      const {data:just}=await db.from('apt_justificativas').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
-      _justific=just||[];
-    } catch(e){ console.warn('apt_justificativas não encontrada'); _justific=[]; }
+    const {data:ferias}=await db.from('apt_ferias').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
+    const {data:just}=await db.from('apt_justificativas').select('*').lte('data_inicio',fim2).gte('data_fim',ini2);
+    _ferias=ferias||[]; _justific=just||[];
 
     const {data:eqs}=await db.from('cal_equipes').select('*').eq('ativo',true);
     const {data:mbs}=await db.from('cal_equipe_membros').select('*');
     _equipes=(eqs||[]).map(e=>({...e,he_ativo:e.he_ativo||false,membros:(mbs||[]).filter(m=>m.equipe_id===e.id).map(m=>({chapa:m.chapa,nome:m.nome}))}));
 
-    try {
-      const {data:fila}=await db.from('cal_fila').select('*').eq('semana',_sem).eq('ano',ano).order('ordem',{ascending:true});
-      _fila={};
-      (fila||[]).forEach(item=>{if(!_fila[item.equipe_id])_fila[item.equipe_id]=[];_fila[item.equipe_id].push(item);});
-    } catch(e){ console.warn('cal_fila:',e); _fila={}; }
+    const {data:fila}=await db.from('cal_fila').select('*').eq('semana',_sem).eq('ano',ano).order('ordem',{ascending:true});
+    _fila={};
+    (fila||[]).forEach(item=>{if(!_fila[item.equipe_id])_fila[item.equipe_id]=[];_fila[item.equipe_id].push(item);});
 
-    try {
-      const {data:prog}=await db.from('programacao_semanal').select('*').eq('semana',_sem).eq('ano',ano).like('equipe','CAL%');
-      _progSem=prog||[];
-      const anoAnt=iniSem(_sem-1).getFullYear();
-      const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
-      _progAnt=progAnt||[];
-    } catch(e){ console.warn('prog_semanal:',e); _progSem=[]; _progAnt=[]; }
-    // Pré-calcular folgas de todos os colaboradores para o range relevante
-    _folgasCache={};
-    const rangeIni=iniSem(_sem-1), rangeFim=fimSem(_sem+4);
-    for(const col of _colabs){
-      _folgasCache[col.cracha]=projetarFolgas(col,rangeIni,rangeFim);
-    }
+    const {data:prog}=await db.from('programacao_semanal').select('*').eq('semana',_sem).eq('ano',ano).like('equipe','CAL%');
+    _progSem=prog||[];
+    const anoAnt=iniSem(_sem-1).getFullYear();
+    const {data:progAnt}=await db.from('programacao_semanal').select('*').eq('semana',_sem-1).eq('ano',anoAnt).like('equipe','CAL%');
+    _progAnt=progAnt||[];
   }
 
   async function salvarOrdem(equipeId) {
@@ -439,6 +366,7 @@ window.Modulos.cal_acomp = (() => {
     const p       = prev[item.id];
     const inicioDt= isExec||isPause ? item.iniciado_em : (p?p.inicioCalc:null);
     const fimDt   = isEnc ? item.encerrado_em : (p?p.fimCalc:null);
+    const aberto  = _itemAberto===item.id;
 
     let rowCls='cd-svc-row';
     if(isExec)  rowCls+=' exec';
@@ -447,75 +375,56 @@ window.Modulos.cal_acomp = (() => {
     if(isInter) rowCls+=' interrompido';
     if(semPassada()) rowCls+=' sempassada';
 
-    // Setas de posição
+    // Setas de posição — só para ativos não encerrados
     const podeMover = !isEnc && !isExec;
-    const posBtn = podeMover
-      ? `<div class="cd-pos">
-          <button class="cd-pos-btn" data-action="mover-cima" data-id="${item.id}" data-eq="${equipeId}" ${pos===0?'disabled':''}>▲</button>
-          <button class="cd-pos-btn" data-action="mover-baixo" data-id="${item.id}" data-eq="${equipeId}" ${pos===total-1?'disabled':''}>▼</button>
-        </div>`
-      : `<div class="cd-pos-empty"></div>`;
+    const posBtn = podeMover ? `<div class="cd-pos">
+      <button class="cd-pos-btn" data-action="mover-cima" data-id="${item.id}" data-eq="${equipeId}" ${pos===0?'disabled':''}title="Subir">▲</button>
+      <button class="cd-pos-btn" data-action="mover-baixo" data-id="${item.id}" data-eq="${equipeId}" ${pos===total-1?'disabled':''}title="Descer">▼</button>
+    </div>` : `<div class="cd-pos cd-pos-empty"></div>`;
 
     // Datas
     const dtInicio = htmlDtHora(inicioDt, isExec||isPause?'exec':'inicio');
     const dtFim    = htmlDtHora(fimDt, 'fim');
 
-    // Ações compactas — sempre visíveis
+    // Ações
     let acoes='';
     if(isExec) {
-      acoes=`
-        <button class="cd-ia green" data-action="encerrar" data-id="${item.id}" data-eq="${equipeId}" title="Encerrar"><i class="ti ti-check"></i></button>
-        <button class="cd-ia amber" data-action="pausar" data-id="${item.id}" data-eq="${equipeId}" title="Pausar"><i class="ti ti-player-pause"></i></button>
-        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
-        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>`;
+      acoes=`<button class="cd-act green" data-action="encerrar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-check"></i> Encerrar</button>
+        <button class="cd-act amber" data-action="pausar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-pause"></i> Pausar</button>
+        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
+        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
     } else if(isPause) {
-      acoes=`
-        <button class="cd-ia green" data-action="retomar" data-id="${item.id}" data-eq="${equipeId}" title="Retomar"><i class="ti ti-player-play"></i></button>
-        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
-        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>`;
+      acoes=`<button class="cd-act green" data-action="retomar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Retomar</button>
+        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
+        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>`;
     } else if(isEnc) {
-      acoes=`
-        <button class="cd-ia blue" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}" title="Reabrir"><i class="ti ti-rotate-clockwise"></i></button>`;
+      if(semPassada()) acoes=`<button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>`;
     } else if(isInter) {
-      acoes=`
-        <button class="cd-ia green" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}" title="Reabrir"><i class="ti ti-rotate-clockwise"></i></button>
-        <button class="cd-ia ghost" data-action="remover" data-id="${item.id}" title="Remover"><i class="ti ti-x"></i></button>`;
+      acoes=`<button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
+        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
     } else {
-      acoes=`
-        <button class="cd-ia green" data-action="iniciar" data-id="${item.id}" data-eq="${equipeId}" title="Iniciar"><i class="ti ti-player-play"></i></button>
-        <button class="cd-ia red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}" title="Interromper"><i class="ti ti-ban"></i></button>
-        <button class="cd-ia blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}" title="Mover equipe"><i class="ti ti-arrows-transfer-right"></i></button>
-        <button class="cd-ia ghost" data-action="remover" data-id="${item.id}" title="Remover"><i class="ti ti-x"></i></button>`;
+      acoes=`<button class="cd-act green" data-action="iniciar" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-player-play"></i> Iniciar</button>
+        <button class="cd-act red" data-action="interromper" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-ban"></i> Interromper</button>
+        <button class="cd-act blue" data-action="mover-equipe" data-id="${item.id}" data-eq="${equipeId}"><i class="ti ti-arrows-transfer-right"></i> Mover equipe</button>
+        <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>`;
     }
 
-    // Badge status inline
-    let statusBadge='';
-    if(isExec)  statusBadge='<span class="cd-st-badge exec"><span class="cd-exec-dot"></span>Em exec.</span>';
-    if(isPause) statusBadge='<span class="cd-st-badge pause">⏸ Pausado</span>';
-    if(isInter) statusBadge='<span class="cd-st-badge inter">⚠ '+( item.obs||'Interrompido')+'</span>';
-
     return `<div class="${rowCls}" data-id="${item.id}">
-      <div class="cd-svc-row-inner">
+      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
         ${posBtn}
         <div class="cd-svc-body">
-          ${statusBadge}
-          <div class="cd-svc-line1">
-            <span class="cd-svc-os">${item.os||'S/N'}</span>
-            <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
-            ${badgeTipo(tipo)}
-          </div>
-          <div class="cd-svc-line2">
-            <div class="cd-svc-datas-inline">
-              ${dtInicio}
-              ${dtFim}
-            </div>
-            <div class="cd-ia-row">${acoes}</div>
-          </div>
+          <span class="cd-svc-os">${item.os||'S/N'}</span>
+          <span class="cd-svc-desc">${item.desc_servico||'—'}</span>
+          ${badgeTipo(tipo)}
+        </div>
+        <div class="cd-svc-datas">
+          ${dtInicio}
+          ${dtFim}
         </div>
       </div>
+      ${aberto&&acoes?`<div class="cd-svc-acoes">${acoes}</div>`:''}
     </div>`;
   }
-
 
   /* ── Fila de uma equipe ── */
   function htmlFila(equipe) {
@@ -538,7 +447,7 @@ window.Modulos.cal_acomp = (() => {
     const estouro=hhAloc>hhDisp;
     const prev=prevConclusaoEquipe(equipe);
     const prevStr=prev?`${String(prev.getDate()).padStart(2,'0')}/${String(prev.getMonth()+1).padStart(2,'0')}`:'—';
-    const aberto=String(_itemAberto)===String(equipe.id);
+    const aberto=_itemAberto===`eq-${equipe.id}`;
 
     const hhCls=estouro?'over':hhAloc>hhDisp*0.85?'warn':'ok';
     const membros=(equipe.membros||[]).map(m=>`<span class="cd-membro">${(m.nome||m.chapa||'').split(' ')[0]}</span>`).join('');
@@ -552,7 +461,7 @@ window.Modulos.cal_acomp = (() => {
         <div class="cd-board-meta">
           <span class="cd-board-hh ${hhCls}">${hhAloc.toFixed(0)}h / ${hhDisp.toFixed(0)}h</span>
           <span class="cd-board-prev"><i class="ti ti-calendar-due"></i> ${prevStr}</span>
-          <button class="cd-cfg-btn" data-action="config-equipe" data-eq="${equipe.id}" onclick="event.stopPropagation()"><i class="ti ti-settings"></i></button>
+          <button class="cd-cfg-btn" data-action="config-equipe" data-eq="${equipe.id}"><i class="ti ti-settings"></i></button>
           <i class="ti ti-chevron-down cd-board-chev${aberto?' rot':''}"></i>
         </div>
       </div>
@@ -571,9 +480,9 @@ window.Modulos.cal_acomp = (() => {
       }
     }
     if(!items.length) return '';
-    const aberto=String(_itemAberto)==='grupo-inter';
+    const aberto=_itemAberto==='grupo-inter';
     const rows=items.map(item=>`<div class="cd-svc-row interrompido">
-      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
+      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
         <div class="cd-svc-body">
           <span class="cd-svc-os">${item.os||'S/N'}</span>
@@ -583,10 +492,10 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas"><span class="cd-dt-motivo">${item.obs||'—'}</span></div>
       </div>
-      <div class="cd-svc-acoes-inline">
-        <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Retomar</button>
+      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
+        <button class="cd-act green" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
         <button class="cd-act ghost" data-action="remover" data-id="${item.id}"><i class="ti ti-x"></i> Remover</button>
-      </div>
+      </div>`:''}
     </div>`).join('');
 
     return `<div class="cd-board cd-board-inter">
@@ -612,9 +521,9 @@ window.Modulos.cal_acomp = (() => {
       }
     }
     if(!items.length) return '';
-    const aberto=String(_itemAberto)==='grupo-enc';
+    const aberto=_itemAberto==='grupo-enc';
     const rows=items.map(item=>`<div class="cd-svc-row encerrado">
-      <div class="cd-svc-main cd-toggle-item" data-id="${item.id}">
+      <div class="cd-svc-main" data-action="toggle-item" data-id="${item.id}">
         <div class="cd-pos cd-pos-empty"></div>
         <div class="cd-svc-body">
           <span class="cd-svc-os">${item.os||'S/N'}</span>
@@ -624,9 +533,9 @@ window.Modulos.cal_acomp = (() => {
         </div>
         <div class="cd-svc-datas">${htmlDtHora(item.encerrado_em,'fim')}</div>
       </div>
-      <div class="cd-svc-acoes-inline">
-        <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Retomar</button>
-      </div>
+      ${_itemAberto===item.id?`<div class="cd-svc-acoes">
+        <button class="cd-act blue" data-action="reabrir" data-id="${item.id}" data-eq="${item.equipeId}"><i class="ti ti-rotate-clockwise"></i> Reabrir</button>
+      </div>`:''}
     </div>`).join('');
 
     return `<div class="cd-board cd-board-enc">
@@ -711,7 +620,7 @@ window.Modulos.cal_acomp = (() => {
       }
     }
 
-    if(!pontos.length) return ''; // Sem pontos no momento
+    if(!pontos.length) return '';
 
     const titulo=semPassada()?'OS Pendentes de Execução':'Pontos de Atenção';
     const rows=pontos.map(p=>`<div class="cd-ponto">
@@ -795,16 +704,10 @@ window.Modulos.cal_acomp = (() => {
         const {action,id,eq}=btn.dataset;
         const iid=id?parseInt(id):null; const ieq=eq?parseInt(eq):null;
         switch(action){
-          case 'toggle-eq': {
-            // Só fechar/abrir o board se o clique NÃO veio de dentro do cd-board-fila
-            const dentroDaFila = e.target.closest('.cd-board-fila');
-            if(!dentroDaFila) {
-              _itemAberto=String(_itemAberto)===String(eq)?null:eq;
-              renderizar();
-            }
-            break;
-          }
-
+          case 'toggle-eq':
+            _itemAberto=_itemAberto===eq?null:eq; renderizar(); break;
+          case 'toggle-item':
+            _itemAberto=_itemAberto===iid?null:iid; renderizar(); break;
           case 'iniciar':       acaoIniciar(iid); break;
           case 'encerrar':      acaoEncerrar(iid); break;
           case 'pausar':        acaoPausar(iid,ieq); break;
@@ -826,15 +729,17 @@ window.Modulos.cal_acomp = (() => {
      AÇÕES
   ══════════════════════════════════════ */
   async function acaoIniciar(id) {
-    const dh=await modalHora('Data e hora de início',horaAtual()); if(!dh)return;
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dtHoraToISO(dh)});
+    const hora=await modalHora('Hora de início',horaAtual()); if(!hora)return;
+    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
+    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
     _itemAberto=null; await recarregarDados();
   }
 
   async function acaoEncerrar(id) {
-    const dh=await modalHora('Data e hora de encerramento',horaAtual()); if(!dh)return;
-    const isoEnc=dtHoraToISO(dh);
-    await atualizarStatus(id,'encerrado',{encerrado_em:isoEnc});
+    const hora=await modalHora('Hora de encerramento',horaAtual()); if(!hora)return;
+    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
+    await atualizarStatus(id,'encerrado',{encerrado_em:dt.toISOString()});
+    // Perguntar se inicia o próximo
     let equipeId=null;
     for(const eqId in _fila)if(_fila[eqId].some(i=>parseInt(i.id)===id)){equipeId=parseInt(eqId);break;}
     if(equipeId){
@@ -842,7 +747,8 @@ window.Modulos.cal_acomp = (() => {
       if(prox){
         const sim=await modalConfirm(`Iniciar próximo serviço?\n${prox.os||'S/N'} · ${prox.desc_servico||''}`);
         if(sim){
-          await atualizarStatus(prox.id,'em_execucao',{iniciado_em:isoEnc});
+          const dt2=new Date(); dt2.setHours(dt.getHours(),dt.getMinutes(),0,0);
+          await atualizarStatus(prox.id,'em_execucao',{iniciado_em:dt2.toISOString()});
         }
       }
     }
@@ -850,7 +756,7 @@ window.Modulos.cal_acomp = (() => {
   }
 
   async function acaoPausar(id,equipeId) {
-    await atualizarStatus(id,'pausado',{});
+    await atualizarStatus(id,'pausado');
     // Mover para posição 2 (logo após o em execução se houver, ou posição 1)
     const fila=_fila[equipeId]||[];
     const idx=fila.findIndex(i=>parseInt(i.id)===id);
@@ -864,8 +770,9 @@ window.Modulos.cal_acomp = (() => {
   }
 
   async function acaoRetomar(id) {
-    const dh=await modalHora('Data e hora de retomada',horaAtual()); if(!dh)return;
-    await atualizarStatus(id,'em_execucao',{iniciado_em:dtHoraToISO(dh)});
+    const hora=await modalHora('Hora de retomada',horaAtual()); if(!hora)return;
+    const dt=new Date(); const [h,m]=hora.split(':').map(Number); dt.setHours(h,m,0,0);
+    await atualizarStatus(id,'em_execucao',{iniciado_em:dt.toISOString()});
     _itemAberto=null; await recarregarDados();
   }
 
@@ -883,7 +790,7 @@ window.Modulos.cal_acomp = (() => {
     // Selecionar equipe destino
     const opcoes=_equipes.map(e=>e.nome);
     if(!opcoes.length){alert('Nenhuma equipe ativa.');return;}
-    const escolha=await modalOpcoes('Retomar em qual equipe?',opcoes); if(!escolha)return;
+    const escolha=await modalOpcoes('Selecionar equipe destino',opcoes); if(!escolha)return;
     const novaEq=_equipes.find(e=>e.nome===escolha); if(!novaEq)return;
     const db=getDB();
     const nova_ordem=(_fila[novaEq.id]||[]).length+1;
@@ -924,47 +831,22 @@ window.Modulos.cal_acomp = (() => {
   /* ══════════════════════════════════════
      MODAIS
   ══════════════════════════════════════ */
-  function modalHora(titulo, padraoHora) {
-    // Retorna objeto {data, hora} ou null
+  function modalHora(titulo,padrao) {
     return new Promise(resolve=>{
-      const agora = new Date();
-      const dataHoje = agora.getFullYear()+'-'+String(agora.getMonth()+1).padStart(2,'0')+'-'+String(agora.getDate()).padStart(2,'0');
       const o=document.createElement('div'); o.className='cd-overlay';
-      o.innerHTML=`<div class="cd-modal" style="width:300px">
+      o.innerHTML=`<div class="cd-modal" style="width:260px">
         <div class="cd-modal-titulo">${titulo}</div>
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div>
-            <label class="cd-form-lbl">Data</label>
-            <input type="date" id="mh-data" class="cd-form-input" style="height:40px;font-size:14px" value="${dataHoje}">
-          </div>
-          <div>
-            <label class="cd-form-lbl">Hora</label>
-            <input type="time" id="mh-hora" class="cd-form-input" style="height:40px;font-size:18px;text-align:center" value="${padraoHora}">
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:14px">
+        <input type="time" id="mh" class="cd-form-input" style="font-size:22px;height:48px;text-align:center" value="${padrao}">
+        <div style="display:flex;gap:8px;margin-top:12px">
           <button class="cd-modal-cancel" style="flex:1">Cancelar</button>
           <button class="cd-btn-primary" id="mh-ok" style="flex:2"><i class="ti ti-check"></i> Confirmar</button>
         </div>
       </div>`;
-      o.querySelector('#mh-ok').addEventListener('click',()=>{
-        const data=o.querySelector('#mh-data').value;
-        const hora=o.querySelector('#mh-hora').value;
-        o.remove();
-        resolve((data&&hora)?{data,hora}:null);
-      });
+      o.querySelector('#mh-ok').addEventListener('click',()=>{const v=o.querySelector('#mh').value;o.remove();resolve(v||null);});
       o.querySelector('.cd-modal-cancel').addEventListener('click',()=>{o.remove();resolve(null);});
       o.addEventListener('click',e=>{if(e.target===o){o.remove();resolve(null);}});
-      document.body.appendChild(o);
-      o.querySelector('#mh-hora').focus();
+      document.body.appendChild(o); o.querySelector('#mh').focus();
     });
-  }
-
-  function dtHoraToISO(dh) {
-    if(!dh) return null;
-    // Salvar sem timezone — formato local sem conversão UTC
-    // Evita problema de +3h ao exibir em browsers configurados como UTC
-    return dh.data + 'T' + dh.hora + ':00';
   }
 
   function modalOpcoes(titulo,opcoes) {
@@ -1011,7 +893,7 @@ window.Modulos.cal_acomp = (() => {
         </select>
         <select class="cd-form-input cd-form-sel" id="mos-cart">
           <option value="">Todas as carteiras</option>
-          ${[...new Set([..._progSem.map(p=>p.equipe),..._progAnt.map(p=>p.equipe)].filter(e=>e&&e.startsWith('CAL')))].sort().map(eq=>`<option value="${eq}">${eq}</option>`).join('')}
+          ${['CAL1','CAL2','CAL3','CAL4'].map(c=>`<option value="${c}">${c}</option>`).join('')}
         </select>
         <input type="text" id="mos-busca" class="cd-form-input" placeholder="Pesquisar OS ou descrição...">
         <button class="cd-btn-primary" id="mos-buscar" style="width:100%"><i class="ti ti-search"></i> Buscar</button>
@@ -1019,7 +901,7 @@ window.Modulos.cal_acomp = (() => {
       <div id="mos-resultados" style="margin-top:10px;max-height:280px;overflow-y:auto"></div>
       <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:10px">
         <div class="cd-modal-titulo" style="font-size:11px">Ou inserir sem número de OS:</div>
-        <input type="text" id="mos-desc-manual" class="cd-form-input" placeholder="Descrição do serviço" style="margin-top:6px;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+        <input type="text" id="mos-desc-manual" class="cd-form-input" placeholder="Descrição do serviço" style="margin-top:6px">
         <input type="number" id="mos-hh-manual" class="cd-form-input" placeholder="HH estimado" style="margin-top:6px">
         <div class="cd-tipo-opts" style="margin-top:6px">
           <button class="cd-tipo-btn active" data-tipo="programado">Prog.</button>
@@ -1043,72 +925,29 @@ window.Modulos.cal_acomp = (() => {
       const cart=o.querySelector('#mos-cart').value;
       const busca=o.querySelector('#mos-busca').value.trim();
       const ano=iniSem(sem).getFullYear();
+
+      let q=db.from('ordens_servico').select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe').limit(30);
+      if(cart) q=q.eq('equipe',cart);
+      if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
+      else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
+      if(busca) {
+        const num=busca.replace(/^0+/,'');
+        if(/^\d+$/.test(num)) q=q.eq('os',num);
+        else q=q.ilike('desc_servico','%'+busca+'%');
+      }
+
+      const {data}=await q;
       const res=o.querySelector('#mos-resultados');
-      res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Buscando...</div>';
-
-      let dados=[];
-      const numBusca = busca.replace(/^0+/,'');
-      const ehNumero = busca && /^[0-9]+$/.test(numBusca);
-
-      if(ehNumero) {
-        // Busca por número de OS — geral em todas as CAL, ignora filtros de semana/carteira
-        const {data}=await db.from('ordens_servico')
-          .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
-          .like('equipe','CAL%').eq('os',numBusca)
-          .not('status_os','ilike','%encerr%').limit(20);
-        dados=data||[];
-      } else if(busca) {
-        // Busca por texto — geral em todas as CAL, ignora filtros de semana/carteira
-        let q=db.from('ordens_servico')
-          .select('os,cod_servico,desc_servico,hh_prev_servico,tipo_atividade,equipe')
-          .like('equipe','CAL%').ilike('desc_servico','%'+busca+'%')
-          .not('status_os','ilike','%encerr%').limit(30);
-        if(tipo==='MCU') q=q.eq('tipo_atividade','MCU');
-        else if(tipo==='prog') q=q.neq('tipo_atividade','MCU');
-        const {data}=await q;
-        dados=data||[];
-      } else {
-        // Sem texto — usa programação da semana+carteira selecionada
-        let q=db.from('programacao_semanal')
-          .select('os,cod_servico,desc_servico,hh_previsto,equipe')
-          .eq('semana',sem).eq('ano',ano).like('equipe','CAL%');
-        if(cart) q=q.eq('equipe',cart);
-        const {data:progData}=await q.limit(100);
-        dados=(progData||[]).map(p=>({
-          os:p.os, cod_servico:p.cod_servico,
-          desc_servico:p.desc_servico,
-          hh_prev_servico:p.hh_previsto,
-          tipo_atividade:'PRG', equipe:p.equipe
-        }));
-      }
-
-      if(!dados.length){
-        res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Nenhuma OS encontrada</div>';
-        return;
-      }
-
-      res.innerHTML=dados.map(r=>`<div class="cd-os-result"
-        data-os="${r.os||''}"
-        data-cod="${r.cod_servico||''}"
-        data-desc="${(r.desc_servico||'').replace(/"/g,'&quot;')}"
-        data-hh="${r.hh_prev_servico||0}"
-        data-tipo="${r.tipo_atividade==='MCU'?'mcu':'programado'}"
-        data-semana="${sem}">
-        <span class="cd-os-result-num">${r.os||'—'}</span>
+      if(!data||!data.length){res.innerHTML='<div style="font-size:11px;color:#9ca3af;padding:8px">Nenhuma OS encontrada</div>';return;}
+      res.innerHTML=data.map(r=>`<div class="cd-os-result" data-os="${r.os}" data-cod="${r.cod_servico||''}" data-desc="${(r.desc_servico||'').replace(/"/g,'&quot;')}" data-hh="${r.hh_prev_servico||0}" data-tipo="${r.tipo_atividade==='MCU'?'mcu':'programado'}">
+        <span class="cd-os-result-num">${r.os}</span>
         <span class="cd-os-result-desc">${r.desc_servico||'—'}</span>
         <span class="cd-os-result-hh">${r.hh_prev_servico||0}h</span>
       </div>`).join('');
-
       res.querySelectorAll('.cd-os-result').forEach(row=>{
         row.addEventListener('click',async()=>{
-          const rds=row.dataset;
-          const semBuscada=parseInt(rds.semana);
-          const tipoFinal=semBuscada<_sem?'rep':rds.tipo;
-          await inserirNaFila(equipeId,{
-            os:rds.os||null, cod_servico:rds.cod||null,
-            desc_servico:rds.desc, hh_previsto:parseFloat(rds.hh)||null,
-            tipo:tipoFinal, status:'pendente', vinculado:!!rds.os
-          },'fim');
+          const {os,cod,desc,hh,tipo:t}=row.dataset;
+          await inserirNaFila(equipeId,{os,cod_servico:cod||null,desc_servico:desc,hh_previsto:parseFloat(hh)||null,tipo:t,status:'pendente',vinculado:true},'fim');
           o.remove(); await recarregarDados();
         });
       });
@@ -1257,43 +1096,23 @@ window.Modulos.cal_acomp = (() => {
 .cd-svc-row.encerrado{background:#f0fdf4;opacity:.65;}
 .cd-svc-row.interrompido{background:#fef9ee;}
 .cd-svc-row.sempassada{filter:grayscale(.4);}
-.cd-svc-row-inner{display:flex;align-items:stretch;}
-.cd-svc-row-inner{display:flex;align-items:stretch;}
-
-.cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 4px;justify-content:center;flex-shrink:0;border-right:1px solid var(--border);background:#fafafa;min-width:26px;}
-.cd-pos-empty{width:26px;min-width:26px;background:#fafafa;border-right:1px solid var(--border);}
-.cd-pos-btn{width:18px;height:15px;border:1px solid #e5e7eb;border-radius:2px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;padding:0;line-height:1;}
-.cd-pos-btn:not(:disabled):hover{background:#374151;color:#fff;border-color:#374151;}
-.cd-pos-btn:disabled{opacity:.2;cursor:not-allowed;}
-.cd-btn-acoes{height:32px;width:32px;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#9ca3af;flex-shrink:0;border-left:1px solid var(--border);}
-.cd-btn-acoes:hover{background:#f3f4f6;color:var(--dark1,#1e1e1e);}
-.cd-svc-body{display:flex;flex-direction:column;gap:3px;padding:7px 10px;flex:1;min-width:0;}
-.cd-svc-line1{display:flex;align-items:center;gap:6px;}
-.cd-svc-line2{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
-.cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:54px;font-variant-numeric:tabular-nums;}
-.cd-svc-desc{font-size:10px;color:#6b7280;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cd-svc-main{display:flex;align-items:stretch;cursor:pointer;}
+.cd-svc-main:hover{background:rgba(0,0,0,.02);}
+.cd-pos{display:flex;flex-direction:column;gap:1px;padding:0 6px;border-right:1px solid var(--border);justify-content:center;background:#fafafa;flex-shrink:0;}
+.cd-pos-empty{width:32px;background:#fafafa;border-right:1px solid var(--border);}
+.cd-pos-btn{width:18px;height:13px;border:1px solid var(--border);border-radius:2px;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:8px;color:#9ca3af;padding:0;}
+.cd-pos-btn:not(:disabled):hover{background:var(--dark1,#1e1e1e);color:#fff;border-color:var(--dark1,#1e1e1e);}
+.cd-pos-btn:disabled{opacity:.3;cursor:not-allowed;}
+.cd-svc-body{display:flex;align-items:center;gap:7px;padding:8px 10px;flex:1;min-width:0;}
+.cd-svc-os{font-size:9px;font-weight:700;color:#374151;flex-shrink:0;width:58px;font-variant-numeric:tabular-nums;}
+.cd-svc-desc{font-size:10px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cd-badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:8px;font-weight:700;flex-shrink:0;}
 .cd-eq-tag{font-size:8px;padding:1px 5px;border-radius:3px;background:#f3f4f6;color:#9ca3af;flex-shrink:0;}
-.cd-svc-datas-inline{display:flex;gap:8px;align-items:center;flex-shrink:0;}
+.cd-svc-datas{display:flex;flex-direction:column;gap:2px;align-items:flex-end;padding:6px 10px;flex-shrink:0;min-width:120px;}
 .cd-dt{font-size:9px;color:#374151;white-space:nowrap;font-variant-numeric:tabular-nums;}
 .cd-dt-vazio{font-size:9px;color:#d1d5db;}
-.cd-dt-motivo{font-size:8px;color:var(--amber);}
-/* Badges de status inline */
-.cd-st-badge{font-size:8px;font-weight:600;display:flex;align-items:center;gap:3px;margin-bottom:1px;}
-.cd-st-badge.exec{color:#0891b2;}
-.cd-st-badge.pause{color:var(--amber);}
-.cd-st-badge.inter{color:var(--amber);}
-.cd-exec-dot{width:5px;height:5px;border-radius:50%;background:#0891b2;animation:cd-pulse 1.5s infinite;}
-/* Botões de ação inline compactos */
-.cd-ia-row{display:flex;gap:3px;flex-shrink:0;}
-.cd-ia{width:28px;height:24px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;padding:0;flex-shrink:0;}
-.cd-ia i{font-size:13px;}
-.cd-ia.green{background:#dcfce7;border-color:#86efac;color:#16a34a;}
-.cd-ia.amber{background:#fef3c7;border-color:#fcd34d;color:#d97706;}
-.cd-ia.blue{background:#dbeafe;border-color:#93c5fd;color:#2563eb;}
-.cd-ia.red{background:#fee2e2;border-color:#fca5a5;color:#dc2626;}
-.cd-ia.ghost{background:transparent;border-color:var(--border);color:#9ca3af;}
-/* Compatibilidade — manter .cd-act para grupos */
+.cd-dt-motivo{font-size:8px;color:var(--amber);max-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cd-svc-acoes{display:flex;gap:4px;flex-wrap:wrap;padding:6px 10px 8px 36px;border-top:1px solid var(--border);background:#f9fafb;}
 .cd-act{height:24px;padding:0 8px;border:1px solid var(--border);border-radius:3px;background:var(--bg);font-family:var(--font);font-size:9px;font-weight:600;color:#374151;cursor:pointer;display:flex;align-items:center;gap:3px;white-space:nowrap;}
 .cd-act i{font-size:10px;}
 .cd-act.green{background:#dcfce7;border-color:#86efac;color:#16a34a;}
@@ -1304,7 +1123,6 @@ window.Modulos.cal_acomp = (() => {
 .cd-add-os{display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;font-size:10px;color:#9ca3af;border-top:1px dashed var(--border);}
 .cd-add-os:hover{background:#fffbeb;color:#1a1a1a;}
 .cd-add-os i{font-size:13px;}
-.cd-svc-acoes-inline{display:flex;gap:5px;padding:4px 10px 7px 10px;border-top:1px solid var(--border);background:#f9fafb;flex-wrap:wrap;}
 
 /* Pontos de atenção */
 .cd-pontos{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
@@ -1339,7 +1157,7 @@ window.Modulos.cal_acomp = (() => {
 .cd-os-result:hover{background:#fffbeb;}
 .cd-os-result:last-child{border-bottom:none;}
 .cd-os-result-num{font-weight:700;color:#374151;flex-shrink:0;width:70px;}
-.cd-os-result-desc{flex:1;color:#6b7280;white-space:normal;line-height:1.3;word-break:break-word;}
+.cd-os-result-desc{flex:1;color:#6b7280;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cd-os-result-hh{font-size:10px;color:#9ca3af;flex-shrink:0;}
 .cd-tipo-opts{display:flex;gap:4px;}
 .cd-tipo-btn{flex:1;height:28px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
@@ -1348,13 +1166,11 @@ window.Modulos.cal_acomp = (() => {
 /* Mobile */
 @media(max-width:600px){
   .cd-week-chip{display:none;}
-  .cd-svc-datas{min-width:90px;}
-  .cd-svc-os{width:46px;font-size:8px;}
-  .cd-svc-desc{white-space:normal;word-break:break-word;font-size:10px;}
+  .cd-svc-datas{min-width:100px;}
+  .cd-svc-os{width:48px;}
   .cd-resumo-body{flex-direction:column;}
   .cd-resumo-eq{border-right:none;border-bottom:1px solid var(--border);}
   .cd-resumo-eq:last-child{border-bottom:none;}
-  .cd-mod{padding-bottom:80px;}
 }
     `;
     document.head.appendChild(s);
@@ -1362,13 +1178,6 @@ window.Modulos.cal_acomp = (() => {
 
   async function init(container) {
     _container=container; injetarCSS();
-    // Expor toggle global para onclick inline
-    window._manToggleItem = function(iid) {
-      _itemAberto = String(_itemAberto)===String(iid) ? null : iid;
-      renderizar();
-    };
-
-
     _container.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:48px;color:#9ca3af;font-size:12px"><i class="ti ti-loader-2" style="font-size:18px;animation:cd-spin .8s linear infinite"></i> Carregando...</div>`;
     try { await carregarTudo(); renderizar(); }
     catch(e) {
