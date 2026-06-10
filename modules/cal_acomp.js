@@ -348,9 +348,13 @@ window.Modulos.cal_acomp = {
       if(progTodas.length){
         const osNumsProg=[...new Set(progTodas.map(p=>p.os))];
         const {data:osModalidade}=await db.from('ordens_servico')
-          .select('os,modalidade').in('os',osNumsProg.slice(0,500));
-        const osCAL=new Set((osModalidade||[]).filter(o=>o.modalidade==='CAL').map(o=>o.os));
-        s.programacao=progTodas.filter(p=>osCAL.has(p.os));
+          .select('os,modalidade,equipe').in('os',osNumsProg.slice(0,500));
+        const osCAL=new Set((osModalidade||[]).filter(o=>
+          o.modalidade==='CAL'||(o.modalidade===null&&o.equipe&&o.equipe.toUpperCase().includes('CAL'))
+        ).map(o=>o.os));
+        // OS na programação que não estão em ordens_servico (avulsas) — incluir também
+        const osNaoEncontradas=new Set(osNumsProg.filter(os=>!(osModalidade||[]).find(o=>o.os===os)));
+        s.programacao=progTodas.filter(p=>osCAL.has(p.os)||osNaoEncontradas.has(p.os));
       } else {
         s.programacao=[];
       }
@@ -379,7 +383,12 @@ window.Modulos.cal_acomp = {
           (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; });
           filaRows.forEach(f=>{
             if(!s.fila[f.equipe_id]) s.fila[f.equipe_id]=[];
-            f._os=osMap[f.os+'|'+f.cod_servico]||null;
+            f._os=osMap[f.os+'|'+f.cod_servico]||osMap[f.os+'|1']||osMap[f.os+'|null']||null;
+            // Fallback: usar dados da programacao_semanal se não tem dados em ordens_servico
+            if(!f._os){
+              const prog=s.programacao.find(p=>p.os===f.os&&(p.cod_servico||'1')===(f.cod_servico||'1'));
+              if(prog) f._os={os:f.os,cod_servico:f.cod_servico,desc_servico:prog.desc_servico,hh_prev_servico:prog.hh_previsto};
+            }
             s.fila[f.equipe_id].push(f);
           });
         }
@@ -857,7 +866,13 @@ window.Modulos.cal_acomp = {
         .in('os',osKeys);
       const osMap={};
       (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; });
-      filaRows.forEach(f=>{ f._os=osMap[f.os+'|'+f.cod_servico]||null; });
+      filaRows.forEach(f=>{
+        f._os=osMap[f.os+'|'+f.cod_servico]||osMap[f.os+'|1']||null;
+        if(!f._os){
+          const prog=s.programacao.find(p=>p.os===f.os&&(p.cod_servico||'1')===(f.cod_servico||'1'));
+          if(prog) f._os={os:f.os,cod_servico:f.cod_servico,desc_servico:prog.desc_servico,hh_prev_servico:prog.hh_previsto};
+        }
+      });
       s.fila[equipeId]=filaRows;
     } else {
       s.fila[equipeId]=[];
@@ -1173,9 +1188,20 @@ window.Modulos.cal_acomp = {
         }
 
         if(!inserts.length){ showToast('Nenhuma OS nova para adicionar','info'); return; }
-        const{error}=await db.from('cal_fila').insert(inserts);
-        if(error) throw error;
-        showToast(`${inserts.length} OS adicionada(s) à fila!`,'ok');
+
+        // Inserir uma a uma para tratar conflitos individualmente
+        let adicionadas=0, puladas=0;
+        for(const row of inserts){
+          const{error}=await db.from('cal_fila').insert(row);
+          if(error){
+            if(error.code==='23505') puladas++; // duplicate key — já existe
+            else throw error;
+          } else {
+            adicionadas++;
+          }
+        }
+        if(adicionadas) showToast(`${adicionadas} OS adicionada(s) à fila!${puladas?` (${puladas} já existiam)`:''}`, 'ok');
+        else showToast('Nenhuma OS foi adicionada — todas já estavam na fila.','info');
         this._fecharModal();
         await this._carregar();
       },`Adicionar`);
