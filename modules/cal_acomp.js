@@ -841,6 +841,90 @@ window.Modulos.cal_acomp = {
      ══════════════════════════════════════════════ */
   _filaItem(id){ return Object.values(this._s.fila).flat().find(f=>f.id===id); },
 
+  /* ══════════════════════════════════════════════
+     ATUALIZAÇÃO PARCIAL — sem recarregar tudo
+     ══════════════════════════════════════════════ */
+  async _atualizarParcial(equipeId){
+    const s=this._s;
+
+    // 1. Recarregar fila da equipe afetada do banco
+    const db=getDB();
+    const{data:filaRows}=await db.from('cal_fila').select('*').eq('equipe_id',equipeId).order('posicao');
+    if(filaRows?.length){
+      const osKeys=[...new Set(filaRows.map(f=>f.os))];
+      const{data:osRows}=await db.from('ordens_servico')
+        .select('os,cod_servico,desc_servico,desc_os,hh_prev_servico,tipo_atividade,status_os,equipamento,desc_equipamento')
+        .in('os',osKeys);
+      const osMap={};
+      (osRows||[]).forEach(o=>{ osMap[o.os+'|'+o.cod_servico]=o; });
+      filaRows.forEach(f=>{ f._os=osMap[f.os+'|'+f.cod_servico]||null; });
+      s.fila[equipeId]=filaRows;
+    } else {
+      s.fila[equipeId]=[];
+    }
+
+    // 2. Re-renderizar só os componentes afetados
+    this._renderKpis();
+    this._renderAndamento();
+    this._renderBoardEquipe(equipeId);
+    this._renderPontos();
+    this._renderGrupoInterrompidos();
+    this._renderGrupoEncerrados();
+    this._renderListaGeral();
+  },
+
+  /* ── Renderiza apenas um card de equipe (sem recriar toda a grid) ── */
+  _renderBoardEquipe(equipeId){
+    const s=this._s;
+    const eq=s.equipes.find(e=>e.id===equipeId); if(!eq) return;
+    const el=document.getElementById(`ca-board-${equipeId}`); if(!el) return;
+
+    const mems=s.membros[equipeId]||[];
+    const hhDisp=this._hhDispEquipe(equipeId);
+    const hhAloc=this._hhAlocadoEquipe(equipeId);
+    const pct=hhDisp>0?Math.min(1,hhAloc/hhDisp):0;
+    const corHH=pct>=1?'var(--red)':pct>=0.8?'var(--amber)':'var(--green)';
+    const dfim=this._projetarFila(equipeId);
+    const aberta=s.filaAberta===equipeId;
+    const nomesStr=mems.map(m=>(m.nome||'').split(' ')[0]).join(', ')||'Sem membros';
+    const filaEq=(s.fila[equipeId]||[]).filter(f=>f.status!=='interrompido'&&f.status!=='encerrado').sort((a,b)=>a.posicao-b.posicao);
+
+    el.innerHTML=`
+      <div class="ca-board-hdr" data-eq="${eq.id}">
+        <div class="ca-board-nome">
+          <span>${eq.nome}</span>
+          <div style="display:flex;gap:4px">
+            ${!s.modoLeitura?`<button class="ca-icon-btn ca-cfg-eq" data-eq="${eq.id}" title="Configurar equipe"><i class="ti ti-settings"></i></button>`:''}
+            <button class="ca-icon-btn ca-toggle-fila" data-eq="${eq.id}"><i class="ti ti-chevron-${aberta?'up':'down'}"></i></button>
+          </div>
+        </div>
+        <div class="ca-board-membros">${nomesStr}</div>
+        <div class="ca-board-meta">
+          <span class="ca-board-hh" style="color:${corHH}">${hhAloc.toFixed(1)}h / ${hhDisp.toFixed(1)}h</span>
+          <div class="ca-board-bar"><div class="ca-board-bar-fill" style="width:${Math.round(pct*100)}%;background:${corHH}"></div></div>
+        </div>
+        ${dfim?`<div class="ca-board-conclusao"><i class="ti ti-calendar-due" style="font-size:10px"></i> Conclusão prevista: ${this._diaSem(dfim)} ${this._fmtDM(dfim)}</div>`:''}
+      </div>
+      ${aberta?this._tplFila(eq,filaEq):''}`;
+
+    // Re-bind eventos deste card
+    el.querySelector('.ca-toggle-fila')?.addEventListener('click',e=>{
+      e.stopPropagation();
+      s.filaAberta=s.filaAberta===equipeId?null:equipeId;
+      this._renderBoardEquipe(equipeId);
+    });
+    el.querySelector('.ca-board-hdr')?.addEventListener('click',e=>{
+      if(e.target.closest('.ca-cfg-eq')||e.target.closest('.ca-toggle-fila')) return;
+      s.filaAberta=s.filaAberta===equipeId?null:equipeId;
+      this._renderBoardEquipe(equipeId);
+    });
+    el.querySelector('.ca-cfg-eq')?.addEventListener('click',e=>{
+      e.stopPropagation();
+      this._modalConfigEquipe(equipeId);
+    });
+    this._bindAcoesFila(el);
+  },
+
   async _acIniciar(id){
     const item=this._filaItem(id); if(!item) return;
     const now=this._hoje()+'T'+new Date().toTimeString().slice(0,5);
@@ -858,7 +942,7 @@ window.Modulos.cal_acomp = {
         if(error) throw error;
         showToast('OS iniciada!','ok');
         this._fecharModal();
-        await this._carregar();
+        await this._atualizarParcial(item.equipe_id);
       },'Iniciar');
   },
 
@@ -891,16 +975,17 @@ window.Modulos.cal_acomp = {
         }
         showToast('OS encerrada!','ok');
         this._fecharModal();
-        await this._carregar();
+        await this._atualizarParcial(item.equipe_id);
       },'Encerrar');
   },
 
   async _acPausar(id){
+    const item=this._filaItem(id); if(!item) return;
     const db=getDB();
     const{error}=await db.from('cal_fila').update({status:'pausado',dt_pausa:new Date().toISOString()}).eq('id',id);
     if(error){ showToast('Erro: '+error.message,'erro'); return; }
     showToast('OS pausada','ok');
-    await this._carregar();
+    await this._atualizarParcial(item.equipe_id);
   },
 
   async _acRetomar(id){
@@ -919,7 +1004,7 @@ window.Modulos.cal_acomp = {
         if(error) throw error;
         showToast('OS retomada!','ok');
         this._fecharModal();
-        await this._carregar();
+        await this._atualizarParcial(item.equipe_id);
       },'Retomar');
   },
 
@@ -941,7 +1026,7 @@ window.Modulos.cal_acomp = {
         if(error) throw error;
         showToast('OS interrompida','ok');
         this._fecharModal();
-        await this._carregar();
+        await this._atualizarParcial(item.equipe_id);
       },'Interromper');
   },
 
@@ -965,17 +1050,19 @@ window.Modulos.cal_acomp = {
         if(error) throw error;
         showToast('OS movida!','ok');
         this._fecharModal();
+        // Mover afeta duas equipes — reload completo necessário
         await this._carregar();
       },'Mover');
   },
 
   async _acRemover(id){
+    const item=this._filaItem(id); if(!item) return;
     if(!confirm('Remover OS da fila?')) return;
     const db=getDB();
     const{error}=await db.from('cal_fila').delete().eq('id',id);
     if(error){ showToast('Erro: '+error.message,'erro'); return; }
     showToast('OS removida da fila','ok');
-    await this._carregar();
+    await this._atualizarParcial(item.equipe_id);
   },
 
   async _reordenar(id,equipeId,delta){
@@ -991,7 +1078,7 @@ window.Modulos.cal_acomp = {
       db.from('cal_fila').update({posicao:b.posicao}).eq('id',a.id),
       db.from('cal_fila').update({posicao:a.posicao}).eq('id',b.id),
     ]);
-    await this._carregar();
+    await this._atualizarParcial(equipeId);
   },
 
   /* ══════════════════════════════════════════════
@@ -1342,11 +1429,14 @@ window.Modulos.cal_acomp = {
     // Bind reabrir (encerrado → pendente)
     el.querySelectorAll('.ca-ac[data-ac="reabrir"]').forEach(btn=>btn.addEventListener('click',async e=>{
       e.stopPropagation();
+      const id=parseInt(btn.dataset.id);
+      const item=this._filaItem(id);
       const db=getDB();
-      const{error}=await db.from('cal_fila').update({status:'pendente',dt_fim_real:null}).eq('id',parseInt(btn.dataset.id));
+      const{error}=await db.from('cal_fila').update({status:'pendente',dt_fim_real:null}).eq('id',id);
       if(error){ showToast('Erro: '+error.message,'erro'); return; }
       showToast('OS reaberta','ok');
-      await this._carregar();
+      if(item) await this._atualizarParcial(item.equipe_id);
+      else await this._carregar();
     }));
   },
 
