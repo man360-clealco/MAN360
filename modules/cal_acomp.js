@@ -204,6 +204,7 @@ window.Modulos.cal_acomp = {
     while(cur>=dataIni){s.add(cur);cur=this._addDays(cur,-ciclo);}
     return s;
   },
+  _hhOS(f){ return parseFloat(f.hh_manual||f._os?.hh_prev_servico||0); },
   _turnoDe(c)  { return this._s.turnos.find(t=>t.id===c.turno_id)||null; },
   _escalaDe(c) { return this._s.escalas.find(e=>e.id===c.escala_id)||null; },
 
@@ -244,7 +245,7 @@ window.Modulos.cal_acomp = {
   /* ── HH alocado na fila de uma equipe ── */
   _hhAlocadoEquipe(equipeId){
     const fila=this._s.fila[equipeId]||[];
-    return fila.filter(f=>f.status!=='interrompido').reduce((acc,f)=>acc+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    return fila.filter(f=>f.status!=='interrompido').reduce((acc,f)=>acc+(this._hhOS(f)||0),0);
   },
 
   /* ── Projeção de data fim da fila (usa mesmo _somarHH da fila) ── */
@@ -263,7 +264,7 @@ window.Modulos.cal_acomp = {
     const hoje=this._hoje();
     let cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00';
     for(const f of fila){
-      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      const hh=this._hhOS(f);
       if(!hh) continue;
       if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
       const dtFim=this._somarHH(cursor,hh,mems);
@@ -458,7 +459,7 @@ window.Modulos.cal_acomp = {
     const osProg=todasOS.filter(f=>progCAL.find(p=>p.os===f.os&&(p.cod_servico||'1')===(f.cod_servico||'1')));
 
     // Aderência atual: HH encerrado de OS programadas / HH programado total
-    const hhEncProg=osProg.filter(f=>f.status==='encerrado').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const hhEncProg=osProg.filter(f=>f.status==='encerrado').reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const aderAtual=hhProg>0?hhEncProg/hhProg:null;
 
     // Aderência projetada: HH (encerrado + em execução com fim até domingo) / HH programado
@@ -470,16 +471,16 @@ window.Modulos.cal_acomp = {
         return !f._dtFimPrev||(f._dtFimPrev.slice(0,10)<=domingo);
       }
       return false;
-    }).reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    }).reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const aderProj=hhProg>0?hhProjProg/hhProg:null;
 
     // % HH MCU sobre toda a fila
-    const hhTotal=todasOS.reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
-    const hhMCU=todasOS.filter(f=>f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA').reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const hhTotal=todasOS.reduce((a,f)=>a+(this._hhOS(f)||0),0);
+    const hhMCU=todasOS.filter(f=>f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA').reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const pctMCU=hhTotal>0?hhMCU/hhTotal:null;
 
     // % HH Reprogramado
-    const hhRpg=todasOS.filter(f=>f.semana_ref<s.semana).reduce((a,f)=>a+(parseFloat(f._os?.hh_prev_servico)||0),0);
+    const hhRpg=todasOS.filter(f=>f.semana_ref<s.semana).reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const pctRpg=hhTotal>0?hhRpg/hhTotal:null;
 
     // Cobertura: OS da programação CAL que já estão no board
@@ -719,7 +720,7 @@ window.Modulos.cal_acomp = {
     let cursor=null; // ISO datetime do próximo início disponível
 
     fila.forEach((f,idx)=>{
-      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      const hh=this._hhOS(f);
       if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
 
       if(f.status==='em_execucao'&&f.dt_inicio_real){
@@ -743,7 +744,7 @@ window.Modulos.cal_acomp = {
     const rows=fila.map((f,idx)=>{
       const os=f._os;
       const desc=os?.desc_servico||os?.desc_os||'—';
-      const hh=parseFloat(os?.hh_prev_servico||0);
+      const hh=this._hhOS(f);
       const dt_ini=f.dt_inicio_real?this._fmtDMH(f.dt_inicio_real):f._dtIniPrev?this._fmtDMH(f._dtIniPrev):'—';
       // Previsão calculada sequencialmente
       const dtFimPrev=f._dtFimPrev?this._fmtDMH(f._dtFimPrev):'—';
@@ -1096,8 +1097,70 @@ window.Modulos.cal_acomp = {
   },
 
   /* ══════════════════════════════════════════════
-     ADD OS NA FILA
+     MODAL DE POSICIONAMENTO (seleção única)
      ══════════════════════════════════════════════ */
+  async _modalPosicionamento(equipeId, candidata, emExec, filaAtual){
+    const s=this._s;
+    const eq=s.equipes.find(e=>e.id===equipeId);
+    const osExec=emExec.os;
+
+    this._modal(`Onde inserir OS ${candidata.os}?`,`
+      <div style="font-size:11px;color:#6b7280;margin-bottom:14px">
+        Equipe <strong>${eq?.nome}</strong> tem <strong>OS ${osExec}</strong> em execução no momento.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:12px" id="ca-pos-opt-pausar">
+          <input type="radio" name="ca-pos" value="pausar" style="margin-top:2px;accent-color:var(--yellow)">
+          <div><strong>Pausar atual e iniciar esta agora</strong><br><span style="color:#6b7280;font-size:11px">OS ${osExec} vai para pausado. OS ${candidata.os} inicia imediatamente na posição 1.</span></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:12px" id="ca-pos-opt-seguir">
+          <input type="radio" name="ca-pos" value="seguir" style="margin-top:2px;accent-color:var(--yellow)">
+          <div><strong>Inserir logo após a atual</strong><br><span style="color:#6b7280;font-size:11px">OS ${candidata.os} entra na posição 2, as demais empurram.</span></div>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:12px" id="ca-pos-opt-final">
+          <input type="radio" name="ca-pos" value="final" checked style="margin-top:2px;accent-color:var(--yellow)">
+          <div><strong>Ir para o final da fila</strong><br><span style="color:#6b7280;font-size:11px">OS ${candidata.os} entra na última posição.</span></div>
+        </label>
+      </div>`,
+      async()=>{
+        const opcao=document.querySelector('input[name="ca-pos"]:checked')?.value||'final';
+        const db=getDB();
+        const filaOrdenada=[...filaAtual].sort((a,b)=>a.posicao-b.posicao);
+        const maxPos=filaOrdenada.length?Math.max(...filaOrdenada.map(f=>f.posicao)):0;
+
+        if(opcao==='pausar'){
+          // Pausa a OS atual
+          await db.from('cal_fila').update({status:'pausado',dt_pausa:new Date().toISOString()}).eq('id',emExec.id);
+          // Move todas para posições temporárias
+          for(const f of filaOrdenada) await db.from('cal_fila').update({posicao:-(f.posicao+100)}).eq('id',f.id);
+          // Insere nova na posição 1
+          await db.from('cal_fila').insert({equipe_id:equipeId,os:candidata.os,cod_servico:candidata.cod,posicao:1,semana_ref:s.semana,ano_ref:s.ano,status:'em_execucao',hh_manual:candidata.hh_manual||null,dt_inicio_real:new Date().toISOString()});
+          // Reposiciona demais a partir de 2
+          for(let i=0;i<filaOrdenada.length;i++) await db.from('cal_fila').update({posicao:i+2}).eq('id',filaOrdenada[i].id);
+          showToast(`OS ${osExec} pausada. OS ${candidata.os} iniciada!`,'ok');
+
+        } else if(opcao==='seguir'){
+          // Move as que estão após posição 1 para cima (posições temp)
+          const aposExec=filaOrdenada.filter(f=>f.posicao>emExec.posicao);
+          for(const f of aposExec) await db.from('cal_fila').update({posicao:-(f.posicao+100)}).eq('id',f.id);
+          // Insere nova na posição 2
+          await db.from('cal_fila').insert({equipe_id:equipeId,os:candidata.os,cod_servico:candidata.cod,posicao:emExec.posicao+1,semana_ref:s.semana,ano_ref:s.ano,status:'pendente',hh_manual:candidata.hh_manual||null});
+          // Reposiciona as que vieram depois
+          for(let i=0;i<aposExec.length;i++) await db.from('cal_fila').update({posicao:emExec.posicao+2+i}).eq('id',aposExec[i].id);
+          showToast(`OS ${candidata.os} inserida logo após OS ${osExec}.`,'ok');
+
+        } else {
+          // Final da fila
+          await db.from('cal_fila').insert({equipe_id:equipeId,os:candidata.os,cod_servico:candidata.cod,posicao:maxPos+1,semana_ref:s.semana,ano_ref:s.ano,status:'pendente',hh_manual:candidata.hh_manual||null});
+          showToast(`OS ${candidata.os} adicionada ao final da fila.`,'ok');
+        }
+
+        this._fecharModal();
+        await this._carregar();
+      },'Confirmar');
+  },
+
+
   async _modalAddOS(equipeId){
     const s=this._s;
     const eq=s.equipes.find(e=>e.id===equipeId);
@@ -1155,52 +1218,61 @@ window.Modulos.cal_acomp = {
         <button class="ca-btn" id="ca-os-avulso-btn"><i class="ti ti-plus"></i> Inserir serviço avulso (sem OS)</button>
       </div>`,
       async()=>{
-        // Coleta selecionados (programação + busca livre)
+        // Coleta selecionados
         const sels=[
           ...document.querySelectorAll('.ca-os-check-row.selecionado[data-os]'),
           ...document.querySelectorAll('.ca-os-opt.selecionado[data-os]'),
         ];
         const avulso=document.getElementById('ca-avulso-os');
-
         if(!sels.length&&!avulso){ showToast('Selecione ao menos uma OS','erro'); return; }
 
         const db=getDB();
 
-        // Busca fila atualizada do banco para evitar conflitos por cache
-        const{data:filaAtual}=await db.from('cal_fila').select('os,cod_servico');
+        // Verifica conflitos no banco
+        const{data:filaAtual}=await db.from('cal_fila').select('os,cod_servico,status,posicao,id').eq('equipe_id',equipeId).order('posicao');
         const jaNobanco=new Set((filaAtual||[]).map(f=>f.os+'|'+(f.cod_servico||'1')));
+        const emExec=(filaAtual||[]).find(f=>f.status==='em_execucao');
+        const maxPos=(filaAtual?.length?Math.max(...filaAtual.map(f=>f.posicao)):0);
 
-        // Posição máxima atual desta equipe
-        const{data:filaDaEq}=await db.from('cal_fila').select('posicao').eq('equipe_id',equipeId).order('posicao',{ascending:false}).limit(1);
-        let maxPos=(filaDaEq?.[0]?.posicao)||0;
-
-        const inserts=[];
+        // Monta lista de OS a inserir
+        const candidatas=[];
         if(sels.length){
           for(const el of sels){
             const os_val=el.dataset.os, cod_val=el.dataset.cod||'1';
-            if(jaNobanco.has(os_val+'|'+cod_val)){ showToast(`OS ${os_val} já está na fila de outra equipe`,'info'); continue; }
-            inserts.push({equipe_id:equipeId,os:os_val,cod_servico:cod_val,posicao:++maxPos,semana_ref:s.semana,ano_ref:s.ano,status:'pendente'});
+            if(jaNobanco.has(os_val+'|'+cod_val)){ showToast(`OS ${os_val} já está na fila`,'info'); continue; }
+            const hhEl=document.getElementById(`ca-hh-${os_val}-${cod_val}`);
+            const hh_manual=hhEl?parseFloat(hhEl.value)||null:null;
+            candidatas.push({os:os_val,cod:cod_val,hh_manual});
           }
         } else if(avulso){
           const os_val=avulso.value.trim()||('AVULSO-'+Date.now());
-          inserts.push({equipe_id:equipeId,os:os_val,cod_servico:'1',posicao:++maxPos,semana_ref:s.semana,ano_ref:s.ano,status:'pendente'});
+          const hhEl=document.getElementById('ca-hh-avulso');
+          const hh_manual=hhEl?parseFloat(hhEl.value)||null:null;
+          candidatas.push({os:os_val,cod:'1',hh_manual});
+        }
+        if(!candidatas.length){ showToast('Nenhuma OS nova para adicionar','info'); return; }
+
+        // Seleção única com OS em execução → perguntar posicionamento
+        if(candidatas.length===1&&emExec){
+          this._fecharModal();
+          await this._modalPosicionamento(equipeId,candidatas[0],emExec,filaAtual);
+          return;
         }
 
-        if(!inserts.length){ showToast('Nenhuma OS nova para adicionar','info'); return; }
-
-        // Inserir uma a uma para tratar conflitos individualmente
+        // Múltiplas ou sem OS em execução → inserir no final
+        let pos=maxPos;
         let adicionadas=0, puladas=0;
-        for(const row of inserts){
-          const{error}=await db.from('cal_fila').insert(row);
-          if(error){
-            if(error.code==='23505') puladas++; // duplicate key — já existe
-            else throw error;
-          } else {
-            adicionadas++;
-          }
+        for(const c of candidatas){
+          const{error}=await db.from('cal_fila').insert({
+            equipe_id:equipeId, os:c.os, cod_servico:c.cod,
+            posicao:++pos, semana_ref:s.semana, ano_ref:s.ano,
+            status:'pendente', hh_manual:c.hh_manual||null
+          });
+          if(error){ if(error.code==='23505') puladas++; else throw error; }
+          else adicionadas++;
         }
-        if(adicionadas) showToast(`${adicionadas} OS adicionada(s) à fila!${puladas?` (${puladas} já existiam)`:''}`, 'ok');
-        else showToast('Nenhuma OS foi adicionada — todas já estavam na fila.','info');
+        if(adicionadas) showToast(`${adicionadas} OS adicionada(s)!${puladas?` (${puladas} já existiam)`:''}`, 'ok');
+        else showToast('Nenhuma OS foi adicionada.','info');
         this._fecharModal();
         await this._carregar();
       },`Adicionar`);
@@ -1254,12 +1326,19 @@ window.Modulos.cal_acomp = {
         lista.innerHTML=items.map(p=>{
           const t=tipoMap[p.os+'|'+(p.cod_servico||'1')];
           const mcu=t?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA';
-          return `<div class="ca-os-check-row" data-os="${p.os}" data-cod="${p.cod_servico||'1'}">
+          const semHH=!p.hh_previsto||parseFloat(p.hh_previsto)===0;
+          const cod=p.cod_servico||'1';
+          return `<div class="ca-os-check-row" data-os="${p.os}" data-cod="${cod}">
             <input type="checkbox" style="accent-color:var(--yellow);flex-shrink:0">
             <div style="flex:1;min-width:0">
               <div style="font-weight:700;font-size:11px">${p.os} ${mcu?'<span class="ca-badge ca-badge-mcu">MCU</span>':''}</div>
               <div style="font-size:11px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.desc_servico||'—'}</div>
-              <div style="font-size:10px;color:#9ca3af">${p.equipe||''} ${p.hh_previsto?'· '+p.hh_previsto+'h':''}</div>
+              <div style="font-size:10px;color:#9ca3af;display:flex;align-items:center;gap:6px">
+                ${p.equipe||''}
+                ${semHH
+                  ?`<span style="color:var(--amber)">HH:</span><input id="ca-hh-${p.os}-${cod}" type="number" min="0.5" step="0.5" placeholder="HH prev." style="width:70px;height:20px;border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:10px;font-family:var(--font)" onclick="event.stopPropagation()">`
+                  :`· ${p.hh_previsto}h`}
+              </div>
             </div>
           </div>`;
         }).join('');
@@ -1321,7 +1400,12 @@ window.Modulos.cal_acomp = {
                 ${bloqueado?`<span style="font-size:9px;background:#fee2e2;color:#991b1b;padding:1px 5px;border-radius:6px">${motivo}</span>`:''}
               </div>
               <div style="font-size:11px;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.desc_servico||o.desc_os||'—'}</div>
-              <div style="font-size:10px;color:#9ca3af">${o.equipamento||''} ${o.hh_prev_servico?'· '+o.hh_prev_servico+'h':''}</div>
+              <div style="font-size:10px;color:#9ca3af;display:flex;align-items:center;gap:6px">
+                ${o.equipamento||''}
+                ${(!o.hh_prev_servico||parseFloat(o.hh_prev_servico)===0)&&!disabled
+                  ?`<span style="color:var(--amber)">HH:</span><input id="ca-hh-${o.os}-${o.cod_servico||'1'}" type="number" min="0.5" step="0.5" placeholder="HH prev." style="width:70px;height:20px;border:1px solid var(--border);border-radius:3px;padding:0 4px;font-size:10px;font-family:var(--font)" onclick="event.stopPropagation()">`
+                  :o.hh_prev_servico?`· ${o.hh_prev_servico}h`:''}
+              </div>
             </div>
           </div>`;
         }).join('');
@@ -1339,6 +1423,7 @@ window.Modulos.cal_acomp = {
         document.getElementById('ca-os-avulso-wrap').innerHTML=`
           <div class="ca-row" style="margin-bottom:0">
             <div class="ca-field"><label class="ca-lbl">Nº OS (opcional)</label><input id="ca-avulso-os" class="ca-input" placeholder="Avulso"></div>
+            <div class="ca-field" style="width:90px;flex:none"><label class="ca-lbl">HH Previsto</label><input id="ca-hh-avulso" type="number" min="0.5" step="0.5" class="ca-input" placeholder="ex: 8"></div>
           </div>`;
       });
     },100);
@@ -1451,7 +1536,7 @@ window.Modulos.cal_acomp = {
 
     const rows=items.map(f=>{
       const eq=s.equipes.find(e=>e.id===f.equipe_id);
-      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      const hh=this._hhOS(f);
       return `<div class="ca-os-row">
         <div style="flex:1">
           <div style="font-size:12px;font-weight:700">${f.os} <span style="font-size:10px;font-weight:400;color:#6b7280">${eq?.nome||'—'}</span></div>
@@ -1504,7 +1589,7 @@ window.Modulos.cal_acomp = {
       const mems=s.membros[eq.id]||[];
       let cursor=null;
       fila.forEach(f=>{
-        const hh=parseFloat(f._os?.hh_prev_servico||0);
+        const hh=this._hhOS(f);
         if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
         if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
         else if(!cursor){ const hoje=this._hoje(); cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00'; }
@@ -1522,7 +1607,7 @@ window.Modulos.cal_acomp = {
 
     const rows=todos.map(f=>{
       const eq=s.equipes.find(e=>e.id===f.equipe_id);
-      const hh=parseFloat(f._os?.hh_prev_servico||0);
+      const hh=this._hhOS(f);
       const iniPrev=f.dt_inicio_real?this._fmtDM(f.dt_inicio_real.slice(0,10)):f._dtIniPrev?this._fmtDM(f._dtIniPrev.slice(0,10)):'—';
       const fimPrev=f._dtFimPrev?this._fmtDM(f._dtFimPrev.slice(0,10)):'—';
       return `<div class="ca-lista-row">
