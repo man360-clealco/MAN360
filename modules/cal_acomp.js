@@ -688,7 +688,6 @@ window.Modulos.cal_acomp = {
       }
 
       const minSaida=getMinSaida(dAtual);
-      console.log(`[somarHH] dia=${dAtual} presentes=${presentes} minCursor=${minCursor} minSaida=${minSaida} hhRestantes=${hhRestantes}`);
       if(minCursor>=minSaida){
         dAtual=this._addDays(dAtual,1);
         minCursor=getMinEntrada();
@@ -741,7 +740,6 @@ window.Modulos.cal_acomp = {
 
       if(cursor){
         f._dtIniPrev=cursor;
-        console.log(`[fila] OS=${f.os} status=${f.status} hh=${hh} mems=${mems.length} cursor=${cursor}`);
         const dtFim=this._somarHH(cursor,hh,mems);
         f._dtFimPrev=dtFim;
         cursor=dtFim;
