@@ -477,6 +477,9 @@ window.Modulos.cal_acomp = {
     const el=document.getElementById('ca-kpis-wrap'); if(!el) return;
     const s=this._s;
 
+    // Calcular _dtFimPrev para todas as OS de todas as equipes
+    this._calcTodasPrevisoes();
+
     // Programação CAL da semana (base dos KPIs de aderência)
     const progCAL=s.programacao.filter(p=>!p.modalidade||p.modalidade==='CAL'||
       // fallback: se não tem modalidade na prog, cruza com ordens_servico via OS já carregadas
@@ -664,6 +667,28 @@ window.Modulos.cal_acomp = {
     this._bindAcoesFila(el);
   },
 
+  /* ── Calcula _dtIniPrev e _dtFimPrev para todas as OS de todas as equipes ── */
+  _calcTodasPrevisoes(){
+    const s=this._s;
+    s.equipes.forEach(eq=>{
+      const fila=(s.fila[eq.id]||[])
+        .filter(f=>f.status!=='interrompido'&&f.status!=='encerrado')
+        .sort((a,b)=>a.posicao-b.posicao);
+      const mems=s.membros[eq.id]||[];
+      let cursor=null;
+      fila.forEach(f=>{
+        const hh=this._hhOS(f);
+        if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
+        if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
+        else if(!cursor){ const hoje=this._hoje(); cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00'; }
+        f._dtIniPrev=cursor;
+        const dtFim=this._somarHH(cursor,hh,mems);
+        f._dtFimPrev=dtFim;
+        cursor=dtFim;
+      });
+    });
+  },
+
   /* ── Soma HH a partir de um datetime, respeitando turno e folgas da equipe ── */
   /* HH é Homem-Hora: duração = HH ÷ membros presentes no dia                  */
   _somarHH(dtInicio, hhTotal, mems){
@@ -739,34 +764,7 @@ window.Modulos.cal_acomp = {
 
   _tplFila(eq,fila){
     const s=this._s;
-
-    // Calcular previsões sequenciais
-    // Ponto de partida: OS em execução usa dt_inicio_real, demais encadeiam
-    const mems=s.membros[eq.id]||[];
-    let cursor=null; // ISO datetime do próximo início disponível
-
-    fila.forEach((f,idx)=>{
-      const hh=this._hhOS(f);
-      if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
-
-      if(f.status==='em_execucao'&&f.dt_inicio_real){
-        cursor=this._dtBancoToLocal(f.dt_inicio_real);
-      } else if(f.status==='pendente'||f.status==='pausado'){
-        // Pendente: início = fim do anterior ou agora
-        if(!cursor){
-          const hoje=this._hoje();
-          cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00';
-        }
-      }
-
-      if(cursor){
-        f._dtIniPrev=cursor;
-        const dtFim=this._somarHH(cursor,hh,mems);
-        f._dtFimPrev=dtFim;
-        cursor=dtFim;
-      }
-    });
-
+    // Previsões já calculadas por _calcTodasPrevisoes chamado em _renderKpis
     const rows=fila.map((f,idx)=>{
       const os=f._os;
       const desc=os?.desc_servico||os?.desc_os||'—';
@@ -1634,23 +1632,7 @@ window.Modulos.cal_acomp = {
   _renderListaGeral(){
     const el=document.getElementById('ca-lista-wrap'); if(!el) return;
     const s=this._s;
-
-    // Calcular previsões para todas as equipes antes de montar a lista
-    s.equipes.forEach(eq=>{
-      const fila=(s.fila[eq.id]||[]).filter(f=>f.status!=='interrompido'&&f.status!=='encerrado').sort((a,b)=>a.posicao-b.posicao);
-      const mems=s.membros[eq.id]||[];
-      let cursor=null;
-      fila.forEach(f=>{
-        const hh=this._hhOS(f);
-        if(!hh){ f._dtIniPrev=null; f._dtFimPrev=null; return; }
-        if(f.status==='em_execucao'&&f.dt_inicio_real) cursor=this._dtBancoToLocal(f.dt_inicio_real);
-        else if(!cursor){ const hoje=this._hoje(); cursor=hoje+'T'+(new Date().toTimeString().slice(0,5))+':00'; }
-        f._dtIniPrev=cursor;
-        const dtFim=this._somarHH(cursor,hh,mems);
-        f._dtFimPrev=dtFim;
-        cursor=dtFim;
-      });
-    });
+    // Previsões já calculadas por _calcTodasPrevisoes chamado em _renderKpis
 
     const todos=Object.values(s.fila).flat().sort((a,b)=>{
       if(a.equipe_id!==b.equipe_id) return a.equipe_id-b.equipe_id;
@@ -1730,8 +1712,8 @@ window.Modulos.cal_acomp = {
       {v:'mcu',l:'MCU'},
       {v:'npg',l:'NPG'},
     ];
-    const selBtn=(opts,ativo,fn)=>opts.map(o=>`
-      <button onclick="${fn}('${o.v}')" style="height:24px;padding:0 8px;font-size:10px;font-weight:${ativo===o.v?'700':'500'};border-radius:4px;cursor:pointer;border:1px solid ${ativo===o.v?'var(--yellow)':'var(--border)'};background:${ativo===o.v?'#fefce8':'var(--card-bg)'};font-family:var(--font);color:${ativo===o.v?'#92400e':'#374151'}">${o.l}</button>
+    const selBtn=(opts,ativo,tipo)=>opts.map(o=>`
+      <button data-filtro-tipo="${tipo}" data-filtro-val="${o.v}" style="height:24px;padding:0 8px;font-size:10px;font-weight:${ativo===o.v?'700':'500'};border-radius:4px;cursor:pointer;border:1px solid ${ativo===o.v?'var(--yellow)':'var(--border)'};background:${ativo===o.v?'#fefce8':'var(--card-bg)'};font-family:var(--font);color:${ativo===o.v?'#92400e':'#374151'}">${o.l}</button>
     `).join('');
 
     el.innerHTML=`
@@ -1743,9 +1725,9 @@ window.Modulos.cal_acomp = {
         <div id="ca-lista-body" style="display:none">
           <div style="display:flex;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap">
             <span style="font-size:10px;color:#6b7280;font-weight:700">STATUS</span>
-            ${selBtn(filtroStatusOpts,s.listaFiltroStatus,'Modulos.cal_acomp._setListaFiltro.bind(Modulos.cal_acomp,"status")')}
+            ${selBtn(filtroStatusOpts,s.listaFiltroStatus,'status')}
             <span style="font-size:10px;color:#6b7280;font-weight:700;margin-left:8px">TIPO</span>
-            ${selBtn(filtroTipoOpts,s.listaFiltroTipo,'Modulos.cal_acomp._setListaFiltro.bind(Modulos.cal_acomp,"tipo")')}
+            ${selBtn(filtroTipoOpts,s.listaFiltroTipo,'tipo')}
             <span style="font-size:10px;color:#9ca3af;margin-left:auto">${filtrados.length} de ${todos.length}</span>
           </div>
           <div class="ca-lista-row ca-lista-hdr"><span>OS</span><span>Serviço</span><span>Equipe</span><span>HH</span><span>Início</span><span>Fim</span></div>
@@ -1760,6 +1742,14 @@ window.Modulos.cal_acomp = {
       document.getElementById('ca-lista-arr').className='ti ti-chevron-'+(open?'down':'up');
       document.getElementById('ca-lista-hdr').classList.toggle('open',!open);
       s.listaAberta=!open;
+    });
+
+    // Bind filtros
+    el.querySelectorAll('[data-filtro-tipo]').forEach(btn=>{
+      btn.addEventListener('click',e=>{
+        e.stopPropagation();
+        this._setListaFiltro(btn.dataset.filtroTipo, btn.dataset.filtroVal);
+      });
     });
     if(s.listaAberta){
       document.getElementById('ca-lista-body').style.display='block';
