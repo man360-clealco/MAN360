@@ -491,15 +491,12 @@ window.Modulos.cal_acomp = {
     const hhEncProg=osProg.filter(f=>f.status==='encerrado').reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const aderAtual=hhProg>0?hhEncProg/hhProg:null;
 
-    // Aderência projetada: HH (encerrado + em execução com fim até domingo) / HH programado
+    // Aderência projetada: HH (encerrado + qualquer OS com fim previsto até domingo) / HH programado
     const domingo=s.dataFim;
     const hhProjProg=osProg.filter(f=>{
       if(f.status==='encerrado') return true;
-      if(f.status==='em_execucao'){
-        // Incluir se fim previsto <= domingo
-        return !f._dtFimPrev||(f._dtFimPrev.slice(0,10)<=domingo);
-      }
-      return false;
+      if(f.status==='interrompido') return false;
+      return f._dtFimPrev&&f._dtFimPrev.slice(0,10)<=domingo;
     }).reduce((a,f)=>a+(this._hhOS(f)||0),0);
     const aderProj=hhProg>0?hhProjProg/hhProg:null;
 
@@ -1660,20 +1657,82 @@ window.Modulos.cal_acomp = {
       return a.posicao-b.posicao;
     });
 
-    const rows=todos.map(f=>{
+    // Filtros ativos (guardados no estado)
+    if(!s.listaFiltroStatus) s.listaFiltroStatus='todos';
+    if(!s.listaFiltroTipo)   s.listaFiltroTipo='todos';
+
+    const _badgeSt=(status)=>{
+      const m={em_execucao:'background:#dcfce7;color:#166534',pausado:'background:#fef3c7;color:#b45309',encerrado:'background:#e5e7eb;color:#374151',interrompido:'background:#f3f4f6;color:#6b7280',pendente:'background:#eff6ff;color:#1d4ed8'};
+      const l={em_execucao:'ANDAMENTO',pausado:'PAUSADO',encerrado:'ENCERRADO',interrompido:'INTERR.',pendente:'PROGRAMADO'};
+      return `<span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;${m[status]||''}">${l[status]||status}</span>`;
+    };
+
+    const _badgeTipo=(f)=>{
+      if(f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA') return `<span class="ca-badge ca-badge-mcu">MCU</span>`;
+      if(f.semana_ref<s.semana) return `<span class="ca-badge ca-badge-rpg">RPG</span>`;
+      const prog=s.programacao.find(p=>p.os===f.os);
+      if(prog) return `<span class="ca-badge ca-badge-prg">PRG</span>`;
+      return `<span class="ca-badge ca-badge-npg">NPG</span>`;
+    };
+
+    const filtrados=todos.filter(f=>{
+      if(s.listaFiltroStatus!=='todos'){
+        const st=s.listaFiltroStatus;
+        if(st==='andamento'&&f.status!=='em_execucao') return false;
+        if(st==='encerrado'&&f.status!=='encerrado') return false;
+        if(st==='programado'&&(f.status==='encerrado'||f.status==='em_execucao')) return false;
+      }
+      if(s.listaFiltroTipo!=='todos'){
+        const mcu=f._os?.tipo_atividade==='MANUTENÇÃO CORRETIVA DE URGÊNCIA';
+        const rpg=f.semana_ref<s.semana;
+        const prg=!mcu&&!rpg&&s.programacao.find(p=>p.os===f.os);
+        if(s.listaFiltroTipo==='mcu'&&!mcu) return false;
+        if(s.listaFiltroTipo==='rpg'&&!rpg) return false;
+        if(s.listaFiltroTipo==='prg'&&!prg) return false;
+        if(s.listaFiltroTipo==='npg'&&(mcu||rpg||prg)) return false;
+      }
+      return true;
+    });
+
+    const rows=filtrados.map(f=>{
       const eq=s.equipes.find(e=>e.id===f.equipe_id);
       const hh=this._hhOS(f);
       const iniPrev=f.dt_inicio_real?this._fmtDM(f.dt_inicio_real.slice(0,10)):f._dtIniPrev?this._fmtDM(f._dtIniPrev.slice(0,10)):'—';
-      const fimPrev=f._dtFimPrev?this._fmtDM(f._dtFimPrev.slice(0,10)):'—';
+      // Encerradas: mostrar fim real; demais: fim previsto
+      const fimCol=f.status==='encerrado'&&f.dt_fim_real
+        ?`<span style="color:var(--green)">${this._fmtDM(f.dt_fim_real.slice(0,10))}</span>`
+        :`<span style="color:#6b7280">${f._dtFimPrev?this._fmtDM(f._dtFimPrev.slice(0,10)):'—'}</span>`;
+
       return `<div class="ca-lista-row">
         <span style="font-weight:700">${f.os}</span>
-        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f._os?.desc_servico||f._os?.desc_os||'—'}">${f._os?.desc_servico||f._os?.desc_os||'—'}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:5px">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${f._os?.desc_servico||f._os?.desc_os||'—'}">${f._os?.desc_servico||f._os?.desc_os||'—'}</span>
+          ${_badgeTipo(f)}
+          ${_badgeSt(f.status)}
+        </span>
         <span>${eq?.nome||'—'}</span>
         <span>${hh?hh.toFixed(1)+'h':'—'}</span>
         <span style="color:#6b7280">${iniPrev}</span>
-        <span style="color:#6b7280">${fimPrev}</span>
+        ${fimCol}
       </div>`;
     }).join('');
+
+    const filtroStatusOpts=[
+      {v:'todos',l:'Todos'},
+      {v:'andamento',l:'Em andamento'},
+      {v:'programado',l:'Programado'},
+      {v:'encerrado',l:'Encerrado'},
+    ];
+    const filtroTipoOpts=[
+      {v:'todos',l:'Todos'},
+      {v:'prg',l:'PRG'},
+      {v:'rpg',l:'RPG'},
+      {v:'mcu',l:'MCU'},
+      {v:'npg',l:'NPG'},
+    ];
+    const selBtn=(opts,ativo,fn)=>opts.map(o=>`
+      <button onclick="${fn}('${o.v}')" style="height:24px;padding:0 8px;font-size:10px;font-weight:${ativo===o.v?'700':'500'};border-radius:4px;cursor:pointer;border:1px solid ${ativo===o.v?'var(--yellow)':'var(--border)'};background:${ativo===o.v?'#fefce8':'var(--card-bg)'};font-family:var(--font);color:${ativo===o.v?'#92400e':'#374151'}">${o.l}</button>
+    `).join('');
 
     el.innerHTML=`
       <div class="ca-grupo">
@@ -1682,8 +1741,15 @@ window.Modulos.cal_acomp = {
           <i class="ti ti-chevron-down" id="ca-lista-arr"></i>
         </div>
         <div id="ca-lista-body" style="display:none">
-          <div class="ca-lista-row ca-lista-hdr"><span>OS</span><span>Serviço</span><span>Equipe</span><span>HH</span><span>Início</span><span>Fim prev.</span></div>
-          ${rows||'<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum serviço alocado.</div>'}
+          <div style="display:flex;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap">
+            <span style="font-size:10px;color:#6b7280;font-weight:700">STATUS</span>
+            ${selBtn(filtroStatusOpts,s.listaFiltroStatus,'Modulos.cal_acomp._setListaFiltro.bind(Modulos.cal_acomp,"status")')}
+            <span style="font-size:10px;color:#6b7280;font-weight:700;margin-left:8px">TIPO</span>
+            ${selBtn(filtroTipoOpts,s.listaFiltroTipo,'Modulos.cal_acomp._setListaFiltro.bind(Modulos.cal_acomp,"tipo")')}
+            <span style="font-size:10px;color:#9ca3af;margin-left:auto">${filtrados.length} de ${todos.length}</span>
+          </div>
+          <div class="ca-lista-row ca-lista-hdr"><span>OS</span><span>Serviço</span><span>Equipe</span><span>HH</span><span>Início</span><span>Fim</span></div>
+          ${rows||'<div style="padding:14px;text-align:center;font-size:11px;color:#9ca3af">Nenhum serviço.</div>'}
         </div>
       </div>`;
 
@@ -1701,6 +1767,14 @@ window.Modulos.cal_acomp = {
       document.getElementById('ca-lista-hdr').classList.add('open');
     }
   },
+
+  _setListaFiltro(tipo, valor){
+    const s=this._s;
+    if(tipo==='status') s.listaFiltroStatus=valor;
+    else s.listaFiltroTipo=valor;
+    this._renderListaGeral();
+  },
+
 
   /* ══════════════════════════════════════════════
      MODAL NOVA EQUIPE
