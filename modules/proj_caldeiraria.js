@@ -36,6 +36,7 @@ window.Modulos.proj_caldeiraria = (() => {
   let _osVerFotos = null;
   let _filtBusca  = '';
   let _dtInicioTerc = '';
+  let _visaoSetor = 'hh';
 
   /* ── Helpers ── */
   function fmtNum(n,d){ return (n||0).toLocaleString('pt-BR',{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
@@ -280,7 +281,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const blocoProp = [
       '<div class="ps-bloco-mo">',
       '<div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>',
-      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      '<div class="ps-bloco-mo-sub-titulo">Distribuição por setor · criticidade</div>',
       htmlTabelaSetor(lista, 'proprio'),
       '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqProp+' eq. · '+fmtNum(hhMesProp(_nEqProp),0)+'h/mês)</div>',
       '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
@@ -291,7 +292,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const blocoTerc = temTerc ? [
       '<div class="ps-bloco-mo">',
       '<div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>',
-      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      '<div class="ps-bloco-mo-sub-titulo">Distribuição por setor · criticidade</div>',
       htmlTabelaSetor(lista, 'terceiro'),
       '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqTerc+' eq. · '+(_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes')+')</div>',
       '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
@@ -373,7 +374,7 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
 
-  /* ── Tabela Setor × Criticidade ── */
+  /* ── Pareto Setor × Criticidade (substitui tabela antiga) ── */
   function htmlTabelaSetor(lista, moTipo) {
     const osMO = moTipo === 'proprio'
       ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
@@ -382,67 +383,112 @@ window.Modulos.proj_caldeiraria = (() => {
     const osValidas = osMO.filter(o => o.proj_criticidade && (o.desc_setor||o.setor));
     if (!osValidas.length) return '<div class="ps-tab-vazio">Sem dados com setor e criticidade definidos</div>';
 
-    // Usar desc_setor como chave de agrupamento
-    const setores = [...new Set(osValidas.map(o=>o.desc_setor||o.setor))].sort();
-    const crits   = ['alta','media','baixa'].filter(cr => osValidas.some(o=>o.proj_criticidade===cr));
-    const nomeCrit = {alta:'Alta',media:'Média',baixa:'Baixa'};
-    const corCrit  = {alta:'#dc2626',media:'#d97706',baixa:'#16a34a'};
-
-    const matriz = {}, totaisCrit = {}, totaisSetor = {};
-    let totalGeral = 0;
-    setores.forEach(s => { matriz[s] = {}; totaisSetor[s] = 0; });
-    crits.forEach(cr => { totaisCrit[cr] = 0; });
-
+    // Construir matriz por setor: HH e Pontos por criticidade
+    const setoresSet = [...new Set(osValidas.map(o=>o.desc_setor||o.setor))];
+    const data = {};
+    setoresSet.forEach(s => { data[s] = {hh:{alta:0,media:0,baixa:0}, pts:{alta:0,media:0,baixa:0}}; });
     osValidas.forEach(o => {
-      const s  = o.desc_setor||o.setor;
-      const hh = o.hh_prev_os || 0;
-      if (!matriz[s][o.proj_criticidade]) matriz[s][o.proj_criticidade] = 0;
-      matriz[s][o.proj_criticidade] += hh;
-      totaisSetor[s] += hh;
-      totaisCrit[o.proj_criticidade] = (totaisCrit[o.proj_criticidade]||0) + hh;
-      totalGeral += hh;
+      const s = o.desc_setor||o.setor;
+      const cr = o.proj_criticidade;
+      if (!data[s] || !cr) return;
+      data[s].hh[cr]  = (data[s].hh[cr]||0) + (o.hh_prev_os||0);
+      if (!o.cod_servico || String(o.cod_servico) === '1')
+        data[s].pts[cr] = (data[s].pts[cr]||0) + 1;
     });
 
-    // HH diário da equipe própria para calcular dias
-    const hhDiaEq = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
-    const diasTotal = hhDiaEq > 0 ? Math.round(totalGeral / hhDiaEq) : null;
+    const isHH   = _visaoSetor !== 'pts';
+    const chave  = isHH ? 'hh' : 'pts';
+    const unid   = isHH ? 'h' : '';
+    const label  = isHH ? 'HH' : 'Pontos';
 
-    const thead = `<div class="ps-tab-row ps-tab-head">
-      <div class="ps-tab-cell ps-tab-setor-col">Setor</div>
-      ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit ps-tab-crit-narrow" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
-      <div class="ps-tab-cell ps-tab-total">Total Setor</div>
+    const setores = setoresSet.map(s => {
+      const v = data[s][chave];
+      const total = (v.alta||0)+(v.media||0)+(v.baixa||0);
+      return {s, v, total};
+    }).filter(d=>d.total>0).sort((a,b)=>b.total-a.total);
+
+    if (!setores.length) return '<div class="ps-tab-vazio">Sem dados</div>';
+
+    const totalGeral = setores.reduce((sum,d)=>sum+d.total,0);
+    const maxVal = setores[0].total;
+
+    // Acumulado
+    let acum = 0;
+    const rows = setores.map(d => {
+      acum += d.total;
+      const pctAcum = Math.round(acum/totalGeral*100);
+      const pct     = Math.round(d.total/totalGeral*100);
+      return {...d, pct, pctAcum};
+    });
+
+    // índice do corte 80%
+    const corteIdx = rows.findIndex(d=>d.pctAcum>=80);
+
+    // Toggle
+    const toggle = `<div style="display:flex;gap:4px;margin-bottom:10px">
+      <button class="ps-pareto-toggle${isHH?' on':''}" data-action="set-visao-setor" data-val="hh">${label==='HH'?'<b>HH</b>':'HH'}</button>
+      <button class="ps-pareto-toggle${!isHH?' on':''}" data-action="set-visao-setor" data-val="pts">${!isHH?'<b>Pontos</b>':'Pontos'}</button>
     </div>`;
 
-    const rows = setores.map(s => {
-      const pctSetor = totalGeral>0?Math.round(totaisSetor[s]/totalGeral*100):0;
-      const cells = crits.map(cr => {
-        const hh = matriz[s][cr] || 0;
-        return `<div class="ps-tab-cell ps-tab-crit-narrow">${hh>0?fmtNum(hh,0)+'h':'—'}</div>`;
-      }).join('');
-      return `<div class="ps-tab-row">
-        <div class="ps-tab-cell ps-tab-setor-col" title="${s}">${s}</div>
-        ${cells}
-        <div class="ps-tab-cell ps-tab-total">${fmtNum(totaisSetor[s],0)}h <span class="ps-tab-pct">(${pctSetor}%)</span></div>
+    // Barras pareto
+    const barsHtml = rows.map((d,i) => {
+      const wA = maxVal>0?(d.v.alta||0)/maxVal*100:0;
+      const wM = maxVal>0?(d.v.media||0)/maxVal*100:0;
+      const wB = maxVal>0?(d.v.baixa||0)/maxVal*100:0;
+      const corAcum = d.pctAcum<=80?'#dc2626':'var(--color-text-tertiary)';
+      const divider = (corteIdx>=0&&i===corteIdx+1)
+        ? `<div class="ps-pareto-divider"><span>corte 80%</span></div>` : '';
+      return divider+`<div class="ps-pareto-row">
+        <div class="ps-pareto-lbl" title="${d.s}">${d.s}</div>
+        <div class="ps-pareto-bar-wrap">
+          <div class="ps-pareto-bar">
+            ${d.v.alta>0?`<div style="width:${wA.toFixed(1)}%;background:#ef4444;height:100%"></div>`:''}
+            ${d.v.media>0?`<div style="width:${wM.toFixed(1)}%;background:#f59e0b;height:100%"></div>`:''}
+            ${d.v.baixa>0?`<div style="width:${wB.toFixed(1)}%;background:#22c55e;height:100%"></div>`:''}
+          </div>
+        </div>
+        <div class="ps-pareto-val">${fmtNum(d.total,0)}${unid}</div>
+        <div class="ps-pareto-acum" style="color:${corAcum}">${d.pctAcum}%</div>
       </div>`;
     }).join('');
 
-    const tfoot = `
-      <div class="ps-tab-row ps-tab-foot">
-        <div class="ps-tab-cell ps-tab-setor-col">Total HH</div>
-        ${crits.map(cr=>`<div class="ps-tab-cell">${fmtNum(totaisCrit[cr]||0,0)}h</div>`).join('')}
-        <div class="ps-tab-cell ps-tab-total">${fmtNum(totalGeral,0)}h</div>
-      </div>
-      <div class="ps-tab-row ps-tab-foot" style="background:#f0fdf4">
-        <div class="ps-tab-cell ps-tab-setor-col" style="color:#16a34a">Total dias</div>
-        ${crits.map(cr=>{
-          const hhCr = totaisCrit[cr]||0;
-          const dias = hhDiaEq>0 ? Math.round(hhCr/hhDiaEq) : null;
-          return `<div class="ps-tab-cell" style="color:#16a34a">${dias!==null?dias+'d':'—'}</div>`;
-        }).join('')}
-        <div class="ps-tab-cell ps-tab-total" style="color:#16a34a">${diasTotal!==null?diasTotal+'d':'—'}</div>
-      </div>`;
+    // Legenda barras
+    const legenda = `<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--color-text-secondary)">
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#ef4444;display:inline-block"></span>Alta</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#f59e0b;display:inline-block"></span>Média</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span>Baixa</span>
+      <span style="color:var(--color-text-tertiary);margin-left:4px">% = acumulado</span>
+    </div>`;
 
-    return `<div class="ps-tabela-wrap">${thead}${rows}${tfoot}</div>`;
+    // Tabela compacta
+    const tabHtml = `<table class="ps-pareto-tab">
+      <thead><tr>
+        <th>#</th><th>Setor</th>
+        <th style="text-align:right">${label}</th>
+        <th style="text-align:right">%</th>
+        <th style="text-align:right">Acum.</th>
+      </tr></thead>
+      <tbody>${rows.map((d,i)=>`<tr${d.pctAcum<=80?' class="ps-pareto-top"':''}>
+        <td style="color:var(--color-text-tertiary)">${i+1}</td>
+        <td title="${d.s}" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.s}</td>
+        <td style="text-align:right;font-weight:500">${fmtNum(d.total,0)}${unid}</td>
+        <td style="text-align:right;color:var(--color-text-secondary)">${d.pct}%</td>
+        <td style="text-align:right;font-weight:500;color:${d.pctAcum<=80?'#dc2626':'var(--color-text-secondary)'}">${d.pctAcum}%</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr>
+        <td colspan="2" style="font-weight:500">Total</td>
+        <td style="text-align:right;font-weight:500">${fmtNum(totalGeral,0)}${unid}</td>
+        <td style="text-align:right">100%</td><td></td>
+      </tr></tfoot>
+    </table>`;
+
+    return `<div>
+      ${toggle}
+      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;align-items:start">
+        <div>${barsHtml}${legenda}</div>
+        <div>${tabHtml}</div>
+      </div>
+    </div>`;
   }
 
   /* ── 3 Cenários de previsão ── */
@@ -774,6 +820,7 @@ window.Modulos.proj_caldeiraria = (() => {
         e.stopPropagation();
         const a=btn.dataset.action, os=btn.dataset.os;
         switch(a){
+          case 'set-visao-setor': _visaoSetor=btn.dataset.val; renderizar(); break;
           case 'inc-prop': _nEqProp++; renderizar(); break;
           case 'dec-prop': if(_nEqProp>1)_nEqProp--; renderizar(); break;
           case 'inc-terc': _nEqTerc++; renderizar(); break;
@@ -1183,7 +1230,22 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-bloco-mo-titulo i{font-size:13px;}
 .ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;}
 
-/* Tabela setor x criticidade */
+/* Pareto setor */
+.ps-pareto-toggle{height:22px;padding:0 10px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
+.ps-pareto-toggle.on{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
+.ps-pareto-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
+.ps-pareto-lbl{font-size:10px;color:var(--color-text-secondary);width:110px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ps-pareto-bar-wrap{flex:1;}
+.ps-pareto-bar{height:16px;border-radius:2px;overflow:hidden;display:flex;background:var(--color-background-secondary);}
+.ps-pareto-val{font-size:10px;font-weight:600;color:var(--color-text-primary);width:50px;text-align:right;flex-shrink:0;}
+.ps-pareto-acum{font-size:10px;font-weight:600;width:30px;text-align:right;flex-shrink:0;}
+.ps-pareto-divider{font-size:9px;color:#dc2626;padding:5px 0 3px;border-top:1px dashed #dc2626;margin:5px 0 4px;display:flex;align-items:center;gap:6px;}
+.ps-pareto-tab{width:100%;font-size:10px;border-collapse:collapse;}
+.ps-pareto-tab th{text-align:left;font-size:9px;font-weight:700;color:#9ca3af;padding:4px 6px;border-bottom:1px solid var(--border);letter-spacing:.04em;text-transform:uppercase;}
+.ps-pareto-tab td{padding:4px 6px;border-bottom:0.5px solid var(--border);color:var(--color-text-primary);font-size:10px;}
+.ps-pareto-tab tfoot tr td{border-top:1px solid var(--border);border-bottom:none;font-weight:600;}
+.ps-pareto-tab tr.ps-pareto-top td{background:var(--color-background-secondary);}
+/* Tabela setor x criticidade (mantida para fallback) */
 .ps-tabela-wrap{overflow-x:auto;}
 .ps-tab-row{display:flex;border-bottom:1px solid var(--border);min-width:300px;}
 .ps-tab-row:last-child{border-bottom:none;}
