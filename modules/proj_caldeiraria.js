@@ -235,7 +235,11 @@ window.Modulos.proj_caldeiraria = (() => {
     const total   = lista.length;
     const enc     = osEnc(lista).length;
     // Pontos = OS com cod_servico '1' (ponto principal); sem cod_servico tambem conta
-    const pontos  = lista.filter(o => !o.cod_servico || String(o.cod_servico) === '1');
+    const pontos  = lista.filter(o => {
+      const _sl = (o.status_os||'').toLowerCase();
+      if (_sl.includes('cancel')||_sl.includes('suspend')) return false;
+      return !o.cod_servico || String(o.cod_servico) === '1';
+    });
     const ptTotal = pontos.length;
     const ptEnc   = osEnc(pontos).length;
     const pPT     = ptTotal>0?Math.round(ptEnc/ptTotal*100):0;
