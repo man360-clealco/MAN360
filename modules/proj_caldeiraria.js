@@ -54,7 +54,6 @@ window.Modulos.proj_caldeiraria = (() => {
           if (fs==='encerrada')    return sl.includes('encerr');
           if (fs==='programada')   return sl.includes('program')||sl.includes('gerada')||sl.includes('aberta')||sl===''||!sl;
           if (fs==='andamento')    return sl.includes('andamento')||sl.includes('execu');
-          if (fs==='cancelada')    return sl.includes('cancel')||sl.includes('suspend');
           return sl.includes(fs);
         });
         if (!match) return false;
@@ -90,13 +89,16 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   /* ── Previsão de conclusão ── */
+  function _isCan(o){ const sl=(o.status_os||'').toLowerCase(); return sl.includes('cancel')||sl.includes('suspend'); }
+
   function calcPrevisao(lista) {
     if (!_dtInicio) return {prop:null,terc:null,custoTerc:null};
     const hoje = new Date().toISOString().split('T')[0];
-    const hhTotProp = lista.filter(o=>o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro').reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    // Projeção usa apenas OS válidas (sem canceladas/suspensas) — assim alinha com slide.html
+    const hhTotProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhRestProp = Math.max(0, hhTotProp - hhEncProp);
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
     const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
@@ -107,6 +109,17 @@ window.Modulos.proj_caldeiraria = (() => {
     // Projeção terceiro: usa data de início específica da equipe terceira
     const resTerc = (_nEqTerc>0 && _dtInicioTerc) ? calcDataConclusao(_dtInicioTerc, hhRestTerc, hhDiarioTerc) : null;
     const custoTerc = _nEqTerc>0 ? hhRestTerc * _valorHH : null;
+    // Calcular delta (atraso / adiantado) via curva ideal
+    let diasDelta = null, adiantado = null, hhDelta = null;
+    if (_dtInicio && hhDiarioProp > 0 && hhTotProp > 0) {
+      const _ideal = _curvaIdealFn(_dtInicio, hhTotProp, hhDiarioProp);
+      const _hojeD = new Date(); _hojeD.setHours(12,0,0,0);
+      let _hhIdealHoje = 0;
+      for (const pt of _ideal) { if (pt.d <= _hojeD) _hhIdealHoje = pt.hh; else break; }
+      hhDelta    = hhEncProp - _hhIdealHoje;
+      diasDelta  = Math.round(hhDelta / hhDiarioProp);
+      adiantado  = diasDelta >= 0;
+    }
     return {
       prop:      resProp ? resProp.data : null,
       terc:      resTerc ? resTerc.data : null,
@@ -115,6 +128,7 @@ window.Modulos.proj_caldeiraria = (() => {
       custoTerc, hhRestTerc,
       mesesProp: resProp ? (resProp.dias/26).toFixed(1) : null,
       mesesTerc: resTerc ? (resTerc.dias/26).toFixed(1) : null,
+      diasDelta, adiantado, hhDelta,
     };
   }
 
@@ -140,7 +154,8 @@ window.Modulos.proj_caldeiraria = (() => {
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
     if (error) console.error('carregarOS:',error);
-    _os = data||[];
+    // Excluir canceladas/suspensas de TUDO na fonte
+    _os = (data||[]).filter(o=>{ const sl=(o.status_os||'').toLowerCase(); return !sl.includes('cancel')&&!sl.includes('suspend'); });
     // Propagar tipo da OS pai (cod_servico=1) para OS filhas (cod_servico>1)
     const _tipoByOS = {};
     _os.forEach(o => { if (!o.cod_servico || String(o.cod_servico) === '1') _tipoByOS[o.os] = o.proj_tipo_intervencao; });
@@ -225,7 +240,7 @@ window.Modulos.proj_caldeiraria = (() => {
             <button class="ps-btn-sm" id="btn-edit-tipos" title="Editar tipos"><i class="ti ti-pencil"></i></button>
           </label>
           <div class="ps-chips-wrap" id="ps-chips-tipos">
-            ${tiposChips||'<span style="font-size:10px;color:#9ca3af">Nenhum tipo</span>'}
+            ${tiposChips||'<span style="font-size:10px;color:#4b5563">Nenhum tipo</span>'}
           </div>
         </div>
       </div>
@@ -312,6 +327,17 @@ window.Modulos.proj_caldeiraria = (() => {
     const prev = calcPrevisao(lista);
     const valorOpts = VALORES_HH.map(v=>`<option value="${v}"${v===_valorHH?' selected':''}>R$ ${v}/HH</option>`).join('');
 
+    const corSit = prev.adiantado === null ? '#6b7280' : prev.adiantado ? 'var(--green)' : 'var(--red)';
+    const sitLabel = prev.diasDelta === null ? '—'
+      : prev.diasDelta === 0 ? 'Em dia'
+      : prev.adiantado ? `Adiantado +${prev.diasDelta}D`
+      : `Atraso ${prev.diasDelta}D`;
+    const cardSit = `<div class="ps-prev-card">
+      <div class="ps-prev-lbl"><i class="ti ti-activity"></i> Em Relação ao Plano</div>
+      <div class="ps-prev-val" style="color:${corSit};font-size:${prev.diasDelta!==null?'20px':'16px'}">${sitLabel}</div>
+      <div class="ps-prev-sub">${prev.hhDelta!==null?fmtNum(Math.abs(prev.hhDelta),0)+'h de diferença':''}</div>
+    </div>`;
+
     const cardProp = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-users"></i> Previsão Conclusão — MO Própria</div>
       <div class="ps-prev-val${prev.prop?'':' vazio'}">${prev.prop||'—'}</div>
@@ -371,7 +397,7 @@ window.Modulos.proj_caldeiraria = (() => {
         </div>`:''}
       </div>
       <div class="ps-prev-grid">
-        ${cardProp}${_nEqTerc>0?cardTerc:''}${_nEqTerc>0?cardCusto:''}
+        ${cardSit}${cardProp}${_nEqTerc>0?cardTerc:''}${_nEqTerc>0?cardCusto:''}
       </div>
 
       ${htmlBlocosMO(lista)}
@@ -402,12 +428,19 @@ window.Modulos.proj_caldeiraria = (() => {
 
   function desenharCurvaS(cvEl, lista) {
     if (!_dtInicio||!lista.length) return;
+    const dpr=window.devicePixelRatio||1;
+    const W=cvEl.offsetWidth||760;
+    const H=260;
+    cvEl.width=Math.round(W*dpr);
+    cvEl.height=Math.round(H*dpr);
+    cvEl.style.width=W+'px';
+    cvEl.style.height=H+'px';
     const ctx=cvEl.getContext('2d');
-    const W=cvEl.width=cvEl.offsetWidth||760;
-    const H=cvEl.height=260;
-    const totalHH=lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    ctx.scale(dpr,dpr);
+    const _listaVal=lista.filter(o=>!_isCan(o));
+    const totalHH=_listaVal.reduce((s,o)=>s+(o.hh_prev_os||0),0);
     if(!totalHH) return;
-    const hhEnc=lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhEnc=_listaVal.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhDia=HH_DIA_COLAB*PESSOAS_EQ*_nEqProp;
     const hojeIso=new Date().toISOString().split('T')[0];
     const hoje=new Date(hojeIso+'T12:00:00');
@@ -491,6 +524,24 @@ window.Modulos.proj_caldeiraria = (() => {
     ctx.strokeStyle='#22c55e';ctx.lineWidth=2.5;ctx.setLineDash([6,3]);
     ctx.beginPath();ctx.moveTo(LX+190,LY);ctx.lineTo(LX+208,LY);ctx.stroke();
     ctx.setLineDash([]);ctx.fillStyle='#374151';ctx.fillText('Projeção',LX+212,LY+3);
+
+    // Badge atraso / adiantado no canto superior direito do gráfico
+    if (_dtInicio && hhDia > 0 && totalHH > 0) {
+      const _idealD=_curvaIdealFn(_dtInicio,totalHH,hhDia);
+      const _hojeD2=new Date(); _hojeD2.setHours(12,0,0,0);
+      let _hhIdealH=0;
+      for(const pt of _idealD){if(pt.d<=_hojeD2)_hhIdealH=pt.hh; else break;}
+      const _diasD=Math.round((hhEnc-_hhIdealH)/Math.max(hhDia,1));
+      const _bdgLbl=_diasD===0?'Em dia':_diasD>0?`+${_diasD}D`:`${_diasD}D`;
+      const _bdgCor=_diasD>=0?'#16a34a':'#dc2626';
+      ctx.font='bold 9px Arial';
+      const _bW=ctx.measureText(_bdgLbl).width+14;
+      const _bX=ax+cW-_bW-4, _bY=ay+6;
+      ctx.fillStyle=_bdgCor;
+      ctx.beginPath();ctx.roundRect(_bX,_bY,_bW,16,3);ctx.fill();
+      ctx.fillStyle='#fff';ctx.textAlign='center';
+      ctx.fillText(_bdgLbl,_bX+_bW/2,_bY+11);
+    }
   }
 
   function htmlCurvaS(lista) {
@@ -646,9 +697,10 @@ window.Modulos.proj_caldeiraria = (() => {
 
   /* ── 3 Cenários de previsão ── */
   function htmlCenarios(lista, moTipo, nEq, hhMesFn) {
-    const osMO = moTipo === 'proprio'
+    const osMO = (moTipo === 'proprio'
       ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
-      : lista.filter(o => o.proj_mo_tipo === 'terceiro');
+      : lista.filter(o => o.proj_mo_tipo === 'terceiro')
+    ).filter(o => !_isCan(o));
 
     const cenarios = [
       { label: 'Só Alta criticidade',      crits: ['alta'],                isTudo: false },
@@ -812,7 +864,6 @@ window.Modulos.proj_caldeiraria = (() => {
       ['encerrada','Encerrada','#16a34a','#dcfce7'],
       ['programada','Programada','#d97706','#fef3c7'],
       ['andamento','Em andamento','#2563eb','#dbeafe'],
-      ['cancelada','Cancelada','#dc2626','#fee2e2'],
     ];
     const setores = setoresDistintos();
     const setorOpts = setores.map(s=>`<option value="${s}"${s===_filtSetor?' selected':''}>${s}</option>`).join('');
@@ -1180,17 +1231,17 @@ window.Modulos.proj_caldeiraria = (() => {
       '<div id="rel-opts" style="display:flex;flex-direction:column;gap:8px">' +
         '<button id="opc-none" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">📄</span>' +
-          '<span><b style="display:block;font-size:12px">Sem fotos</b><span style="font-size:10px;color:#6b7280">Leve e rápido · ideal para e-mail</span></span>' +
+          '<span><b style="display:block;font-size:12px">Sem fotos</b><span style="font-size:10px;color:#374151">Leve e rápido · ideal para e-mail</span></span>' +
         '</button>' +
         '<button id="opc-comp" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">🗜</span>' +
-          '<span><b style="display:block;font-size:12px">Fotos comprimidas</b><span style="font-size:10px;color:#6b7280">Equilibrado · ~5MB estimado</span></span>' +
+          '<span><b style="display:block;font-size:12px">Fotos comprimidas</b><span style="font-size:10px;color:#374151">Equilibrado · ~5MB estimado</span></span>' +
         '</button>' +
         '<button id="opc-orig" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">📷</span>' +
-          '<span><b style="display:block;font-size:12px">Fotos originais</b><span style="font-size:10px;color:#6b7280">Alta qualidade · arquivo maior</span></span>' +
+          '<span><b style="display:block;font-size:12px">Fotos originais</b><span style="font-size:10px;color:#374151">Alta qualidade · arquivo maior</span></span>' +
         '</button>' +
-        '<button id="opc-cancel" style="width:100%;margin-top:4px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:10px;color:#6b7280">Cancelar</button>' +
+        '<button id="opc-cancel" style="width:100%;margin-top:4px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:10px;color:#374151">Cancelar</button>' +
       '</div>';
     ov.appendChild(modal);
     document.body.appendChild(ov);
@@ -1243,7 +1294,7 @@ window.Modulos.proj_caldeiraria = (() => {
     s.textContent=`
 .ps-mod{display:flex;flex-direction:column;gap:12px;}
 .ps-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
-.ps-card-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);}
+.ps-card-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);}
 .ps-card-titulo i{font-size:13px;}
 
 /* Filtros */
@@ -1252,14 +1303,14 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-filtro-bloco{display:flex;flex-direction:column;gap:6px;padding:0 16px 0 0;}
 .ps-filtro-equipe{min-width:120px;flex-shrink:0;}
 .ps-filtro-sep-v{width:1px;background:var(--border);flex-shrink:0;margin:0 16px;}
-.ps-flbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;display:flex;align-items:center;gap:5px;}
-.ps-flbl-inline{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;flex-shrink:0;}
+.ps-flbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;display:flex;align-items:center;gap:5px;}
+.ps-flbl-inline{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;flex-shrink:0;}
 .ps-sel{height:30px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
 .ps-chips-wrap{display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:26px;}
-.ps-chip{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;user-select:none;flex-shrink:0;}
+.ps-chip{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);font-size:10px;font-weight:600;color:#374151;cursor:pointer;user-select:none;flex-shrink:0;}
 .ps-chip.ativo{border-color:var(--chip-c,#7c3aed);background:var(--chip-bg,#ede9fe);color:var(--chip-c,#7c3aed);}
 .ps-chip[data-tipo].ativo{border-color:#7c3aed;background:#ede9fe;color:#7c3aed;}
-.ps-btn-sm{width:22px;height:22px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:#6b7280;flex-shrink:0;padding:0;}
+.ps-btn-sm{width:22px;height:22px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:#374151;flex-shrink:0;padding:0;}
 .ps-btn-sm:hover{background:#1e1e1e;color:#fff;border-color:#1e1e1e;}
 .ps-btn-sm.red:hover{background:#dc2626;border-color:#dc2626;color:#fff;}
 .ps-fsep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
@@ -1269,9 +1320,9 @@ window.Modulos.proj_caldeiraria = (() => {
 @media(max-width:600px){.ps-kpi-grid{grid-template-columns:repeat(2,1fr);}}
 .ps-kpi{padding:13px 14px;border-right:1px solid var(--border);}
 .ps-kpi:last-child{border-right:none;}
-.ps-kpi-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:5px;}
+.ps-kpi-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:5px;}
 .ps-kpi-val{font-size:22px;font-weight:700;line-height:1;margin-bottom:2px;color:#1a1a1a;}
-.ps-kpi-sub{font-size:9px;color:#9ca3af;}
+.ps-kpi-sub{font-size:9px;color:#4b5563;}
 .ps-kpi-bar{height:3px;border-radius:2px;background:var(--border);margin-top:7px;overflow:hidden;}
 .ps-kpi-fill{height:100%;border-radius:2px;}
 
@@ -1279,7 +1330,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-projecao-config{display:flex;gap:16px;padding:12px 14px;flex-wrap:wrap;align-items:flex-start;border-bottom:1px solid var(--border);}
 .ps-cap-bloco{display:flex;flex-direction:column;gap:5px;}
 .ps-cap-sep{width:1px;background:var(--border);flex-shrink:0;align-self:stretch;}
-.ps-cap-sub{font-size:9px;color:#9ca3af;}
+.ps-cap-sub{font-size:9px;color:#4b5563;}
 .ps-num-input{display:flex;align-items:center;gap:6px;}
 .ps-num-btn{width:26px;height:26px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);cursor:pointer;font-size:14px;font-weight:700;color:#374151;display:flex;align-items:center;justify-content:center;}
 .ps-num-btn:hover{background:var(--yellow,#F8C100);border-color:#daa900;}
@@ -1287,15 +1338,15 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-date-input{height:30px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
 
 /* Cards previsão */
-.ps-prev-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--border);}
+.ps-prev-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0;border-top:1px solid var(--border);}
 @media(max-width:600px){.ps-prev-grid{grid-template-columns:1fr;}}
 .ps-prev-card{padding:14px 16px;border-right:1px solid var(--border);}
 .ps-prev-card:last-child{border-right:none;}
-.ps-prev-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+.ps-prev-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
 .ps-prev-lbl i{font-size:12px;}
 .ps-prev-val{font-size:20px;font-weight:700;color:#1a1a1a;margin-bottom:3px;}
 .ps-prev-val.vazio{color:#d1d5db;font-size:16px;}
-.ps-prev-sub{font-size:9px;color:#9ca3af;display:flex;align-items:center;gap:4px;}
+.ps-prev-sub{font-size:9px;color:#4b5563;display:flex;align-items:center;gap:4px;}
 .ps-sel-valor{height:22px;padding:0 5px;border:1px solid var(--border);border-radius:3px;font-family:var(--font);font-size:9px;color:#374151;background:var(--bg);}
 
 /* Lista */
@@ -1303,22 +1354,22 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-busca-input:focus{outline:none;border-color:#F8C100;}
 .ps-lista-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
 .ps-lista-filtros{display:flex;gap:5px;align-items:center;flex-wrap:wrap;}
-.ps-lista-count{padding:1px 7px;border-radius:10px;background:#f3f4f6;font-size:9px;font-weight:700;color:#9ca3af;margin-left:4px;}
+.ps-lista-count{padding:1px 7px;border-radius:10px;background:#f3f4f6;font-size:9px;font-weight:700;color:#4b5563;margin-left:4px;}
 .ps-lista{overflow-x:auto;}
-.ps-lista-empty{padding:24px;text-align:center;color:#9ca3af;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;}
+.ps-lista-empty{padding:24px;text-align:center;color:#4b5563;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;}
 .ps-os-row{border-bottom:1px solid var(--border);}
 .ps-os-row:last-child{border-bottom:none;}
 .ps-os-row.enc{opacity:.65;}
 .ps-os-head{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;min-width:520px;}
 .ps-os-head:hover{background:#fafafa;}
 .ps-os-num{font-size:10px;font-weight:700;color:#374151;flex-shrink:0;width:75px;}
-.ps-os-desc{font-size:11px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ps-os-hh{font-size:10px;font-weight:600;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;}
+.ps-os-desc{font-size:11px;color:#374151;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ps-os-hh{font-size:10px;font-weight:600;color:#4b5563;flex-shrink:0;width:52px;text-align:right;}
 .ps-os-badges{display:flex;gap:4px;flex-shrink:0;}
 .ps-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;}
-.ps-os-chev{font-size:12px;color:#9ca3af;flex-shrink:0;transition:transform .2s;}
+.ps-os-chev{font-size:12px;color:#4b5563;flex-shrink:0;transition:transform .2s;}
 .ps-os-chev.rot{transform:rotate(180deg);}
-.ps-foto-btn{display:flex;align-items:center;gap:3px;height:22px;padding:0 7px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;color:#9ca3af;flex-shrink:0;}
+.ps-foto-btn{display:flex;align-items:center;gap:3px;height:22px;padding:0 7px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;color:#4b5563;flex-shrink:0;}
 .ps-foto-btn:hover{border-color:#2563eb;color:#2563eb;}
 .ps-foto-btn.tem-fotos{border-color:#2563eb;color:#2563eb;background:#dbeafe;}
 .ps-foto-btn span{font-size:9px;font-weight:700;}
@@ -1328,13 +1379,13 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-os-edit-grid{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;}
 .ps-os-edit-bloco{display:flex;flex-direction:column;gap:5px;min-width:130px;}
 .ps-crit-opts,.ps-mo-opts{display:flex;gap:4px;}
-.ps-crit-btn,.ps-mo-btn{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
+.ps-crit-btn,.ps-mo-btn{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;}
 .ps-crit-btn.ativo{background:var(--cc,#9ca3af);border-color:var(--cc,#9ca3af);color:#fff;}
 .ps-mo-btn.ativo{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
 
 /* Fotos */
 .ps-fotos-wrap{padding:10px 14px 12px;background:#f9fafb;border-top:1px solid var(--border);}
-.ps-fotos-titulo{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:10px;font-weight:700;color:#6b7280;}
+.ps-fotos-titulo{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:10px;font-weight:700;color:#374151;}
 .ps-btn-upload{display:flex;align-items:center;gap:4px;height:24px;padding:0 9px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;font-weight:600;color:#374151;font-family:var(--font);}
 .ps-btn-upload:hover{border-color:var(--yellow,#F8C100);background:#fffbeb;}
 .ps-fotos-grid{display:flex;gap:8px;flex-wrap:wrap;}
@@ -1348,7 +1399,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
 .ps-modal{background:var(--card-bg);border-radius:var(--radius);box-shadow:0 8px 30px rgba(0,0,0,.15);padding:18px;width:300px;max-width:100%;}
 .ps-modal-titulo{font-size:13px;font-weight:700;margin-bottom:12px;color:#1a1a1a;}
-.ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;width:100%;}
+.ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;width:100%;}
 .ps-btn-primary{height:28px;padding:0 12px;border:none;border-radius:var(--radius-sm);background:var(--yellow,#F8C100);font-family:var(--font);font-size:11px;font-weight:700;color:#1a1a1a;cursor:pointer;display:flex;align-items:center;gap:5px;justify-content:center;}
 .ps-btn-secondary{height:28px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);font-family:var(--font);font-size:10px;font-weight:700;color:#374151;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;}
 .ps-btn-secondary:hover{background:#f3f4f6;}
@@ -1356,7 +1407,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-rel-opt:hover{border-color:var(--yellow);background:#fffbeb;}
 .ps-rel-opt-icone{font-size:22px;flex-shrink:0;}
 .ps-rel-opt-titulo{font-size:12px;font-weight:700;color:#1a1a1a;}
-.ps-rel-opt-sub{font-size:10px;color:#6b7280;margin-top:2px;}
+.ps-rel-opt-sub{font-size:10px;color:#374151;margin-top:2px;}
 .ps-btn-primary:hover{background:#daa900;}
 .ps-tipos-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;margin-bottom:4px;}
 .ps-tipo-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);}
@@ -1384,12 +1435,12 @@ window.Modulos.proj_caldeiraria = (() => {
 }
 .ps-bloco-mo{padding:14px 16px;border-right:1px solid var(--border);}
 .ps-bloco-mo:last-child{border-right:none;}
-.ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
+.ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
 .ps-bloco-mo-titulo i{font-size:13px;}
-.ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;}
+.ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;margin-bottom:6px;}
 
 /* Pareto setor */
-.ps-pareto-toggle{height:22px;padding:0 10px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
+.ps-pareto-toggle{height:22px;padding:0 10px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;}
 .ps-pareto-toggle.on{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
 .ps-pareto-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
 .ps-pareto-lbl{font-size:10px;color:var(--color-text-secondary);width:110px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
@@ -1399,7 +1450,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-pareto-acum{font-size:10px;font-weight:600;width:30px;text-align:right;flex-shrink:0;}
 .ps-pareto-divider{font-size:9px;color:#dc2626;padding:5px 0 3px;border-top:1px dashed #dc2626;margin:5px 0 4px;display:flex;align-items:center;gap:6px;}
 .ps-pareto-tab{width:100%;font-size:10px;border-collapse:collapse;}
-.ps-pareto-tab th{text-align:left;font-size:9px;font-weight:700;color:#9ca3af;padding:4px 6px;border-bottom:1px solid var(--border);letter-spacing:.04em;text-transform:uppercase;}
+.ps-pareto-tab th{text-align:left;font-size:9px;font-weight:700;color:#4b5563;padding:4px 6px;border-bottom:1px solid var(--border);letter-spacing:.04em;text-transform:uppercase;}
 .ps-pareto-tab td{padding:4px 6px;border-bottom:0.5px solid var(--border);color:var(--color-text-primary);font-size:10px;}
 .ps-pareto-tab tfoot tr td{border-top:1px solid var(--border);border-bottom:none;font-weight:600;}
 .ps-pareto-tab tr.ps-pareto-top td{background:var(--color-background-secondary);}
@@ -1415,15 +1466,15 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-tab-crit{font-weight:700;}
 .ps-tab-crit-narrow{flex:0.6;min-width:44px;}
 .ps-tab-total{flex:1.2;font-weight:700;color:#374151;}
-.ps-tab-pct{font-size:9px;color:#9ca3af;font-weight:400;}
-.ps-tab-vazio{font-size:10px;color:#9ca3af;padding:8px 0;}
+.ps-tab-pct{font-size:9px;color:#4b5563;font-weight:400;}
+.ps-tab-vazio{font-size:10px;color:#4b5563;padding:8px 0;}
 .ps-tabela-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 
 /* Curva S inline */
 .ps-curva-hdr{display:flex;align-items:center;gap:7px;padding:9px 14px;cursor:pointer;user-select:none;border-radius:0;}
 .ps-curva-hdr:hover{background:#fafafa;}
 .ps-curva-hdr .ti-chart-line{font-size:13px;color:#F8C100;}
-.ps-curva-chev{font-size:12px;color:#9ca3af;margin-left:auto;}
+.ps-curva-chev{font-size:12px;color:#4b5563;margin-left:auto;}
 .ps-curva-body{border-top:1px solid var(--border);}
 .ps-curva-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));border-bottom:1px solid var(--border);}
 .ps-curva-kpi-item{padding:10px 12px;border-right:1px solid var(--border);}
@@ -1432,7 +1483,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
 /* Cenários */
 .ps-cen-hdr{display:flex;gap:0;background:#fafafa;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;}
-.ps-cen-hdr span{flex:1;padding:5px 8px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;border-right:1px solid var(--border);}
+.ps-cen-hdr span{flex:1;padding:5px 8px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;border-right:1px solid var(--border);}
 .ps-cen-hdr span:first-child{flex:2;}
 .ps-cen-hdr span:last-child{border-right:none;}
 .ps-cen-wrap{border:1px solid var(--border);border-radius:0 0 var(--radius-sm) var(--radius-sm);overflow:hidden;}
@@ -1441,10 +1492,10 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-cen-label{flex:2;padding:7px 8px;font-size:10px;font-weight:600;color:#374151;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:2px;}
 .ps-cen-hh{flex:1;padding:7px 8px;font-size:10px;font-weight:700;color:#374151;text-align:right;border-right:1px solid var(--border);}
 .ps-cen-prev{flex:1;padding:7px 8px;font-size:10px;color:#374151;text-align:right;}
-.ps-cen-hint{padding:6px 8px;font-size:9px;color:#9ca3af;background:#fafafa;border-top:1px solid var(--border);}
+.ps-cen-hint{padding:6px 8px;font-size:9px;color:#4b5563;background:#fafafa;border-top:1px solid var(--border);}
 .ps-delta{font-size:8px;font-weight:600;color:#d97706;background:#fef3c7;padding:1px 5px;border-radius:3px;width:fit-content;}
-.ps-cen-dias{font-size:9px;color:#9ca3af;font-weight:400;}
-.ps-prev-obs{font-size:8px;color:#9ca3af;font-style:italic;margin-top:4px;}
+.ps-cen-dias{font-size:9px;color:#4b5563;font-weight:400;}
+.ps-prev-obs{font-size:8px;color:#4b5563;font-style:italic;margin-top:4px;}
 .ps-blocos-mo.ps-bloco-unico{grid-template-columns:1fr;}
 
 /* Aviso custo terceirizado */
@@ -1470,7 +1521,7 @@ window.Modulos.proj_caldeiraria = (() => {
     try { await carregarTudo(); renderizar(); }
     catch(e) {
       console.error('proj_caldeiraria:',e);
-      _container.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
+      _container.innerHTML=`<div style="padding:40px;text-align:center;color:#4b5563"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
     }
   }
 
