@@ -103,7 +103,9 @@ window.Modulos.proj_caldeiraria = (() => {
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
     const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
     const hhDiarioTerc = HH_DIA_COLAB * PESSOAS_EQ * _nEqTerc;
-    // Projeção própria: se já executou algo, projeta a partir de hoje
+    // Data do plano original (partindo do início, sem considerar execução atual)
+    const resIdeal = (_nEqProp>0 && _dtInicio) ? calcDataConclusao(_dtInicio, hhTotProp, hhDiarioProp) : null;
+    // Projeção real: se já executou algo, projeta a partir de hoje com HH restante
     const startProp = hhEncProp > 0 ? hoje : _dtInicio;
     const resProp = _nEqProp>0 ? calcDataConclusao(startProp, hhRestProp, hhDiarioProp) : null;
     // Projeção terceiro: usa data de início específica da equipe terceira
@@ -129,6 +131,7 @@ window.Modulos.proj_caldeiraria = (() => {
       mesesProp: resProp ? (resProp.dias/26).toFixed(1) : null,
       mesesTerc: resTerc ? (resTerc.dias/26).toFixed(1) : null,
       diasDelta, adiantado, hhDelta,
+      propIdeal: resIdeal ? resIdeal.data : null,
     };
   }
 
@@ -327,15 +330,20 @@ window.Modulos.proj_caldeiraria = (() => {
     const prev = calcPrevisao(lista);
     const valorOpts = VALORES_HH.map(v=>`<option value="${v}"${v===_valorHH?' selected':''}>R$ ${v}/HH</option>`).join('');
 
-    const corSit = prev.adiantado === null ? '#6b7280' : prev.adiantado ? 'var(--green)' : 'var(--red)';
+    const corSit = prev.adiantado === null ? '#374151' : prev.adiantado ? 'var(--green)' : 'var(--red)';
     const sitLabel = prev.diasDelta === null ? '—'
       : prev.diasDelta === 0 ? 'Em dia'
       : prev.adiantado ? `Adiantado +${prev.diasDelta}D`
       : `Atraso ${prev.diasDelta}D`;
+    // Mostrar deslocamento: data plano → data prevista
+    const movLabel = (prev.propIdeal && prev.prop && prev.propIdeal !== prev.prop)
+      ? `${prev.propIdeal} → ${prev.prop}`
+      : '';
     const cardSit = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-activity"></i> Em Relação ao Plano</div>
       <div class="ps-prev-val" style="color:${corSit};font-size:${prev.diasDelta!==null?'20px':'16px'}">${sitLabel}</div>
-      <div class="ps-prev-sub">${prev.hhDelta!==null?fmtNum(Math.abs(prev.hhDelta),0)+'h de diferença':''}</div>
+      ${movLabel?`<div class="ps-prev-sub" style="margin-top:5px;font-size:9px;line-height:1.4">Plano: ${prev.propIdeal}<br>Previsto: <strong>${prev.prop}</strong></div>`:''}
+      <div class="ps-prev-sub" style="margin-top:4px">${prev.hhDelta!==null?fmtNum(Math.abs(prev.hhDelta),0)+'h de diferença em ritmo':''}</div>
     </div>`;
 
     const cardProp = `<div class="ps-prev-card">
@@ -344,7 +352,7 @@ window.Modulos.proj_caldeiraria = (() => {
       ${prev.mesesProp
         ?`<div class="ps-prev-sub">${prev.mesesProp} meses · ${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês</div>`
         :'<div class="ps-prev-sub">Informe a data de início</div>'}
-      <div class="ps-prev-obs">* Considerando a execução de toda a matriz</div>
+      <div class="ps-prev-obs">* Projetado a partir de hoje com HH restante — o atraso já está embutido nesta data</div>
     </div>`;
 
     const cardTerc = `<div class="ps-prev-card">
@@ -762,7 +770,8 @@ window.Modulos.proj_caldeiraria = (() => {
       ? 'Informe a data de início para ver previsões'
       : nEq === 0 ? 'Configure equipes para ver previsões' : '';
 
-    return `<div class="ps-cen-wrap">${rows}${hint?`<div class="ps-cen-hint">${hint}</div>`:''}</div>`;
+    const notaCen = _dtInicio ? `<div class="ps-cen-hint" style="color:#4b5563">* Datas calculadas a partir de hoje com o HH restante de cada cenário · atraso atual já incorporado</div>` : '';
+    return `<div class="ps-cen-wrap">${rows}${hint?`<div class="ps-cen-hint">${hint}</div>`:''}${notaCen}</div>`;
   }
 
   function htmlListaOS(lista) {
