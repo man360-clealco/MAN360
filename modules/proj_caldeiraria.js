@@ -514,13 +514,13 @@ window.Modulos.proj_caldeiraria = (() => {
     const cor=p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
     const prev=calcPrevisao(lista);
     return `${hdr}<div class="ps-curva-body">
-      <div class="ps-curva-kpis">
-        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">HH Executado</div><div class="ps-curva-kpi-val">${fmtNum(hhEnc,0)}/${fmtNum(hhTot,0)}h</div></div>
-        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-curva-kpi-val">${encL.length}/${lista.length}</div></div>
-        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">Pontos</div><div class="ps-curva-kpi-val">${ptEnc}/${ptTotal} PT</div></div>
-        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">% OS Enc.</div><div class="ps-curva-kpi-val" style="color:${cor(pOS)}">${pOS}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div></div>
-        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">% HH Enc.</div><div class="ps-curva-kpi-val" style="color:${cor(pHH)}">${pHH}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pHH}%;background:${cor(pHH)}"></div></div></div>
-        ${prev.prop?`<div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">Previsão conclusão</div><div class="ps-curva-kpi-val" style="font-size:13px">${prev.prop}</div></div>`:''}
+      <div class="ps-kpi-grid" style="border:none;border-top:1px solid var(--border);grid-template-columns:repeat(auto-fit,minmax(100px,1fr))">
+        <div class="ps-kpi"><div class="ps-kpi-lbl">HH Executado</div><div class="ps-kpi-val" style="font-size:16px">${fmtNum(hhEnc,0)}<span style="font-size:11px">/${fmtNum(hhTot,0)}h</span></div><div class="ps-kpi-sub">${fmtNum(hhTot-hhEnc,0)}h restantes</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-kpi-val" style="font-size:16px">${encL.length}<span style="font-size:11px">/${lista.length}</span></div><div class="ps-kpi-sub">${lista.length-encL.length} pendentes</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">Pontos</div><div class="ps-kpi-val" style="font-size:16px">${ptEnc}<span style="font-size:11px">/${ptTotal} PT</span></div><div class="ps-kpi-sub">${Math.round(ptTotal>0?ptEnc/ptTotal*100:0)}% encerrados</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">% OS Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pOS)}">${pOS}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">% HH Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pHH)}">${pHH}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pHH}%;background:${cor(pHH)}"></div></div></div>
+        ${prev.prop?`<div class="ps-kpi"><div class="ps-kpi-lbl">Previsão conclusão</div><div class="ps-kpi-val" style="font-size:14px">${prev.prop}</div><div class="ps-kpi-sub">${prev.mesesProp?prev.mesesProp+' meses':''}</div></div>`:''}
       </div>
       <canvas id="ps-curva-canvas" style="display:block;width:100%;border-top:1px solid var(--border)"></canvas>
     </div>`;
