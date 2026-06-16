@@ -34,6 +34,8 @@ window.Modulos.proj_caldeiraria = (() => {
   let _valorHH    = 120;
   let _osExpandida= null;
   let _osVerFotos = null;
+  let _filtBusca  = '';
+  let _dtInicioTerc = '';
 
   /* ── Helpers ── */
   function fmtNum(n,d){ return (n||0).toLocaleString('pt-BR',{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
@@ -54,6 +56,12 @@ window.Modulos.proj_caldeiraria = (() => {
           return sl.includes(fs);
         });
         if (!match) return false;
+      }
+      // Filtro busca por texto parcial
+      if (_filtBusca) {
+        const q = _filtBusca.toLowerCase();
+        const txt = ((o.desc_servico||'') + ' ' + (o.desc_os||'')).toLowerCase();
+        if (!txt.includes(q)) return false;
       }
       return true;
     });
@@ -82,6 +90,7 @@ window.Modulos.proj_caldeiraria = (() => {
   /* ── Previsão de conclusão ── */
   function calcPrevisao(lista) {
     if (!_dtInicio) return {prop:null,terc:null,custoTerc:null};
+    const hoje = new Date().toISOString().split('T')[0];
     const hhTotProp = lista.filter(o=>o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo).reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro').reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
@@ -90,8 +99,11 @@ window.Modulos.proj_caldeiraria = (() => {
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
     const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
     const hhDiarioTerc = HH_DIA_COLAB * PESSOAS_EQ * _nEqTerc;
-    const resProp = _nEqProp>0 ? calcDataConclusao(_dtInicio, hhRestProp, hhDiarioProp) : null;
-    const resTerc = _nEqTerc>0 ? calcDataConclusao(_dtInicio, hhRestTerc, hhDiarioTerc) : null;
+    // Projeção própria: se já executou algo, projeta a partir de hoje
+    const startProp = hhEncProp > 0 ? hoje : _dtInicio;
+    const resProp = _nEqProp>0 ? calcDataConclusao(startProp, hhRestProp, hhDiarioProp) : null;
+    // Projeção terceiro: usa data de início específica da equipe terceira
+    const resTerc = (_nEqTerc>0 && _dtInicioTerc) ? calcDataConclusao(_dtInicioTerc, hhRestTerc, hhDiarioTerc) : null;
     const custoTerc = _nEqTerc>0 ? hhRestTerc * _valorHH : null;
     return {
       prop:      resProp ? resProp.data : null,
@@ -127,6 +139,10 @@ window.Modulos.proj_caldeiraria = (() => {
     const { data, error } = await q.order('os');
     if (error) console.error('carregarOS:',error);
     _os = data||[];
+    // Propagar tipo da OS pai (cod_servico=1) para OS filhas (cod_servico>1)
+    const _tipoByOS = {};
+    _os.forEach(o => { if (!o.cod_servico || String(o.cod_servico) === '1') _tipoByOS[o.os] = o.proj_tipo_intervencao; });
+    _os.forEach(o => { if (o.cod_servico && String(o.cod_servico) !== '1' && !o.proj_tipo_intervencao) o.proj_tipo_intervencao = _tipoByOS[o.os] || null; });
   }
 
   async function carregarFotos(osList) {
@@ -341,9 +357,15 @@ window.Modulos.proj_caldeiraria = (() => {
           </div>
           <div class="ps-cap-sub">${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'—'}</div>
         </div>
+        ${_nEqTerc>0?`
+        <div class="ps-cap-sep"></div>
+        <div class="ps-cap-bloco">
+          <label class="ps-flbl"><i class="ti ti-calendar"></i> Início eq. terceiro</label>
+          <input type="date" class="ps-date-input" id="ps-dt-inicio-terc" value="${_dtInicioTerc}">
+        </div>`:''}
       </div>
       <div class="ps-prev-grid">
-        ${cardProp}${cardTerc}${cardCusto}
+        ${cardProp}${_nEqTerc>0?cardTerc:''}${_nEqTerc>0?cardCusto:''}
       </div>
 
       ${htmlBlocosMO(lista)}
@@ -450,15 +472,21 @@ window.Modulos.proj_caldeiraria = (() => {
       const hhEnc  = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
       const hhRest = Math.max(0, hhTot - hhEnc);
 
-      // Previsão + dias — mesma lógica que calcPrevisao (pula domingos)
+      // Previsão + dias — projeta a partir de hoje se há execução, ou da data início
+      const _hoje = new Date().toISOString().split('T')[0];
+      const _startCen = moTipo === 'terceiro'
+        ? (_dtInicioTerc || _dtInicio)
+        : (hhEnc > 0 ? _hoje : _dtInicio);
       let previsao = '—';
-      if (_dtInicio && hhDiario > 0 && hhRest > 0) {
-        const res = calcDataConclusao(_dtInicio, hhRest, hhDiario);
+      if (_startCen && hhDiario > 0 && hhRest > 0) {
+        const res = calcDataConclusao(_startCen, hhRest, hhDiario);
         if (res) previsao = res.data + ' <span class="ps-cen-dias">('+res.dias+' dias)</span>';
       } else if (hhRest === 0 && hhTot > 0) {
         previsao = 'Concluído';
       } else if (nEq === 0) {
         previsao = 'Sem equipes';
+      } else if (!_startCen) {
+        previsao = moTipo === 'terceiro' ? 'Informe início da equipe' : '—';
       }
 
       // Delta — cenário 1 compara c/ 0, cenário 2 compara com cenário 1
@@ -613,20 +641,38 @@ window.Modulos.proj_caldeiraria = (() => {
       ${htmlFiltros()}
       ${htmlKPIs(metricas)}
       ${htmlProjecao(metricas)}
-      <div class="ps-aviso-terc">
-        <div class="ps-aviso-terc-inner">
-          <i class="ti ti-info-circle"></i>
-          <span>Custo total se 100% terceirizado:</span>
-          <strong>${fmtMoeda(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0) * _valorHH)}</strong>
-          <span class="ps-aviso-sub">${fmtNum(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0),0)} HH × R$${_valorHH}/HH</span>
-        </div>
-      </div>
+      ${(()=>{
+        const _hhTG = metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+        const _hhEG = metricas.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+        const _hhRG = Math.max(0,_hhTG-_hhEG);
+        return `<div class="ps-aviso-terc">
+          <div class="ps-aviso-terc-inner" style="gap:16px;flex-wrap:wrap">
+            <i class="ti ti-info-circle" style="flex-shrink:0"></i>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:10px;color:#92400e">Custo se 100% terceirizado</span>
+              <strong style="font-size:15px">${fmtMoeda(_hhTG*_valorHH)}</strong>
+              <span class="ps-aviso-sub">${fmtNum(_hhTG,0)} HH × R$${_valorHH}/HH</span>
+            </div>
+            <div style="width:1px;background:#fcd34d;align-self:stretch"></div>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:10px;color:#92400e">Custo se terceirizado o restante</span>
+              <strong style="font-size:15px">${fmtMoeda(_hhRG*_valorHH)}</strong>
+              <span class="ps-aviso-sub">${fmtNum(_hhRG,0)} HH restantes × R$${_valorHH}/HH</span>
+            </div>
+          </div>
+        </div>`;
+      })()}
       <div class="ps-card">
         <div class="ps-lista-hdr">
-          <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap">
+            <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
+            <input type="text" id="ps-busca" class="ps-busca-input" placeholder="Pesquisar..." value="${_filtBusca}" style="flex:1;min-width:140px;max-width:260px">
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
+              <button class="ps-btn-primary" id="btn-slide" style="flex-shrink:0"><i class="ti ti-chart-line"></i> Curva S</button>
+            </div>
+          </div>
           ${htmlFiltrosLista()}
-          <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
-          <button class="ps-btn-secondary" id="btn-slide" style="flex-shrink:0"><i class="ti ti-chart-line"></i> Gerar Slide</button>
         </div>
         <div class="ps-lista">${htmlListaOS(lista)}</div>
       </div>
@@ -700,6 +746,22 @@ window.Modulos.proj_caldeiraria = (() => {
 
     /* Data início */
     c.querySelector('#ps-dt-inicio').addEventListener('change', e=>{ _dtInicio=e.target.value; renderizar(); });
+
+    /* Data início equipe terceiro */
+    const inpDtTerc = c.querySelector('#ps-dt-inicio-terc');
+    if (inpDtTerc) inpDtTerc.addEventListener('change', e=>{ _dtInicioTerc=e.target.value; renderizar(); });
+
+    /* Busca por texto */
+    const inpBusca = c.querySelector('#ps-busca');
+    if (inpBusca) inpBusca.addEventListener('input', e=>{
+      _filtBusca = e.target.value;
+      clearTimeout(window._psBuscaTimer);
+      window._psBuscaTimer = setTimeout(()=>{
+        renderizar();
+        const nb = _container.querySelector('#ps-busca');
+        if (nb) { nb.focus(); nb.setSelectionRange(_filtBusca.length, _filtBusca.length); }
+      }, 250);
+    });
 
     /* Valor HH */
     const selValor=c.querySelector('#ps-valor-hh');
@@ -1032,7 +1094,9 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-sel-valor{height:22px;padding:0 5px;border:1px solid var(--border);border-radius:3px;font-family:var(--font);font-size:9px;color:#374151;background:var(--bg);}
 
 /* Lista */
-.ps-lista-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.ps-busca-input{height:28px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
+.ps-busca-input:focus{outline:none;border-color:#F8C100;}
+.ps-lista-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
 .ps-lista-filtros{display:flex;gap:5px;align-items:center;flex-wrap:wrap;}
 .ps-lista-count{padding:1px 7px;border-radius:10px;background:#f3f4f6;font-size:9px;font-weight:700;color:#9ca3af;margin-left:4px;}
 .ps-lista{overflow-x:auto;}
