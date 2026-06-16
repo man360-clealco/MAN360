@@ -121,7 +121,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
   async function carregarOS() {
     let q = getDB().from('ordens_servico')
-      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
+      .select('os,cod_servico,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
       .eq('equipe',_filtEquipe).neq('tipo_atividade','MCU');
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
@@ -215,8 +215,13 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   function htmlKPIs(lista) {
-    const total  = lista.length;
-    const enc    = osEnc(lista).length;
+    const total   = lista.length;
+    const enc     = osEnc(lista).length;
+    // Pontos = OS com cod_servico '1' (ponto principal); sem cod_servico tambem conta
+    const pontos  = lista.filter(o => !o.cod_servico || String(o.cod_servico) === '1');
+    const ptTotal = pontos.length;
+    const ptEnc   = osEnc(pontos).length;
+    const pPT     = ptTotal>0?Math.round(ptEnc/ptTotal*100):0;
     const hhTot  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const hhEnc  = osEnc(lista).reduce((s,o)=>s+(o.hh_prev_os||0),0);
     const pOS    = total>0?Math.round(enc/total*100):0;
@@ -227,6 +232,11 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-kpi-lbl">Qtd. OS</div>
         <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(total)}</div>
         <div class="ps-kpi-sub">${enc} encerradas</div>
+      </div>
+      <div class="ps-kpi">
+        <div class="ps-kpi-lbl">Pontos</div>
+        <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(ptTotal)}</div>
+        <div class="ps-kpi-sub">${ptEnc} encerrados · ${pPT}%</div>
       </div>
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">HH Previsto</div>
@@ -988,7 +998,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-fsep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
 
 /* KPIs */
-.ps-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+.ps-kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
 @media(max-width:600px){.ps-kpi-grid{grid-template-columns:repeat(2,1fr);}}
 .ps-kpi{padding:13px 14px;border-right:1px solid var(--border);}
 .ps-kpi:last-child{border-right:none;}
