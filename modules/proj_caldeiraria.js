@@ -37,6 +37,7 @@ window.Modulos.proj_caldeiraria = (() => {
   let _filtBusca  = '';
   let _dtInicioTerc = '';
   let _visaoSetor = 'hh';
+  let _curvaExpanded = false;
 
   /* ── Helpers ── */
   function fmtNum(n,d){ return (n||0).toLocaleString('pt-BR',{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
@@ -374,9 +375,156 @@ window.Modulos.proj_caldeiraria = (() => {
       </div>
 
       ${htmlBlocosMO(lista)}
+      <div class="ps-bloco-mo" style="border-right:none;padding:0;border-top:1px solid var(--border)">
+        ${htmlCurvaS(lista)}
+      </div>
     </div>`;
   }
 
+
+  /* ── Helpers Curva S inline ── */
+  function _curvaIdealFn(dtIni, totalHH, hhDia) {
+    const pts=[]; let acum=0, d=new Date(dtIni+'T12:00:00');
+    pts.push({d:new Date(d),hh:0}); let g=0;
+    while(acum<totalHH&&g<500){
+      g++; if(d.getDay()!==0) acum=Math.min(acum+hhDia,totalHH);
+      d=new Date(d); d.setDate(d.getDate()+1); pts.push({d:new Date(d),hh:acum});
+    }
+    return pts;
+  }
+  function _dataConcFn(dtIni, hhRest, hhDia) {
+    if(hhRest<=0) return new Date(dtIni+'T12:00:00');
+    let d=new Date(dtIni+'T12:00:00'), cont=0;
+    const mx=hhRest/Math.max(hhDia,1);
+    while(cont<mx&&cont<500){d=new Date(d);d.setDate(d.getDate()+1);if(d.getDay()!==0)cont++;}
+    return d;
+  }
+
+  function desenharCurvaS(cvEl, lista) {
+    if (!_dtInicio||!lista.length) return;
+    const ctx=cvEl.getContext('2d');
+    const W=cvEl.width=cvEl.offsetWidth||760;
+    const H=cvEl.height=260;
+    const totalHH=lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    if(!totalHH) return;
+    const hhEnc=lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhDia=HH_DIA_COLAB*PESSOAS_EQ*_nEqProp;
+    const hojeIso=new Date().toISOString().split('T')[0];
+    const hoje=new Date(hojeIso+'T12:00:00');
+    const dtIniDt=new Date(_dtInicio+'T12:00:00');
+    const hhRest=Math.max(0,totalHH-hhEnc);
+    const dtConc=_dataConcFn(hojeIso,hhRest,hhDia);
+    const ideal=_curvaIdealFn(_dtInicio,totalHH,hhDia);
+    const real=[{d:dtIniDt,hh:0},{d:new Date(hoje),hh:hhEnc}];
+    const proj=[{d:new Date(hoje),hh:hhEnc}];
+    let a=hhEnc, d2=new Date(hoje), g=0;
+    while(a<totalHH&&g<500){g++;d2=new Date(d2);d2.setDate(d2.getDate()+1);if(d2.getDay()!==0)a=Math.min(a+hhDia,totalHH);proj.push({d:new Date(d2),hh:a});}
+    const PAD={t:26,r:12,b:28,l:48};
+    const cW=W-PAD.l-PAD.r, cH=H-PAD.t-PAD.b;
+    const ax=PAD.l, ay=PAD.t;
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+    const tMin=dtIniDt.getTime(), tMax=dtConc.getTime();
+    function px(d){return ax+Math.max(0,Math.min(1,(d.getTime()-tMin)/(tMax-tMin)))*cW;}
+    function py(hh){return ay+cH-(hh/totalHH)*cH;}
+    // Grid
+    const nG=4;
+    for(let i=0;i<=nG;i++){
+      const y=ay+(i/nG)*cH, hh=totalHH*(1-i/nG);
+      ctx.strokeStyle='#e8e8e8';ctx.lineWidth=0.8;ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(ax,y);ctx.lineTo(ax+cW,y);ctx.stroke();
+      ctx.fillStyle='#6b7280';ctx.font='bold 8px Arial';ctx.textAlign='right';
+      ctx.fillText(Math.round(hh)+'h',ax-4,y+3);
+    }
+    // Riscas verticais semana
+    const ms=new Date(dtIniDt); while(ms.getDay()!==1) ms.setDate(ms.getDate()+1);
+    ctx.strokeStyle='#eeeeee';ctx.lineWidth=0.6;ctx.setLineDash([2,2]);
+    while(ms.getTime()<=tMax){const x=px(ms);ctx.beginPath();ctx.moveTo(x,ay);ctx.lineTo(x,ay+cH);ctx.stroke();ms.setDate(ms.getDate()+7);}
+    ctx.setLineDash([]);
+    // Labels X meses
+    const meses=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    ctx.fillStyle='#6b7280';ctx.font='bold 8.5px Arial';ctx.textAlign='center';
+    let dm=new Date(dtIniDt.getFullYear(),dtIniDt.getMonth(),1);
+    while(dm.getTime()<=tMax){
+      const x=px(dm);
+      if(x>ax+10&&x<=ax+cW-10) ctx.fillText(meses[dm.getMonth()]+'/'+String(dm.getFullYear()).slice(2),x,ay+cH+18);
+      dm=new Date(dm.getFullYear(),dm.getMonth()+1,1);
+    }
+    // Ideal
+    ctx.beginPath();ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2.5;ctx.setLineDash([]);
+    ideal.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();
+    // Projeção área+linha
+    ctx.beginPath();ctx.moveTo(px(proj[0].d),py(0));
+    proj.forEach(pt=>ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.lineTo(px(proj[proj.length-1].d),py(0));
+    ctx.closePath();ctx.fillStyle='rgba(134,239,172,0.15)';ctx.fill();
+    ctx.beginPath();ctx.strokeStyle='#22c55e';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+    proj.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();ctx.setLineDash([]);
+    // Real
+    ctx.beginPath();ctx.strokeStyle='#16a34a';ctx.lineWidth=3;
+    real.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();
+    const lr=real[real.length-1];
+    ctx.beginPath();ctx.arc(px(lr.d),py(lr.hh),4.5,0,Math.PI*2);ctx.fillStyle='#16a34a';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    // Label início
+    const xIni=px(dtIniDt),yIni=py(0);
+    ctx.beginPath();ctx.arc(xIni,yIni,4,0,Math.PI*2);ctx.fillStyle='#16a34a';ctx.fill();
+    // Hoje
+    const xH=px(hoje);
+    ctx.strokeStyle='#111';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(xH,ay);ctx.lineTo(xH,ay+cH);ctx.stroke();ctx.setLineDash([]);
+    const hjW=34,hjH=13;
+    ctx.fillStyle='#111';ctx.beginPath();ctx.roundRect(xH-hjW/2,ay-hjH-2,hjW,hjH,2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 7.5px Arial';ctx.textAlign='center';
+    ctx.fillText('HOJE',xH,ay-4);
+    // Legenda
+    const LX=ax,LY=12;
+    ctx.font='bold 8px Arial';ctx.textAlign='left';ctx.setLineDash([]);
+    ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2.5;
+    ctx.beginPath();ctx.moveTo(LX,LY);ctx.lineTo(LX+18,LY);ctx.stroke();
+    ctx.fillStyle='#374151';ctx.fillText('Plano ideal',LX+22,LY+3);
+    ctx.strokeStyle='#16a34a';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(LX+96,LY);ctx.lineTo(LX+114,LY);ctx.stroke();
+    ctx.fillStyle='#374151';ctx.fillText('Realizado',LX+118,LY+3);
+    ctx.strokeStyle='#22c55e';ctx.lineWidth=2.5;ctx.setLineDash([6,3]);
+    ctx.beginPath();ctx.moveTo(LX+190,LY);ctx.lineTo(LX+208,LY);ctx.stroke();
+    ctx.setLineDash([]);ctx.fillStyle='#374151';ctx.fillText('Projeção',LX+212,LY+3);
+  }
+
+  function htmlCurvaS(lista) {
+    if (!_dtInicio) return '';
+    const exp=_curvaExpanded;
+    const icon=exp?'ti-chevron-up':'ti-chevron-down';
+    const hdr=`<div class="ps-curva-hdr" data-action="toggle-curva">
+      <i class="ti ti-chart-line" aria-hidden="true"></i>
+      <span class="ps-bloco-mo-sub-titulo" style="margin:0">Curva S</span>
+      <i class="ti ${icon} ps-curva-chev"></i>
+    </div>`;
+    if (!exp) return hdr;
+    const hhTot=lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const encL=lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr'));
+    const hhEnc=encL.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const pOS=lista.length>0?Math.round(encL.length/lista.length*100):0;
+    const pHH=hhTot>0?Math.round(hhEnc/hhTot*100):0;
+    const pontos=lista.filter(o=>{const sl=(o.status_os||'').toLowerCase();if(sl.includes('cancel')||sl.includes('suspend'))return false;return !o.cod_servico||String(o.cod_servico)==='1';});
+    const ptTotal=pontos.length;
+    const ptEnc=pontos.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).length;
+    const cor=p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
+    const prev=calcPrevisao(lista);
+    return `${hdr}<div class="ps-curva-body">
+      <div class="ps-curva-kpis">
+        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">HH Executado</div><div class="ps-curva-kpi-val">${fmtNum(hhEnc,0)}/${fmtNum(hhTot,0)}h</div></div>
+        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-curva-kpi-val">${encL.length}/${lista.length}</div></div>
+        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">Pontos</div><div class="ps-curva-kpi-val">${ptEnc}/${ptTotal} PT</div></div>
+        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">% OS Enc.</div><div class="ps-curva-kpi-val" style="color:${cor(pOS)}">${pOS}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div></div>
+        <div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">% HH Enc.</div><div class="ps-curva-kpi-val" style="color:${cor(pHH)}">${pHH}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pHH}%;background:${cor(pHH)}"></div></div></div>
+        ${prev.prop?`<div class="ps-curva-kpi-item"><div class="ps-kpi-lbl">Previsão conclusão</div><div class="ps-curva-kpi-val" style="font-size:13px">${prev.prop}</div></div>`:''}
+      </div>
+      <canvas id="ps-curva-canvas" style="display:block;width:100%;border-top:1px solid var(--border)"></canvas>
+    </div>`;
+  }
 
   /* ── Pareto Setor × Criticidade (substitui tabela antiga) ── */
   function htmlTabelaSetor(lista, moTipo) {
@@ -396,7 +544,8 @@ window.Modulos.proj_caldeiraria = (() => {
       const cr = o.proj_criticidade;
       if (!data[s] || !cr) return;
       data[s].hh[cr]  = (data[s].hh[cr]||0) + (o.hh_prev_os||0);
-      if (!o.cod_servico || String(o.cod_servico) === '1')
+      const _psl=(o.status_os||'').toLowerCase();
+      if ((!o.cod_servico||String(o.cod_servico)==='1')&&!_psl.includes('cancel')&&!_psl.includes('suspend'))
         data[s].pts[cr] = (data[s].pts[cr]||0) + 1;
     });
 
@@ -728,6 +877,10 @@ window.Modulos.proj_caldeiraria = (() => {
       </div>
     </div>`;
     bindEventos();
+    if (_curvaExpanded && _dtInicio) {
+      const _cv=_container.querySelector('#ps-curva-canvas');
+      if (_cv) desenharCurvaS(_cv, osParaMetricas());
+    }
   }
 
   /* ══════════════════════════════════════
@@ -824,6 +977,7 @@ window.Modulos.proj_caldeiraria = (() => {
         e.stopPropagation();
         const a=btn.dataset.action, os=btn.dataset.os;
         switch(a){
+          case 'toggle-curva': _curvaExpanded=!_curvaExpanded; renderizar(); break;
           case 'set-visao-setor': _visaoSetor=btn.dataset.val; renderizar(); break;
           case 'inc-prop': _nEqProp++; renderizar(); break;
           case 'dec-prop': if(_nEqProp>1)_nEqProp--; renderizar(); break;
@@ -1264,6 +1418,17 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-tab-pct{font-size:9px;color:#9ca3af;font-weight:400;}
 .ps-tab-vazio{font-size:10px;color:#9ca3af;padding:8px 0;}
 .ps-tabela-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+/* Curva S inline */
+.ps-curva-hdr{display:flex;align-items:center;gap:7px;padding:9px 14px;cursor:pointer;user-select:none;border-radius:0;}
+.ps-curva-hdr:hover{background:#fafafa;}
+.ps-curva-hdr .ti-chart-line{font-size:13px;color:#F8C100;}
+.ps-curva-chev{font-size:12px;color:#9ca3af;margin-left:auto;}
+.ps-curva-body{border-top:1px solid var(--border);}
+.ps-curva-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));border-bottom:1px solid var(--border);}
+.ps-curva-kpi-item{padding:10px 12px;border-right:1px solid var(--border);}
+.ps-curva-kpi-item:last-child{border-right:none;}
+.ps-curva-kpi-val{font-size:15px;font-weight:700;color:#1a1a1a;margin-top:3px;}
 
 /* Cenários */
 .ps-cen-hdr{display:flex;gap:0;background:#fafafa;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;}
