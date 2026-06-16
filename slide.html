@@ -36,6 +36,69 @@ async function db(table, q) {
   const r = await fetch(SB_URL+'/rest/v1/'+table+'?'+q,{headers:{'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY}});
   if(!r.ok) throw new Error('DB '+r.status);
   return r.json();
+  // ── Cards ──
+  const CX=10, cardY=10, cardW=CW_CARDS-14, cardH=85, cardGap=10;
+
+  function card(x,y,w,h,bg,border){
+    ctx.fillStyle=bg;
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,5); ctx.fill();
+    if(border){ctx.strokeStyle=border;ctx.lineWidth=1.2;ctx.beginPath();ctx.roundRect(x,y,w,h,5);ctx.stroke();}
+  }
+
+  // Card 1: HH Executado
+  card(CX,cardY,cardW,cardH,'#1a1a1a',null);
+  ctx.fillStyle='rgba(255,255,255,0.65)';
+  ctx.font='bold 9px Arial'; ctx.textAlign='left';
+  ctx.fillText('HH EXECUTADO',CX+10,cardY+18);
+  ctx.fillStyle='#F8C100';
+  ctx.font='bold 22px Arial';
+  ctx.fillText(Math.round(D.hhExec)+'/'+Math.round(D.totalHH)+' HH',CX+10,cardY+52);
+
+  // Card 2: OS Executadas
+  card(CX,cardY+cardH+cardGap,cardW,cardH,'#f5f5f5','#cccccc');
+  ctx.fillStyle='#222222';
+  ctx.font='bold 9px Arial'; ctx.textAlign='left';
+  ctx.fillText('OS EXECUTADAS',CX+10,cardY+cardH+cardGap+18);
+  ctx.fillStyle='#111111';
+  ctx.font='bold 22px Arial';
+  ctx.fillText(D.osExec+'/'+D.osTotal+' OS',CX+10,cardY+cardH+cardGap+52);
+
+  // Card 3: Pontos
+  card(CX,cardY+(cardH+cardGap)*2,cardW,cardH,'#f5f5f5','#cccccc');
+  ctx.fillStyle='#222222';
+  ctx.font='bold 9px Arial'; ctx.textAlign='left';
+  ctx.fillText('PONTOS',CX+10,cardY+(cardH+cardGap)*2+18);
+  ctx.fillStyle='#111111';
+  ctx.font='bold 22px Arial';
+  ctx.fillText(D.ptEnc+'/'+D.ptTotal+' PT',CX+10,cardY+(cardH+cardGap)*2+52);
+
+  // Card 4: Situação
+  const c3bg=D.adiantado?'#f0fdf4':'#fff1f2';
+  const c3bd=D.adiantado?'#4ade80':'#f87171';
+  const c3cor=D.adiantado?'#14532d':'#991b1b';
+  card(CX,cardY+(cardH+cardGap)*3,cardW,cardH,c3bg,c3bd);
+  ctx.fillStyle=c3cor;
+  ctx.font='bold 9px Arial'; ctx.textAlign='left';
+  ctx.fillText('EM RELAÇÃO AO PLANO',CX+10,cardY+(cardH+cardGap)*3+18);
+  let sitLabel;
+  if(D.diasDelta===0) sitLabel='Em dia';
+  else if(D.adiantado) sitLabel='Adiantado +'+D.diasDelta+'D';
+  else sitLabel='Atraso '+D.diasDelta+'D';
+  ctx.fillStyle=c3cor;
+  ctx.font='bold 20px Arial';
+  ctx.fillText(sitLabel,CX+10,cardY+(cardH+cardGap)*3+52);
+
+  // Card 5: Previsão
+  card(CX,cardY+(cardH+cardGap)*4,cardW,cardH,'#f5f5f5','#cccccc');
+  ctx.fillStyle='#222222';
+  ctx.font='bold 9px Arial'; ctx.textAlign='left';
+  ctx.fillText('PREVISÃO DE CONCLUSÃO',CX+8,cardY+(cardH+cardGap)*4+18);
+  ctx.fillStyle='#111111';
+  ctx.font='bold 19px Arial';
+  ctx.fillText(D.dtFmt,CX+10,cardY+(cardH+cardGap)*4+45);
+  ctx.fillStyle='#333333';
+  ctx.font='bold 10px Arial';
+  ctx.fillText('em '+D.diasParaConclusao+' dias',CX+10,cardY+(cardH+cardGap)*4+cardH-12);
 }
 
 function gp(){
@@ -186,10 +249,11 @@ function desenhar(canvas,logo,D){
   ctx.fillStyle='#ffffff';
   ctx.fillRect(0,0,W,H);
 
-  // ── Área do gráfico (curva S apenas, sem cabeçalho e cards) ──
-  const GX=10, GY=10;
-  const GW=W-22, GH=H-20;
-  const PAD={t:38,r:12,b:36,l:56};
+  // ── Área do gráfico (sem cabeçalho, cards à esquerda) ──
+  const CW_CARDS=175;
+  const GX=CW_CARDS+10, GY=10;
+  const GW=W-GX-12, GH=H-20;
+  const PAD={t:38,r:12,b:36,l:54};
   const cW=GW-PAD.l-PAD.r, cH=GH-PAD.t-PAD.b;
   const ax=GX+PAD.l, ay=GY+PAD.t;
 
