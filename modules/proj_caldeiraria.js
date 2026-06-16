@@ -342,8 +342,10 @@ window.Modulos.proj_caldeiraria = (() => {
     const cardSit = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-activity"></i> Em Relação ao Plano</div>
       <div class="ps-prev-val" style="color:${corSit};font-size:${prev.diasDelta!==null?'20px':'16px'}">${sitLabel}</div>
-      ${movLabel?`<div class="ps-prev-sub" style="margin-top:5px;font-size:9px;line-height:1.4">Plano: ${prev.propIdeal}<br>Previsto: <strong>${prev.prop}</strong></div>`:''}
-      <div class="ps-prev-sub" style="margin-top:4px">${prev.hhDelta!==null?fmtNum(Math.abs(prev.hhDelta),0)+'h de diferença em ritmo':''}</div>
+      ${(prev.propIdeal||prev.prop)?`<div style="display:grid;grid-template-columns:max-content 1fr;gap:2px 8px;margin-top:8px;font-size:9.5px;line-height:1.5">
+        <span style="color:#6b7280;font-weight:500">Plano</span><span style="color:#374151">${prev.propIdeal||'—'}</span>
+        <span style="color:#6b7280;font-weight:500">Previsto</span><span style="font-weight:700;color:${corSit}">${prev.prop||'—'}</span>
+      </div>`:''}
     </div>`;
 
     const cardProp = `<div class="ps-prev-card">
@@ -642,21 +644,28 @@ window.Modulos.proj_caldeiraria = (() => {
       <button class="ps-pareto-toggle${!isHH?' on':''}" data-action="set-visao-setor" data-val="pts">${!isHH?'<b>Pontos</b>':'Pontos'}</button>
     </div>`;
 
-    // Barras pareto
+    // Barras pareto com rótulos internos
+    // Mostra rótulo dentro do segmento se ele ocupa >= 8% do total do maior setor
+    const _seg = (w, bg, val, u) => {
+      const showLbl = w >= 8 && val > 0;
+      return `<div style="width:${w.toFixed(1)}%;background:${bg};height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+        ${showLbl?`<span style="font-size:7.5px;font-weight:700;color:#fff;white-space:nowrap;padding:0 2px;pointer-events:none">${fmtNum(val,0)}${u}</span>`:''}
+      </div>`;
+    };
     const barsHtml = rows.map((d,i) => {
       const wA = maxVal>0?(d.v.alta||0)/maxVal*100:0;
       const wM = maxVal>0?(d.v.media||0)/maxVal*100:0;
       const wB = maxVal>0?(d.v.baixa||0)/maxVal*100:0;
       const corAcum = d.pctAcum<=80?'#dc2626':'var(--color-text-tertiary)';
       const divider = (corteIdx>=0&&i===corteIdx+1)
-        ? `<div class="ps-pareto-divider"><span>corte 80%</span></div>` : '';
+        ? `<div class="ps-pareto-divider"><span>80:20</span></div>` : '';
       return divider+`<div class="ps-pareto-row">
         <div class="ps-pareto-lbl" title="${d.s}">${d.s}</div>
         <div class="ps-pareto-bar-wrap">
           <div class="ps-pareto-bar">
-            ${d.v.alta>0?`<div style="width:${wA.toFixed(1)}%;background:#ef4444;height:100%"></div>`:''}
-            ${d.v.media>0?`<div style="width:${wM.toFixed(1)}%;background:#f59e0b;height:100%"></div>`:''}
-            ${d.v.baixa>0?`<div style="width:${wB.toFixed(1)}%;background:#22c55e;height:100%"></div>`:''}
+            ${d.v.alta>0?_seg(wA,'#ef4444',d.v.alta,unid):''}
+            ${d.v.media>0?_seg(wM,'#f59e0b',d.v.media,unid):''}
+            ${d.v.baixa>0?_seg(wB,'#22c55e',d.v.baixa,unid):''}
           </div>
         </div>
         <div class="ps-pareto-val">${fmtNum(d.total,0)}${unid}</div>
@@ -682,7 +691,7 @@ window.Modulos.proj_caldeiraria = (() => {
       </tr></thead>
       <tbody>${rows.map((d,i)=>`<tr${d.pctAcum<=80?' class="ps-pareto-top"':''}>
         <td style="color:var(--color-text-tertiary)">${i+1}</td>
-        <td title="${d.s}" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.s}</td>
+        <td title="${d.s}" style="font-size:9.5px">${d.s}</td>
         <td style="text-align:right;font-weight:500">${fmtNum(d.total,0)}${unid}</td>
         <td style="text-align:right;color:var(--color-text-secondary)">${d.pct}%</td>
         <td style="text-align:right;font-weight:500;color:${d.pctAcum<=80?'#dc2626':'var(--color-text-secondary)'}">${d.pctAcum}%</td>
@@ -928,7 +937,6 @@ window.Modulos.proj_caldeiraria = (() => {
             <input type="text" id="ps-busca" class="ps-busca-input" placeholder="Pesquisar..." value="${_filtBusca}" style="flex:1;min-width:140px;max-width:260px">
             <div style="margin-left:auto;display:flex;gap:6px">
               <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
-              <button class="ps-btn-primary" id="btn-slide" style="flex-shrink:0"><i class="ti ti-chart-line"></i> Curva S</button>
             </div>
           </div>
           ${htmlFiltrosLista()}
@@ -1086,8 +1094,7 @@ window.Modulos.proj_caldeiraria = (() => {
     if (btnRel) btnRel.addEventListener('click', ()=>gerarRelatorio());
 
     /* Slide */
-    const btnSlide = c.querySelector('#btn-slide');
-    if (btnSlide) btnSlide.addEventListener('click', ()=>gerarSlide());
+    // btn-slide removido (Curva S agora embutida na página)
   }
 
   /* ══════════════════════════════════════
@@ -1451,10 +1458,10 @@ window.Modulos.proj_caldeiraria = (() => {
 /* Pareto setor */
 .ps-pareto-toggle{height:22px;padding:0 10px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;}
 .ps-pareto-toggle.on{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
-.ps-pareto-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
-.ps-pareto-lbl{font-size:10px;color:var(--color-text-secondary);width:110px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ps-pareto-row{display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;}
+.ps-pareto-lbl{font-size:9.5px;color:#4b5563;width:140px;flex-shrink:0;white-space:normal;word-break:break-word;line-height:1.25;}
 .ps-pareto-bar-wrap{flex:1;}
-.ps-pareto-bar{height:16px;border-radius:2px;overflow:hidden;display:flex;background:var(--color-background-secondary);}
+.ps-pareto-bar{height:18px;border-radius:2px;overflow:hidden;display:flex;background:var(--color-background-secondary);}
 .ps-pareto-val{font-size:10px;font-weight:600;color:var(--color-text-primary);width:50px;text-align:right;flex-shrink:0;}
 .ps-pareto-acum{font-size:10px;font-weight:600;width:30px;text-align:right;flex-shrink:0;}
 .ps-pareto-divider{font-size:9px;color:#dc2626;padding:5px 0 3px;border-top:1px dashed #dc2626;margin:5px 0 4px;display:flex;align-items:center;gap:6px;}
