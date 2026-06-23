@@ -261,7 +261,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
   function htmlKPIs(lista) {
     const total   = lista.length;
-    const enc     = osEnc(lista).length;
+    const enc     = lista.filter(o => _servEnc(o)).length; // serviços encerrados (status_servico)
     // Pontos = OS com cod_servico '1' (ponto principal); sem cod_servico tambem conta
     const pontos  = lista.filter(o => {
       const _sl = (o.status_os||'').toLowerCase();
@@ -280,7 +280,7 @@ window.Modulos.proj_caldeiraria = (() => {
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">Qtd. OS</div>
         <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(total)}</div>
-        <div class="ps-kpi-sub">${enc} encerradas</div>
+        <div class="ps-kpi-sub">${enc} serv. encerrados</div>
       </div>
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">Pontos</div>
@@ -293,7 +293,7 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-kpi-sub">${fmtNum(hhEnc,0)}h encerradas</div>
       </div>
       <div class="ps-kpi">
-        <div class="ps-kpi-lbl">% OS Encerradas</div>
+        <div class="ps-kpi-lbl">% Serviços Enc.</div>
         <div class="ps-kpi-val" style="color:${cor(pOS)}">${pOS}%</div>
         <div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div>
       </div>
