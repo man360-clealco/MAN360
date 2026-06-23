@@ -8,19 +8,6 @@ const MAN360_CONFIG = {
     key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd3ZWp3dnNtbW9nemRwZ3lhZ2dmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1NTU0NjIsImV4cCI6MjA5NTEzMTQ2Mn0.HgsOjYyHTOiCtjblADpCcwi7SNkK17jjMTdG4Z7H8Uc',
   },
 
-  /*
-    Estrutura de navegação:
-    - group:    label do grupo pai (nível 1)
-    - icon:     ícone tabler (aparece na sidebar e no topbar ao selecionar)
-    - items:    módulos folha diretos do grupo
-    - subgroups: subgrupos colapsáveis dentro do grupo
-
-    status: 'active' = navegável | 'wip' = Em construção
-    module: caminho do JS (só para active)
-
-    ÍCONES: aparecem apenas no cabeçalho da página (topbar) ao selecionar o item.
-    A sidebar mostra só o ícone do GRUPO, sem ícones individuais por item.
-  */
   nav: [
     {
       group: 'Ordens de Serviço',
@@ -123,6 +110,19 @@ const MAN360_CONFIG = {
               status: 'wip',
             },
           ],
+        },
+      ],
+    },
+    {
+      group: 'SSMA',
+      icon: 'shield-check',
+      items: [
+        {
+          label: 'Planos de Ação',
+          page: 'planos-ssma',
+          icon: 'shield-check',
+          status: 'active',
+          module: 'modules/planos-ssma.js',
         },
       ],
     },
