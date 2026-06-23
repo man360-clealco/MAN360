@@ -90,15 +90,24 @@ window.Modulos.proj_caldeiraria = (() => {
 
   /* ── Previsão de conclusão ── */
   function _isCan(o){ const sl=(o.status_os||'').toLowerCase(); return sl.includes('cancel')||sl.includes('suspend'); }
+  // HH do serviço individual (evita dupla contagem de hh_prev_os em OS multi-serviço)
+  function _hhServ(o){ return o.hh_prev_servico ?? o.hh_prev_os ?? 0; }
+  // Serviço encerrado: usa status_servico quando disponível, fallback para status_os
+  // Permite contabilizar HH de serviços encerrados mesmo quando a OS ainda está aberta
+  function _servEnc(o){
+    const ss=(o.status_servico||'').toLowerCase();
+    const so=(o.status_os||'').toLowerCase();
+    return ss.includes('encerr') || (!o.status_servico && so.includes('encerr'));
+  }
 
   function calcPrevisao(lista) {
     if (!_dtInicio) return {prop:null,terc:null,custoTerc:null};
     const hoje = new Date().toISOString().split('T')[0];
     // Projeção usa apenas OS válidas (sem canceladas/suspensas) — assim alinha com slide.html
-    const hhTotProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhTotProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)&&_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)&&_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
     const hhRestProp = Math.max(0, hhTotProp - hhEncProp);
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
     const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
@@ -152,7 +161,7 @@ window.Modulos.proj_caldeiraria = (() => {
 
   async function carregarOS() {
     let q = getDB().from('ordens_servico')
-      .select('os,cod_servico,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
+      .select('os,cod_servico,desc_os,desc_servico,hh_prev_os,hh_prev_servico,hh_real_os,status_os,status_servico,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
       .eq('equipe',_filtEquipe).neq('tipo_atividade','MCU');
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
@@ -262,8 +271,8 @@ window.Modulos.proj_caldeiraria = (() => {
     const ptTotal = pontos.length;
     const ptEnc   = osEnc(pontos).length;
     const pPT     = ptTotal>0?Math.round(ptEnc/ptTotal*100):0;
-    const hhTot  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEnc  = osEnc(lista).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhTot  = lista.reduce((s,o)=>s+_hhServ(o),0);
+    const hhEnc  = lista.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
     const pOS    = total>0?Math.round(enc/total*100):0;
     const pHH    = hhTot>0?Math.round(hhEnc/hhTot*100):0;
     const cor    = p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
@@ -448,9 +457,9 @@ window.Modulos.proj_caldeiraria = (() => {
     const ctx=cvEl.getContext('2d');
     ctx.scale(dpr,dpr);
     const _listaVal=lista.filter(o=>!_isCan(o));
-    const totalHH=_listaVal.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const totalHH=_listaVal.reduce((s,o)=>s+_hhServ(o),0);
     if(!totalHH) return;
-    const hhEnc=_listaVal.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhEnc=_listaVal.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
     const hhDia=HH_DIA_COLAB*PESSOAS_EQ*_nEqProp;
     const hojeIso=new Date().toISOString().split('T')[0];
     const hoje=new Date(hojeIso+'T12:00:00');
@@ -564,14 +573,14 @@ window.Modulos.proj_caldeiraria = (() => {
       <i class="ti ${icon} ps-curva-chev"></i>
     </div>`;
     if (!exp) return hdr;
-    const hhTot=lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const encL=lista.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr'));
-    const hhEnc=encL.reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hhTot=lista.reduce((s,o)=>s+_hhServ(o),0);
+    const encL=lista.filter(o=>_servEnc(o));
+    const hhEnc=encL.reduce((s,o)=>s+_hhServ(o),0);
     const pOS=lista.length>0?Math.round(encL.length/lista.length*100):0;
     const pHH=hhTot>0?Math.round(hhEnc/hhTot*100):0;
     const pontos=lista.filter(o=>{const sl=(o.status_os||'').toLowerCase();if(sl.includes('cancel')||sl.includes('suspend'))return false;return !o.cod_servico||String(o.cod_servico)==='1';});
     const ptTotal=pontos.length;
-    const ptEnc=pontos.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).length;
+    const ptEnc=pontos.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).length; // OS-level: correto
     const cor=p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
     const prev=calcPrevisao(lista);
     return `${hdr}<div class="ps-curva-body">
@@ -604,7 +613,7 @@ window.Modulos.proj_caldeiraria = (() => {
       const s = o.desc_setor||o.setor;
       const cr = o.proj_criticidade;
       if (!data[s] || !cr) return;
-      data[s].hh[cr]  = (data[s].hh[cr]||0) + (o.hh_prev_os||0);
+      data[s].hh[cr]  = (data[s].hh[cr]||0) + _hhServ(o);
       const _psl=(o.status_os||'').toLowerCase();
       if ((!o.cod_servico||String(o.cod_servico)==='1')&&!_psl.includes('cancel')&&!_psl.includes('suspend'))
         data[s].pts[cr] = (data[s].pts[cr]||0) + 1;
@@ -731,13 +740,13 @@ window.Modulos.proj_caldeiraria = (() => {
     // Calcular HH de cada cenário antecipadamente para delta
     const hhCenarios = cenarios.map(cen =>
       (cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade)))
-        .reduce((s,o)=>s+(o.hh_prev_os||0),0)
+        .reduce((s,o)=>s+_hhServ(o),0)
     );
 
     const rows = cenarios.map((cen, idx) => {
       const osC    = cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade));
       const hhTot  = hhCenarios[idx];
-      const hhEnc  = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const hhEnc  = osC.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
       const hhRest = Math.max(0, hhTot - hhEnc);
 
       // Previsão + dias — projeta a partir de hoje se há execução, ou da data início
@@ -910,8 +919,8 @@ window.Modulos.proj_caldeiraria = (() => {
       ${htmlKPIs(metricas)}
       ${htmlProjecao(metricas)}
       ${(()=>{
-        const _hhTG = metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-        const _hhEG = metricas.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+        const _hhTG = metricas.reduce((s,o)=>s+_hhServ(o),0);
+        const _hhEG = metricas.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
         const _hhRG = Math.max(0,_hhTG-_hhEG);
         return `<div class="ps-aviso-terc">
           <div class="ps-aviso-terc-inner" style="gap:16px;flex-wrap:wrap">
@@ -1270,7 +1279,7 @@ window.Modulos.proj_caldeiraria = (() => {
       var agora  = new Date();
       var dtStr  = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
       var totalHH = 0;
-      for (var i=0; i<lista.length; i++) totalHH += (lista[i].hh_prev_os||0);
+      for (var i=0; i<lista.length; i++) totalHH += _hhServ(lista[i]);
 
       var qs = 'equipe='  + encodeURIComponent(_filtEquipe)
              + '&tipos='  + encodeURIComponent(_filtTipos.join('|'))
