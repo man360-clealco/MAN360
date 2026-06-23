@@ -90,14 +90,24 @@ window.Modulos.proj_caldeiraria = (() => {
 
   /* ── Previsão de conclusão ── */
   function _isCan(o){ const sl=(o.status_os||'').toLowerCase(); return sl.includes('cancel')||sl.includes('suspend'); }
-  // HH do serviço individual (evita dupla contagem de hh_prev_os em OS multi-serviço)
-  function _hhServ(o){ return o.hh_prev_servico ?? o.hh_prev_os ?? 0; }
+  // HH do serviço individual — evita dupla contagem de hh_prev_os em OS multi-serviço
+  // Regra: se hh_prev_servico existe, usa. Se não existe, só conta no pai (cod='1'/null).
+  // Filhas sem hh_prev_servico retornam 0 (HH já está no pai).
+  function _ehPai(o){ return !o.cod_servico || String(o.cod_servico) === '1'; }
+  function _hhServ(o){
+    if (o.hh_prev_servico != null) return o.hh_prev_servico;  // dado correto na filha
+    if (_ehPai(o)) return o.hh_prev_os ?? 0;                  // pai carrega o HH da OS
+    return 0;                                                   // filha sem dado = não duplicar
+  }
   // Serviço encerrado: usa status_servico quando disponível, fallback para status_os
-  // Permite contabilizar HH de serviços encerrados mesmo quando a OS ainda está aberta
+  // Se é filha sem status_servico, não conta separadamente (evita double-count de enc)
   function _servEnc(o){
     const ss=(o.status_servico||'').toLowerCase();
-    const so=(o.status_os||'').toLowerCase();
-    return ss.includes('encerr') || (!o.status_servico && so.includes('encerr'));
+    if (ss) return ss.includes('encerr');           // tem status_servico → usa ele
+    if (_ehPai(o)) {                                // pai sem status_servico → fallback OS
+      return (o.status_os||'').toLowerCase().includes('encerr');
+    }
+    return false;                                   // filha sem status_servico → não conta
   }
 
   function calcPrevisao(lista) {
