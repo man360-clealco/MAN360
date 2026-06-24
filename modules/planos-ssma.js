@@ -92,7 +92,7 @@
   let sortCol = null, sortDir = 1;
   let filtros = {
     busca:'', responsavel:[], status:[], situacao:[], checklist:[],
-    risco:[], classificacao:[], composicao:[], modalidadeSv:[],
+    risco:[], reclassificacao:[], composicao:[], modalidadeSv:[],
     valorMin:null, valorMax:null
   };
   let modalCodigo = null;
@@ -236,7 +236,14 @@
       if (filtros.situacao.length     && !filtros.situacao.includes(p.situacao))         return false;
       if (filtros.checklist.length    && !filtros.checklist.includes(p.checklist_cat))   return false;
       if (filtros.risco.length        && !filtros.risco.includes(p.risco))               return false;
-      if (filtros.classificacao.length && !filtros.classificacao.includes(p.classificacao)) return false;
+      if (filtros.reclassificacao && filtros.reclassificacao.length) {
+        const hasSem = filtros.reclassificacao.includes('__sem__');
+        const outros = filtros.reclassificacao.filter(x=>x!=='__sem__');
+        const pRec = p.reclassificacao||'';
+        const matchSem = hasSem && !pRec;
+        const matchVal = outros.length > 0 && outros.includes(pRec);
+        if (!matchSem && !matchVal) return false;
+      }
       if (filtros.valorMin !== null && !isNaN(filtros.valorMin) && vt < filtros.valorMin) return false;
       if (filtros.valorMax !== null && !isNaN(filtros.valorMax) && vt > filtros.valorMax) return false;
       if (filtros.composicao.length) {
@@ -302,7 +309,7 @@
 .ssma-title{font-size:14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#374151;display:flex;align-items:center;gap:8px}
 .ssma-title i{font-size:18px;color:var(--yellow)}
 .ssma-topbar-right{display:flex;gap:8px;align-items:center}
-.ssma-last-import{font-size:10px;color:#9ca3af}
+.ssma-last-import{font-size:10px;color:#6b7280}
 .ssma-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;box-shadow:var(--shadow);align-items:flex-end}
 .ssma-search{display:flex;align-items:center;gap:6px;flex:1;min-width:160px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:0 10px;height:30px;background:var(--bg)}
 .ssma-search input{border:none;background:none;outline:none;font-family:var(--font);font-size:11px;width:100%;color:#374151}
@@ -311,7 +318,7 @@
 .ssma-dd-btn{height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:11px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;color:#374151;white-space:nowrap;transition:border-color 120ms}
 .ssma-dd-btn:hover{border-color:#9ca3af}
 .ssma-dd-btn.ativo{border-color:var(--yellow);background:#fffbeb}
-.ssma-dd-btn i{font-size:13px;color:#6b7280}
+.ssma-dd-btn i{font-size:13px;color:#4b5563}
 .ssma-dd-btn .arr{font-size:10px;margin-left:4px;transition:transform 200ms}
 .ssma-dd-btn.open .arr{transform:rotate(180deg)}
 .dd-badge{background:var(--yellow);color:var(--dark1);border-radius:10px;font-size:9px;font-weight:700;padding:1px 5px;margin-left:2px}
@@ -321,7 +328,7 @@
 .ssma-dd-item:hover{background:var(--bg)}
 .ssma-dd-item input[type=checkbox]{accent-color:var(--yellow);flex-shrink:0;pointer-events:none}
 .ssma-val-wrap{display:flex;flex-direction:column;gap:3px}
-.ssma-val-lbl{font-size:10px;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.ssma-val-lbl{font-size:10px;color:#6b7280;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
 .ssma-val-row{display:flex;align-items:center;gap:4px}
 .ssma-val-input{height:30px;width:86px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:11px;color:#374151;padding:0 8px;text-align:right}
 .ssma-val-input:focus{outline:none;border-color:var(--yellow)}
@@ -335,7 +342,7 @@
 .ssma-grafico-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .ssma-grafico-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#374151}
 .ssma-canvas-wrap{position:relative;height:220px;width:100%}
-.ssma-legenda{display:flex;align-items:center;gap:16px;font-size:10px;color:#6b7280;padding:0 2px 8px;flex-wrap:wrap}
+.ssma-legenda{display:flex;align-items:center;gap:16px;font-size:10px;color:#374151;padding:0 2px 8px;flex-wrap:wrap}
 .ssma-legenda-item{display:flex;align-items:center;gap:5px}
 .trat-dot{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
 .trat-green{background:#16a34a}
@@ -343,7 +350,7 @@
 .trat-gray{background:#d1d5db}
 .ssma-table-wrap{overflow-x:auto;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
 .ssma-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
-.ssma-table th{text-align:left;padding:8px 10px;background:var(--bg);color:#6b7280;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;cursor:pointer;user-select:none}
+.ssma-table th{text-align:left;padding:8px 10px;background:var(--bg);color:#4b5563;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;cursor:pointer;user-select:none}
 .ssma-table th:hover{color:#374151}
 .ssma-table th .sico{font-size:10px;margin-left:3px;opacity:.3}
 .ssma-table th.sorted .sico{opacity:1;color:var(--yellow)}
@@ -352,7 +359,7 @@
 .ssma-table tbody tr:hover td{background:#fafafa;cursor:pointer}
 .ssma-table tbody tr:last-child td{border-bottom:none}
 .ssma-desc{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.45;word-break:break-word;white-space:normal}
-.ssma-tfoot{padding:8px 14px;font-size:11px;color:#9ca3af;background:var(--bg);border-top:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius)}
+.ssma-tfoot{padding:8px 14px;font-size:11px;color:#6b7280;background:var(--bg);border-top:1px solid var(--border);border-radius:0 0 var(--radius) var(--radius)}
 .ssma-tfoot span{color:#374151}
 .prazo-r{color:#dc2626;font-size:11px;font-weight:600}
 .prazo-a{color:#d97706;font-size:11px;font-weight:600}
@@ -369,7 +376,7 @@
 .ssma-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:500;display:flex;align-items:flex-start;justify-content:center;padding-top:48px;overflow-y:auto}
 .ssma-modal{background:var(--card-bg);border-radius:var(--radius);width:660px;max-width:96vw;box-shadow:0 8px 32px rgba(0,0,0,.22);display:flex;flex-direction:column;overflow:hidden;max-height:calc(100vh - 80px);margin-bottom:20px}
 .ssma-modal-head{padding:16px 18px;background:var(--bg);border-bottom:1px solid var(--border)}
-.ssma-modal-code{font-size:10px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+.ssma-modal-code{font-size:10px;color:#4b5563;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
 .ssma-modal-title{font-size:13px;font-weight:600;line-height:1.4;color:#111827}
 .ssma-modal-meta{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center}
 .ssma-modal-close{margin-left:auto;background:none;border:none;cursor:pointer;font-size:20px;color:#6b7280;line-height:1;padding:2px 6px}
@@ -382,7 +389,7 @@
 .ssma-vt-block{margin-left:auto;text-align:right}
 .ssma-vt-main{font-size:15px;font-weight:700;color:var(--dark1)}
 .ssma-vt-sub{font-size:10px;color:#6b7280}
-.ssma-field-label{font-size:10px;color:#6b7280;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.ssma-field-label{font-size:10px;color:#374151;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
 .ssma-field-val{font-size:12px;color:#111827}
 .ssma-grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 .ssma-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px}
@@ -391,7 +398,7 @@
 .classif-display{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px}
 .classif-nota{font-size:9px;color:#9ca3af}
 .ssma-itab{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px}
-.ssma-itab th{text-align:left;padding:5px 7px;color:#6b7280;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);white-space:nowrap}
+.ssma-itab th{text-align:left;padding:5px 7px;color:#4b5563;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--border);white-space:nowrap}
 .ssma-itab td{padding:6px 7px;border-bottom:1px solid var(--border);vertical-align:middle}
 .ssma-itab tr:last-child td{border-bottom:none}
 .ssma-itab tr.erow td{background:#fffbeb}
@@ -415,7 +422,7 @@
 .ssma-save-btn{padding:6px 16px;border:none;border-radius:var(--radius-sm);background:var(--yellow);color:var(--dark1);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer}
 .ssma-save-btn:hover{background:var(--yellow-dk)}
 .ssma-hh-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px}
-.ssma-hh-table th{padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left}
+.ssma-hh-table th{padding:6px 8px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#4b5563;text-align:left}
 .ssma-hh-table td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
 .ssma-hh-table tr:last-child td{border-bottom:none}
 .ssma-hh-table tr.erow td{background:#fffbeb}
@@ -442,7 +449,7 @@
       {n:'situacao',    icon:'ti-clock',          label:'Situação'},
       {n:'checklist',   icon:'ti-list',           label:'Checklist'},
       {n:'risco',       icon:'ti-alert-triangle', label:'Risco'},
-      {n:'classificacao',icon:'ti-tag',           label:'Classificação'},
+      {n:'reclassificacao',icon:'ti-tag',          label:'Reclassificação'},
       {n:'composicao',  icon:'ti-stack-2',        label:'Composição'},
       {n:'modalidadeSv',icon:'ti-tool',           label:'Modalidade'},
     ].map(({n,icon,label}) => `<div class="ssma-dd" id="dd-${n}">
@@ -519,12 +526,20 @@
     document.getElementById('ddl-composicao').innerHTML = fixos.composicao.map(([v,l]) =>
       `<label class="ssma-dd-item" onclick="ssmaToggleChk('composicao','${v}',event)"><input type="checkbox" id="chk-composicao-${v}" value="${v}"> ${l}</label>`
     ).join('');
-    ['responsavel','status','classificacao'].forEach(n => {
+    ['responsavel','status'].forEach(n => {
       const vals = [...new Set(DB.map(p=>p[n]).filter(Boolean))].sort();
       document.getElementById(`ddl-${n}`).innerHTML = vals.map(v =>
         `<label class="ssma-dd-item" onclick="ssmaToggleChk('${n}','${esc(v)}',event)"><input type="checkbox" id="chk-${n}-${esc(v)}" value="${esc(v)}"> ${esc(v)}</label>`
       ).join('');
     });
+    // Reclassificação — valores únicos + opção especial "Sem reclassificação"
+    {
+      const vals = [...new Set(DB.map(p=>p.reclassificacao).filter(Boolean))].sort();
+      const semOpt = `<label class="ssma-dd-item" onclick="ssmaToggleChk('reclassificacao','__sem__',event)"><input type="checkbox" id="chk-reclassificacao-__sem__" value="__sem__"> <em>Sem reclassificação</em></label>`;
+      document.getElementById('ddl-reclassificacao').innerHTML = semOpt + vals.map(v =>
+        `<label class="ssma-dd-item" onclick="ssmaToggleChk('reclassificacao','${esc(v)}',event)"><input type="checkbox" id="chk-reclassificacao-${esc(v)}" value="${esc(v)}"> ${esc(v)}</label>`
+      ).join('');
+    }
     const modNomes = MODS.map(m=>m.nome).filter(Boolean);
     document.getElementById('ddl-modalidadeSv').innerHTML = modNomes.map(v =>
       `<label class="ssma-dd-item" onclick="ssmaToggleChk('modalidadeSv','${esc(v)}',event)"><input type="checkbox" id="chk-modalidadeSv-${esc(v)}" value="${esc(v)}"> ${esc(v)}</label>`
@@ -605,7 +620,6 @@
   function renderGraficos() {
     const el = document.getElementById('ssma-graficos'); if(!el) return;
 
-    // Recalcula situacao dinamicamente — não depende do campo salvo no banco
     const hoje = new Date(); hoje.setHours(0,0,0,0);
     const atrasados = DB.filter(p => {
       if (!p.prazo) return false;
@@ -614,101 +628,215 @@
       return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Agrupa: reclassificacao > classificacao > 'Não classificado'
-    const agrVT = {}, agrQt = {};
+    // Agrupa por reclassificacao > classificacao > 'PENDENTE CLASSIF'
+    // Estrutura: { key: { Alto:0, Médio:0, Baixo:0, total:0 } }
+    const grupos = {};
     atrasados.forEach(p => {
-      const key = p.reclassificacao || p.classificacao || 'Não classificado';
-      agrVT[key] = (agrVT[key]||0) + calcValorTotal(p).total;
-      agrQt[key] = (agrQt[key]||0) + 1;
+      const raw = p.reclassificacao || p.classificacao || 'PENDENTE CLASSIF';
+      const key = raw === 'Não classificado' ? 'PENDENTE CLASSIF' : raw;
+      if (!grupos[key]) grupos[key] = { Alto:0, Médio:0, Baixo:0, total:0, vt:0 };
+      const risco = p.risco || 'Sem risco';
+      if (grupos[key][risco] !== undefined) grupos[key][risco]++;
+      else grupos[key][risco] = 1;
+      grupos[key].total++;
+      grupos[key].vt += calcValorTotal(p).total;
     });
 
-    console.log('[SSMA] atrasados:', atrasados.length, 'grupos:', agrQt);
+    console.log('[SSMA] atrasados:', atrasados.length, 'grupos:', grupos);
+
+    // Ordena decrescente por total
+    const entries = Object.entries(grupos).sort((a,b)=>b[1].total-a[1].total);
+    const labels  = entries.map(e=>e[0]);
+    const totais  = entries.map(e=>e[1].total);
+    const total   = totais.reduce((a,b)=>a+b,0);
+    const cumPct  = totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/total*100);
+    const vtVals  = entries.map(e=>e[1].vt);
+    const vtTotal = vtVals.reduce((a,b)=>a+b,0);
+    const vtCumPct= vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
 
     el.innerHTML = `
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+          <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
         </div>
         <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
       </div>
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+          <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
         </div>
         <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
       </div>`;
 
-    const totalVT = Object.values(agrVT).reduce((a,b)=>a+b,0);
-    if (totalVT === 0) {
+    // Gráfico de Valores
+    if (vtTotal === 0) {
       const cv = document.getElementById('graf-vt');
       if (cv) {
         cv.width = cv.parentElement?.offsetWidth||500; cv.height=220;
         if (window.__ch_grafvt) { window.__ch_grafvt.destroy(); window.__ch_grafvt=null; }
         const ctx=cv.getContext('2d');
         ctx.clearRect(0,0,cv.width,cv.height);
-        ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif';
+        ctx.fillStyle='#6b7280'; ctx.font='12px sans-serif';
         ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.fillText('Nenhum valor registrado nos planos atrasados', cv.width/2, cv.height/2);
       }
     } else {
-      desenharPareto('graf-vt','__ch_grafvt', agrVT, v=>fmtBRL(v), 'Valor total (R$)');
+      desenharParetoSimples('graf-vt','__ch_grafvt', labels, vtVals, vtCumPct, v=>fmtBRL(v), 'Valor (R$)');
     }
-    desenharPareto('graf-qt','__ch_grafqt', agrQt, v=>String(Math.round(v)), 'Planos');
+
+    // Gráfico de Quantidade — barras empilhadas por risco
+    desenharParetoEmpilhado('graf-qt','__ch_grafqt', labels, entries, totais, cumPct);
   }
 
-  function desenharPareto(canvasId, chartKey, agr, fmtTick, yLabel) {
+
+  /* Pareto simples — para valores */
+  function desenharParetoSimples(canvasId, chartKey, labels, vals, cumPct, fmtTick, yLabel) {
     const canvas = document.getElementById(canvasId); if(!canvas) return;
     canvas.width  = canvas.parentElement?.offsetWidth || 500;
     canvas.height = 220;
     const ctx = canvas.getContext('2d');
-
-    const entries = Object.entries(agr).sort((a,b)=>b[1]-a[1]);
-    if (!entries.length) {
-      ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif';
+    if (!vals.length) {
+      ctx.fillStyle='#4b5563'; ctx.font='12px sans-serif';
       ctx.textAlign='center'; ctx.textBaseline='middle';
       ctx.fillText('Sem dados', canvas.width/2, canvas.height/2); return;
     }
-
-    const labels  = entries.map(e=>e[0]);
-    const vals    = entries.map(e=>e[1]);
-    const total   = vals.reduce((a,b)=>a+b,0);
-    const cumPct  = vals.map((v,i)=>vals.slice(0,i+1).reduce((a,b)=>a+b,0)/total*100);
-    const maxVal  = Math.max(...vals);
-    const barClrs = ['#F8C100','#e5ad00','#d4a000','#c49300','#b48600'];
-
+    const maxVal = Math.max(...vals);
     if (window[chartKey]) { window[chartKey].destroy(); window[chartKey]=null; }
-
     window[chartKey] = new Chart(ctx, {
       data: {
         labels,
         datasets: [
-          { type:'bar',  label:yLabel,       data:vals,    backgroundColor:labels.map((_,i)=>barClrs[i%barClrs.length]), yAxisID:'y',  order:2 },
-          { type:'line', label:'% Acumulado', data:cumPct, borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.08)',
-            borderWidth:2, pointRadius:4, pointBackgroundColor:'#C8102E', fill:false, tension:.3, yAxisID:'y2', order:1 }
+          { type:'bar', label:yLabel, data:vals,
+            backgroundColor:'#F8C100', borderColor:'#d4a000', borderWidth:1,
+            yAxisID:'y', order:2 },
+          { type:'line', label:'% Acumulado', data:cumPct,
+            borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.07)',
+            borderWidth:2, pointRadius:2, pointBackgroundColor:'#C8102E',
+            fill:false, tension:.3, yAxisID:'y2', order:1,
+            datalabels:{ display:true, color:'#C8102E', font:{size:8,weight:'bold'},
+              formatter:v=>v.toFixed(0)+'%', anchor:'top', align:'top', offset:2 } }
         ]
       },
       options:{
-        responsive:false,
-        maintainAspectRatio:false,
+        responsive:false, maintainAspectRatio:false,
         interaction:{ mode:'index', intersect:false },
         plugins:{
-          legend:{ display:true, position:'top', labels:{ font:{size:10}, boxWidth:10 } },
-          tooltip:{ callbacks:{ label(c){ return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`; } } }
+          legend:{ display:true, position:'top', labels:{ font:{size:10}, color:'#374151', boxWidth:10 } },
+          tooltip:{ callbacks:{ label(c){ return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`; } } },
+          datalabels:{
+            display(ctx){ return ctx.dataset.type==='bar'; },
+            color:'#374151', font:{size:8,weight:'600'},
+            anchor:'end', align:'end', offset:2,
+            formatter:v=>fmtTick(v),
+            clamp:true,
+          }
         },
         scales:{
-          x:{ ticks:{ font:{size:10}, maxRotation:30 }, grid:{ display:false } },
-          y:{ type:'linear', position:'left', min:0, suggestedMax: maxVal*1.15,
-              ticks:{ font:{size:9}, callback:v=>fmtTick(v), precision:0 },
-              grid:{ color:'#f3f4f6' },
-              title:{ display:true, text:yLabel, font:{size:9}, color:'#6b7280' } },
-          y2:{ type:'linear', position:'right', min:0, max:100,
-               ticks:{ font:{size:9}, callback:v=>v+'%', precision:0 },
+          x:{ ticks:{ font:{size:10}, color:'#4b5563', maxRotation:30 }, grid:{ display:false } },
+          y:{ type:'linear', position:'left', min:0, suggestedMax:maxVal*1.25,
+              ticks:{ font:{size:9}, color:'#4b5563', callback:v=>fmtTick(v), precision:0 },
+              grid:{ color:'#e5e7eb' },
+              title:{ display:true, text:yLabel, font:{size:9}, color:'#4b5563' } },
+          y2:{ type:'linear', position:'right', min:0, max:105,
+               ticks:{ font:{size:9}, color:'#C8102E', callback:v=>v+'%', precision:0 },
                grid:{ display:false },
                title:{ display:true, text:'% Acumulado', font:{size:9}, color:'#C8102E' } }
         }
       }
     });
   }
+
+  /* Pareto empilhado por risco — para quantidade */
+  function desenharParetoEmpilhado(canvasId, chartKey, labels, entries, totais, cumPct) {
+    const canvas = document.getElementById(canvasId); if(!canvas) return;
+    canvas.width  = canvas.parentElement?.offsetWidth || 500;
+    canvas.height = 220;
+    const ctx = canvas.getContext('2d');
+    if (!entries.length) {
+      ctx.fillStyle='#4b5563'; ctx.font='12px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('Sem dados', canvas.width/2, canvas.height/2); return;
+    }
+    const maxVal = Math.max(...totais);
+    if (window[chartKey]) { window[chartKey].destroy(); window[chartKey]=null; }
+
+    // Stacks: Alto (base) → Médio → Baixo → Sem risco
+    const altoData  = entries.map(e=>e[1].Alto||0);
+    const medioData = entries.map(e=>e[1].Médio||0);
+    const baixoData = entries.map(e=>e[1].Baixo||0);
+
+    window[chartKey] = new Chart(ctx, {
+      data: {
+        labels,
+        datasets: [
+          { type:'bar', label:'Alto',  data:altoData,
+            backgroundColor:'#dc2626', borderColor:'#b91c1c', borderWidth:0,
+            stack:'risco', yAxisID:'y', order:2 },
+          { type:'bar', label:'Médio', data:medioData,
+            backgroundColor:'#f59e0b', borderColor:'#d97706', borderWidth:0,
+            stack:'risco', yAxisID:'y', order:2 },
+          { type:'bar', label:'Baixo', data:baixoData,
+            backgroundColor:'#16a34a', borderColor:'#15803d', borderWidth:0,
+            stack:'risco', yAxisID:'y', order:2 },
+          { type:'line', label:'% Acumulado', data:cumPct,
+            borderColor:'#1d4ed8', backgroundColor:'rgba(29,78,216,.07)',
+            borderWidth:2, pointRadius:2, pointBackgroundColor:'#1d4ed8',
+            fill:false, tension:.3, yAxisID:'y2', order:1 }
+        ]
+      },
+      options:{
+        responsive:false, maintainAspectRatio:false,
+        interaction:{ mode:'index', intersect:false },
+        plugins:{
+          legend:{ display:true, position:'top',
+            labels:{ font:{size:10}, color:'#374151', boxWidth:10,
+              filter(item){ return item.text !== '% Acumulado'; } } },
+          tooltip:{
+            callbacks:{
+              label(c){
+                if (c.dataset.type==='line') return `Acumulado: ${c.raw.toFixed(1)}%`;
+                return `${c.dataset.label}: ${c.raw}`;
+              },
+              footer(items){
+                const total = items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);
+                return `Total: ${total}`;
+              }
+            }
+          },
+          datalabels:{
+            display(ctx){
+              // Mostra label só no topo da barra (último stack com valor)
+              if (ctx.dataset.type==='line') return false;
+              if (ctx.dataset.label!=='Baixo') return false;
+              return ctx.chart.data.datasets
+                .filter(d=>d.stack==='risco')
+                .every(d=>d.data[ctx.dataIndex]!==undefined);
+            },
+            color:'#1f2937', font:{size:8,weight:'700'},
+            anchor:'end', align:'end', offset:2,
+            formatter:(v,ctx)=>{
+              const i=ctx.dataIndex;
+              return totais[i]>0?String(totais[i]):'';
+            },
+            clamp:true,
+          }
+        },
+        scales:{
+          x:{ ticks:{ font:{size:10}, color:'#4b5563', maxRotation:30 }, grid:{ display:false } },
+          y:{ type:'linear', position:'left', min:0, suggestedMax:maxVal*1.3,
+              stacked:true,
+              ticks:{ font:{size:9}, color:'#4b5563', precision:0 },
+              grid:{ color:'#e5e7eb' },
+              title:{ display:true, text:'Planos', font:{size:9}, color:'#4b5563' } },
+          y2:{ type:'linear', position:'right', min:0, max:105,
+               ticks:{ font:{size:9}, color:'#1d4ed8', callback:v=>v+'%', precision:0 },
+               grid:{ display:false },
+               title:{ display:true, text:'% Acumulado', font:{size:9}, color:'#1d4ed8' } }
+        }
+      }
+    });
+  }
+
 
   /* ══ LISTA ══════════════════════════════════════════════════ */
   function renderLista() {
@@ -731,10 +859,10 @@
       const dot = `<span class="trat-dot ${dotCls}" style="margin-right:5px;vertical-align:middle"></span>`;
       const pc = p.situacao==='Atrasado'?'prazo-r':p.situacao==='A vencer'?'prazo-a':'prazo-g';
       return `<tr onclick="ssmaAbrirModal('${esc(p.codigo)}')">
-        <td style="font-size:11px;color:#6b7280;font-weight:600">${dot}${esc(p.codigo)}</td>
+        <td style="font-size:11px;color:#374151;font-weight:600">${dot}${esc(p.codigo)}</td>
         <td class="desc-td"><div class="ssma-desc">${esc(p.descricao)}</div></td>
         <td class="${pc}">${esc(p.prazo||'—')}</td>
-        <td style="font-size:11px;color:#6b7280">${esc(p.responsavel||'—')}</td>
+        <td style="font-size:11px;color:#374151">${esc(p.responsavel||'—')}</td>
         <td style="text-align:right;font-size:12px;font-weight:${vt.total>0?600:400};color:${vt.total>0?'#111':'#9ca3af'}">${vt.total>0?fmtBRL(vt.total):'—'}</td>
         <td>${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco}</span>`:`<span class="sb-none">—</span>`}</td>
         <td>${p.classificacao?`<span class="${badgeClassif(p.classificacao)}">${esc(p.classificacao)}</span>`:`<span class="sb-none">—</span>`}</td>
@@ -752,9 +880,9 @@
 
   function renderChips() {
     const el = document.getElementById('ssma-chips'); if(!el) return;
-    const labels={responsavel:'Responsável',status:'Status',situacao:'Situação',checklist:'Checklist',risco:'Risco',classificacao:'Classificação',composicao:'Composição',modalidadeSv:'Modalidade'};
+    const labels={responsavel:'Responsável',status:'Status',situacao:'Situação',checklist:'Checklist',risco:'Risco',reclassificacao:'Reclassificação',composicao:'Composição',modalidadeSv:'Modalidade'};
     let html='';
-    ['responsavel','status','situacao','checklist','risco','classificacao','composicao','modalidadeSv'].forEach(n=>{
+    ['responsavel','status','situacao','checklist','risco','reclassificacao','composicao','modalidadeSv'].forEach(n=>{
       (filtros[n]||[]).forEach(v=>{
         html+=`<span class="ssma-chip">${labels[n]}: ${esc(v)} <button onclick="ssmaRemoverChip('${n}','${esc(v)}')">×</button></span>`;
       });
