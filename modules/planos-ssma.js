@@ -259,10 +259,32 @@
     });
 
     if (sortCol) {
+      const RISCO_ORD = {'Baixo':1,'Médio':2,'Alto':3};
       dados = [...dados].sort((a,b) => {
         let va, vb;
-        if (sortCol === 'vt') { va = calcValorTotal(a).total; vb = calcValorTotal(b).total; }
-        else { va = String(a[sortCol]||'').toLowerCase(); vb = String(b[sortCol]||'').toLowerCase(); }
+        if (sortCol === 'vt') {
+          // Numérico
+          va = calcValorTotal(a).total;
+          vb = calcValorTotal(b).total;
+        } else if (sortCol === 'risco') {
+          // Baixo → Médio → Alto
+          va = RISCO_ORD[a.risco] || 0;
+          vb = RISCO_ORD[b.risco] || 0;
+        } else if (sortCol === 'prazo') {
+          // Data real dd/mm/yyyy → timestamp
+          const toTs = s => {
+            if (!s) return 0;
+            const p = s.split('/');
+            if (p.length !== 3) return 0;
+            return new Date(`${p[2]}-${p[1]}-${p[0]}`).getTime() || 0;
+          };
+          va = toTs(a.prazo);
+          vb = toTs(b.prazo);
+        } else {
+          // Alfabético
+          va = String(a[sortCol]||'').toLowerCase();
+          vb = String(b[sortCol]||'').toLowerCase();
+        }
         if (va < vb) return -sortDir;
         if (va > vb) return  sortDir;
         return 0;
