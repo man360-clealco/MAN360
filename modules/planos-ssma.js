@@ -121,10 +121,11 @@
     const sm={}; (rS.data||[]).forEach(x=>{if(!sm[x.codigo])sm[x.codigo]=[];sm[x.codigo].push(x);});
     DB = (rP.data||[]).filter(p=>p.descricao&&p.descricao.trim()).map(p=>({
       ...p,
-      situacao:calcSituacao(p.prazo),
-      reclassificacao:mm[p.codigo]?.reclassificacao||'',
-      _aquisicoes:am[p.codigo]||[],
-      _servicos:sm[p.codigo]||[],
+      situacao:        calcSituacao(p.prazo),
+      classificacao:   (p.classificacao||'').trim(),
+      reclassificacao: ((mm[p.codigo]?.reclassificacao)||'').trim(),
+      _aquisicoes:     am[p.codigo]||[],
+      _servicos:       sm[p.codigo]||[],
     }));
   }
 
@@ -706,8 +707,10 @@
     // Agrupa por classificação efetiva (reclassificação > classificação > 'Não classificado')
     const agrVT={}, agrQt={};
     dados.forEach(p=>{
-      const rawKey=p.reclassificacao||p.classificacao||'Não classificado';
-      const key=normClassif(rawKey)||'Não classificado';
+      const rc   = (p.reclassificacao||'').trim();
+      const cl   = (p.classificacao||'').trim();
+      const raw  = rc || cl;
+      const key  = raw ? (normClassif(raw)||raw) : 'Não classificado';
       if(!agrVT[key]) { agrVT[key]=0; agrQt[key]=0; }
       agrVT[key]+=calcValorTotal(p).total;
       agrQt[key]++;
@@ -788,6 +791,7 @@
     // Destrói chart anterior se existir
     if (window[`__chart_${canvasId}`]) window[`__chart_${canvasId}`].destroy();
 
+    const maxVal = Math.max(...vals);
     window[`__chart_${canvasId}`] = new Chart(ctx, {
       data: {
         labels,
@@ -837,14 +841,20 @@
           x:{ ticks:{ font:{size:10}, maxRotation:30 }, grid:{ display:false } },
           y:{
             type:'linear', position:'left',
-            ticks:{ font:{size:9}, callback:v=>fmtTick(v) },
+            min:0,
+            suggestedMax: maxVal * 1.15,
+            ticks:{
+              font:{size:9},
+              callback:v=>fmtTick(v),
+              precision:0,
+            },
             grid:{ color:'#f3f4f6' },
             title:{ display:true, text:yLabel, font:{size:9}, color:'#6b7280' }
           },
           y2:{
             type:'linear', position:'right',
             min:0, max:100,
-            ticks:{ font:{size:9}, callback:v=>v+'%' },
+            ticks:{ font:{size:9}, callback:v=>v+'%', precision:0 },
             grid:{ display:false },
             title:{ display:true, text:'% Acumulado', font:{size:9}, color:'#C8102E' }
           }
