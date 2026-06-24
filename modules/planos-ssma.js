@@ -812,14 +812,12 @@
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
-          ${ddHtml()}
         </div>
         <div class="ssma-grafico-canvas-wrap"><canvas id="graf-vt"></canvas></div>
       </div>
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
-          ${ddHtml().replace('graf-mod-lbl','graf-mod-lbl2').replace('graf-mod-panel','graf-mod-panel2').replace(/gchk-/g,'gchk2-').replace(/ssmaToggleGrafMod/g,'ssmaToggleGrafMod2').replace(/ssmaToggleGrafDD/g,'ssmaToggleGrafDD2')}
         </div>
         <div class="ssma-grafico-canvas-wrap"><canvas id="graf-qt"></canvas></div>
       </div>`;
