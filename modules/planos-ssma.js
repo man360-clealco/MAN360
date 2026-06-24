@@ -25,7 +25,8 @@
     if (!prazoStr) return 'No prazo';
     const p = prazoStr.split('/');
     if (p.length !== 3) return 'No prazo';
-    const prazo = new Date(`${p[2]}-${p[1]}-${p[0]}`);
+    // Usa UTC noon para evitar problemas de fuso horário
+    const prazo = new Date(`${p[2]}-${p[1]}-${p[0]}T12:00:00`);
     if (isNaN(prazo)) return 'No prazo';
     const hoje = new Date(); hoje.setHours(0,0,0,0);
     const diff = (prazo - hoje) / 86400000;
@@ -62,6 +63,11 @@
     if (u.includes('GOVERN'))     return 'sb-gov';
     return 'sb-none';
   }
+  function normClassif(v) {
+    if (!v) return v;
+    return String(v).replace(/DOCUMENTAL\/GOVERNANÇA/gi,'DOC/GOV').replace(/DOCUMENTAL E GOVERNANÇA/gi,'DOC/GOV');
+  }
+
   function col(row, ...nomes) {
     for (const n of nomes) {
       const k = Object.keys(row).find(k => String(k).trim() === n.trim());
@@ -292,6 +298,7 @@
 .ssma-active-filters:empty{display:none}
 .ssma-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;background:#fef3c7;border:1px solid #fbbf24;border-radius:10px;font-size:10px;font-weight:600;color:#92400e}
 .ssma-chip button{background:none;border:none;cursor:pointer;color:#92400e;font-size:14px;line-height:1;padding:0}
+.dd-badge{background:var(--yellow);color:var(--dark1);border-radius:10px;font-size:9px;font-weight:700;padding:1px 5px;margin-left:2px}
 
 /* Tabela */
 .ssma-table-wrap{overflow-x:auto;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
@@ -558,12 +565,20 @@
   };
 
   function atualizarBotaoDD(n) {
-    const labels={responsavel:'Responsável',status:'Status',situacao:'Situação',checklist:'Checklist',risco:'Risco',classificacao:'Classificação',composicao:'Composição',modalidadeSv:'Modalidade'};
-    const lbl = document.getElementById(`ddlbl-${n}`);
+    // Não altera o label — só destaca o botão quando há seleção ativa
     const btn = document.getElementById(`ddbtn-${n}`);
     const sel = filtros[n]||[];
-    if (lbl) lbl.textContent = sel.length ? (sel.join(', ').length>18?sel.join(', ').substring(0,18)+'…':sel.join(', ')) : labels[n];
-    if (btn) btn.classList.toggle('ativo', sel.length>0);
+    if (btn) {
+      btn.classList.toggle('ativo', sel.length>0);
+      // Mostra contagem discreta no badge sem alterar o label principal
+      let badge = btn.querySelector('.dd-badge');
+      if (sel.length>0) {
+        if (!badge) { badge=document.createElement('span'); badge.className='dd-badge'; btn.insertBefore(badge, btn.querySelector('.arr')); }
+        badge.textContent = sel.length;
+      } else {
+        if (badge) badge.remove();
+      }
+    }
   }
 
   window.ssmaLimparDD = function(n) {
@@ -642,8 +657,8 @@
         <td style="font-size:11px;color:#6b7280">${esc(p.responsavel||'—')}</td>
         <td style="text-align:right;font-size:12px;font-weight:${vt.total>0?600:400};color:${vt.total>0?'#111':'#9ca3af'}">${vt.total>0?fmtBRL(vt.total):'—'}</td>
         <td>${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco}</span>`:`<span class="sb-none">—</span>`}</td>
-        <td>${p.classificacao?`<span class="${badgeClassif(p.classificacao)}">${esc(p.classificacao)}</span>`:`<span class="sb-none">—</span>`}</td>
-        <td>${rc?`<span class="${badgeClassif(rc)}">${esc(rc)}</span>`:`<span class="sb-none">—</span>`}</td>
+        <td>${p.classificacao?`<span class="${badgeClassif(p.classificacao)}">${esc(normClassif(p.classificacao))}</span>`:`<span class="sb-none">—</span>`}</td>
+        <td>${rc?`<span class="${badgeClassif(rc)}">${esc(normClassif(rc))}</span>`:`<span class="sb-none">—</span>`}</td>
       </tr>`;
     }).join('');
 
@@ -691,7 +706,8 @@
     // Agrupa por classificação efetiva (reclassificação > classificação > 'Não classificado')
     const agrVT={}, agrQt={};
     dados.forEach(p=>{
-      const key=p.reclassificacao||p.classificacao||'Não classificado';
+      const rawKey=p.reclassificacao||p.classificacao||'Não classificado';
+      const key=normClassif(rawKey)||'Não classificado';
       if(!agrVT[key]) { agrVT[key]=0; agrQt[key]=0; }
       agrVT[key]+=calcValorTotal(p).total;
       agrQt[key]++;
@@ -717,21 +733,33 @@
     el.innerHTML=`
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Pareto — Valor total por classificação <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+          <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
           ${ddHtml()}
         </div>
         <div class="ssma-grafico-canvas-wrap"><canvas id="graf-vt"></canvas></div>
       </div>
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Pareto — Quantidade de planos <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+          <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
           ${ddHtml().replace('graf-mod-lbl','graf-mod-lbl2').replace('graf-mod-panel','graf-mod-panel2').replace(/gchk-/g,'gchk2-').replace(/ssmaToggleGrafMod/g,'ssmaToggleGrafMod2').replace(/ssmaToggleGrafDD/g,'ssmaToggleGrafDD2')}
         </div>
         <div class="ssma-grafico-canvas-wrap"><canvas id="graf-qt"></canvas></div>
       </div>`;
 
-    desenharPareto('graf-vt', agrVT, v=>fmtBRL(v), 'Valor total (R$)');
-    desenharPareto('graf-qt', agrQt, v=>String(v), 'Qtd. planos');
+    const totalVT=Object.values(agrVT).reduce((a,b)=>a+b,0);
+    if (totalVT===0) {
+      const cv=document.getElementById('graf-vt');
+      if (cv) {
+        if (window.__chart_graf_vt) { window.__chart_graf_vt.destroy(); window.__chart_graf_vt=null; }
+        const ctx=cv.getContext('2d');
+        ctx.clearRect(0,0,cv.width,cv.height);
+        ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('Nenhum valor registrado nos planos atrasados',cv.width/2,cv.height/2);
+      }
+    } else {
+      desenharPareto('graf-vt', agrVT, v=>fmtBRL(v), 'Valor total (R$)');
+    }
+    desenharPareto('graf-qt', agrQt, v=>String(Math.round(v)), 'Planos');
   }
 
   function desenharPareto(canvasId, agr, fmtTick, yLabel) {
@@ -868,10 +896,10 @@
 
     let classifHtml='';
     if (classif&&rc&&classif!==rc) {
-      classifHtml=`<div class="classif-display"><span class="${badgeClassif(classif)}">${esc(classif)}</span><span style="color:#9ca3af">→</span><span class="${badgeClassif(rc)}">${esc(rc)}</span><span class="classif-nota">(alterado)</span></div>`;
+      classifHtml=`<div class="classif-display"><span class="${badgeClassif(classif)}">${esc(normClassif(classif))}</span><span style="color:#9ca3af">→</span><span class="${badgeClassif(rc)}">${esc(normClassif(rc))}</span><span class="classif-nota">(alterado)</span></div>`;
     } else {
       const v=rc||classif;
-      classifHtml=v?`<div class="classif-display"><span class="${badgeClassif(v)}">${esc(v)}</span></div>`:`<div class="classif-display"><span class="sb-none">—</span></div>`;
+      classifHtml=v?`<div class="classif-display"><span class="${badgeClassif(v)}">${esc(normClassif(v))}</span></div>`:`<div class="classif-display"><span class="sb-none">—</span></div>`;
     }
 
     let bodyHtml='';
