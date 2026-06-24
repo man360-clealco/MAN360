@@ -335,6 +335,7 @@
 /* Gráficos */
 .ssma-graficos{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 .ssma-grafico-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow)}
+.ssma-grafico-canvas-wrap{position:relative;height:220px;width:100%}
 .ssma-grafico-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px}
 .ssma-grafico-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#374151}
 .ssma-grafico-dd{position:relative}
@@ -719,14 +720,14 @@
           <div class="ssma-grafico-title">Pareto — Valor total por classificação <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
           ${ddHtml()}
         </div>
-        <canvas id="graf-vt" height="220"></canvas>
+        <div class="ssma-grafico-canvas-wrap"><canvas id="graf-vt"></canvas></div>
       </div>
       <div class="ssma-grafico-card">
         <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Pareto — Quantidade de planos <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
           ${ddHtml().replace('graf-mod-lbl','graf-mod-lbl2').replace('graf-mod-panel','graf-mod-panel2').replace(/gchk-/g,'gchk2-').replace(/ssmaToggleGrafMod/g,'ssmaToggleGrafMod2').replace(/ssmaToggleGrafDD/g,'ssmaToggleGrafDD2')}
         </div>
-        <canvas id="graf-qt" height="220"></canvas>
+        <div class="ssma-grafico-canvas-wrap"><canvas id="graf-qt"></canvas></div>
       </div>`;
 
     desenharPareto('graf-vt', agrVT, v=>fmtBRL(v), 'Valor total (R$)');
@@ -735,6 +736,11 @@
 
   function desenharPareto(canvasId, agr, fmtTick, yLabel) {
     const canvas=document.getElementById(canvasId); if(!canvas) return;
+    // Dimensões fixas — evita loop de resize do Chart.js
+    canvas.style.width='100%';
+    canvas.style.height='220px';
+    canvas.width=canvas.parentElement?.offsetWidth||600;
+    canvas.height=220;
     const ctx=canvas.getContext('2d');
     // Ordena decrescente
     const entries=Object.entries(agr).sort((a,b)=>b[1]-a[1]);
@@ -785,7 +791,7 @@
         ]
       },
       options:{
-        responsive:true,
+        responsive:false,
         maintainAspectRatio:false,
         interaction:{ mode:'index', intersect:false },
         plugins:{
