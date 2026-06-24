@@ -694,6 +694,81 @@
 
   function renderGraficos() {
     const el=document.getElementById('ssma-graficos'); if(!el) return;
+
+    // Recalcula situacao dinamicamente (não confia no valor do banco)
+    const hoje=new Date(); hoje.setHours(0,0,0,0);
+    function situacaoReal(prazo) {
+      if (!prazo) return 'No prazo';
+      const p=prazo.split('/'); if(p.length!==3) return 'No prazo';
+      const d=new Date(`${p[2]}-${p[1]}-${p[0]}T12:00:00`);
+      if (isNaN(d)) return 'No prazo';
+      const diff=(d-hoje)/86400000;
+      if (diff<0) return 'Atrasado';
+      if (diff<=7) return 'A vencer';
+      return 'No prazo';
+    }
+
+    const atrasados=DB.filter(p=>situacaoReal(p.prazo)==='Atrasado');
+
+    const dados = grafModFiltro.length
+      ? atrasados.filter(p=>{
+          const svMods=(p._servicos||[]).map(s=>s.modalidade).filter(Boolean);
+          return grafModFiltro.some(m=>svMods.includes(m));
+        })
+      : atrasados;
+
+    // Agrupa — reclassificacao > classificacao > 'Não classificado'
+    // normClassif aplicado para unificar variantes de texto
+    const agrVT={}, agrQt={};
+    dados.forEach(p=>{
+      const rc  = normClassif((p.reclassificacao||'').trim());
+      const cl  = normClassif((p.classificacao||'').trim());
+      const key = rc||cl||'Não classificado';
+      agrVT[key] = (agrVT[key]||0) + calcValorTotal(p).total;
+      agrQt[key] = (agrQt[key]||0) + 1;
+    });
+
+    // Debug rápido — remove após confirmar
+    console.log('[SSMA Gráfico] atrasados:',atrasados.length,'dados:',dados.length,'grupos Qt:',agrQt);
+
+    el.innerHTML=`
+      <div class="ssma-grafico-card">
+        <div class="ssma-grafico-head">
+          <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+        </div>
+        <div class="ssma-grafico-canvas-wrap"><canvas id="graf-vt"></canvas></div>
+      </div>
+      <div class="ssma-grafico-card">
+        <div class="ssma-grafico-head">
+          <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#9ca3af">(atrasados)</span></div>
+        </div>
+        <div class="ssma-grafico-canvas-wrap"><canvas id="graf-qt"></canvas></div>
+      </div>`;
+
+    const totalVT=Object.values(agrVT).reduce((a,b)=>a+b,0);
+    if (totalVT===0) {
+      const cv=document.getElementById('graf-vt');
+      if (cv) {
+        cv.style.width='100%'; cv.style.height='220px';
+        cv.width=cv.parentElement?.offsetWidth||600; cv.height=220;
+        if (window.__chart_graf_vt) { window.__chart_graf_vt.destroy(); window.__chart_graf_vt=null; }
+        const ctx=cv.getContext('2d');
+        ctx.clearRect(0,0,cv.width,cv.height);
+        ctx.fillStyle='#9ca3af'; ctx.font='13px sans-serif';
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('Nenhum valor registrado nos planos atrasados',cv.width/2,cv.height/2);
+      }
+    } else {
+      desenharPareto('graf-vt',agrVT,v=>fmtBRL(v),'Valor total (R$)');
+    }
+    desenharPareto('graf-qt',agrQt,v=>String(Math.round(v)),'Planos');
+  }
+
+
+  let grafModFiltro = [];
+
+  function renderGraficos() {
+    const el=document.getElementById('ssma-graficos'); if(!el) return;
     // Filtra só atrasados
     const atrasados=DB.filter(p=>p.situacao==='Atrasado');
     // Aplica filtro de modalidade dos gráficos
