@@ -270,8 +270,9 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   function htmlKPIs(lista) {
+    // Total e encerradas: todos os serviços (pai + filho), sem filtro de estrutura
     const total   = lista.length;
-    const enc     = lista.filter(o => _servEnc(o)).length; // serviços encerrados (status_servico)
+    const enc     = lista.filter(o => _servEnc(o)).length;
     // Pontos = OS com cod_servico '1' (ponto principal); sem cod_servico tambem conta
     const pontos  = lista.filter(o => {
       const _sl = (o.status_os||'').toLowerCase();
@@ -283,14 +284,14 @@ window.Modulos.proj_caldeiraria = (() => {
     const pPT     = ptTotal>0?Math.round(ptEnc/ptTotal*100):0;
     const hhTot  = lista.reduce((s,o)=>s+_hhServ(o),0);
     const hhEnc  = lista.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
-    const pOS    = total>0?Math.round(enc/total*100):0;
+    const pOS    = total>0?Math.round(enc/total*100):0; // % sobre OS pai
     const pHH    = hhTot>0?Math.round(hhEnc/hhTot*100):0;
     const cor    = p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
     return `<div class="ps-kpi-grid">
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">Qtd. OS</div>
         <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(total)}</div>
-        <div class="ps-kpi-sub">${enc} serv. encerrados</div>
+        <div class="ps-kpi-sub">${enc} encerrados</div>
       </div>
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">Pontos</div>
@@ -586,7 +587,8 @@ window.Modulos.proj_caldeiraria = (() => {
     const hhTot=lista.reduce((s,o)=>s+_hhServ(o),0);
     const encL=lista.filter(o=>_servEnc(o));
     const hhEnc=encL.reduce((s,o)=>s+_hhServ(o),0);
-    const pOS=lista.length>0?Math.round(encL.length/lista.length*100):0;
+    const _pais=lista.filter(o=>_ehPai(o));
+    const pOS=_pais.length>0?Math.round(_pais.filter(o=>_servEnc(o)).length/_pais.length*100):0;
     const pHH=hhTot>0?Math.round(hhEnc/hhTot*100):0;
     const pontos=lista.filter(o=>{const sl=(o.status_os||'').toLowerCase();if(sl.includes('cancel')||sl.includes('suspend'))return false;return !o.cod_servico||String(o.cod_servico)==='1';});
     const ptTotal=pontos.length;
@@ -596,7 +598,7 @@ window.Modulos.proj_caldeiraria = (() => {
     return `${hdr}<div class="ps-curva-body">
       <div class="ps-kpi-grid" style="border:none;border-top:1px solid var(--border);grid-template-columns:repeat(auto-fit,minmax(100px,1fr))">
         <div class="ps-kpi"><div class="ps-kpi-lbl">HH Executado</div><div class="ps-kpi-val" style="font-size:16px">${fmtNum(hhEnc,0)}<span style="font-size:11px">/${fmtNum(hhTot,0)}h</span></div><div class="ps-kpi-sub">${fmtNum(hhTot-hhEnc,0)}h restantes</div></div>
-        <div class="ps-kpi"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-kpi-val" style="font-size:16px">${encL.length}<span style="font-size:11px">/${lista.length}</span></div><div class="ps-kpi-sub">${lista.length-encL.length} pendentes</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-kpi-val" style="font-size:16px">${_pais.filter(o=>_servEnc(o)).length}<span style="font-size:11px">/${_pais.length}</span></div><div class="ps-kpi-sub">${_pais.length-_pais.filter(o=>_servEnc(o)).length} pendentes</div></div>
         <div class="ps-kpi"><div class="ps-kpi-lbl">Pontos</div><div class="ps-kpi-val" style="font-size:16px">${ptEnc}<span style="font-size:11px">/${ptTotal} PT</span></div><div class="ps-kpi-sub">${Math.round(ptTotal>0?ptEnc/ptTotal*100:0)}% encerrados</div></div>
         <div class="ps-kpi"><div class="ps-kpi-lbl">% OS Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pOS)}">${pOS}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div></div>
         <div class="ps-kpi"><div class="ps-kpi-lbl">% HH Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pHH)}">${pHH}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pHH}%;background:${cor(pHH)}"></div></div></div>
