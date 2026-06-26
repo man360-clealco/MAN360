@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>MAN360 — PCM Clealco</title>
+<title>MAN360 — Visão da Manutenção Industrial</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -469,7 +469,7 @@ const CASCATA = {
   // Nível 0: grupos principais
   nivel0: {
     title: 'Selecione uma área',
-    subtitle: 'MAN360 — PCM Clealco',
+    subtitle: 'MAN360 — Visão da Manutenção Industrial',
     gridCols: 3,
     cards: [
       { id:'gestao-servicos', label:'Gestão de Serviços', icon:'clipboard-list', desc:'Programação, apontamentos e performance de manutenção', hasChildren: true },
@@ -536,7 +536,7 @@ const CASCATA = {
       gridCols: 2,
       cards: [
         { id:'parada_plano',    label:'Plano de Parada',     icon:'calendar-event', desc:'Elaboração e acompanhamento do plano de parada', module: true, status:'wip' },
-        { id:'paradas_carteira', label:'Carteira de Serviços', icon:'list-details',   desc:'Gestão da carteira de serviços de parada', module: true, status:'active', moduleFile:'modules/paradas-carteira.js' },
+        { id:'parada_carteira', label:'Carteira de Serviços', icon:'list-details',   desc:'Gestão da carteira de serviços de parada', module: true, status:'wip' },
       ]
     },
   }
@@ -767,9 +767,30 @@ function voltarParaHome() {
   renderHome();
 }
 
-/* ── Inicialização ── */
-window.addEventListener('load', () => {
-  renderHome();
+/* ── Inicialização — restaura estado pelo hash ── */
+window.addEventListener('load', async () => {
+  const hash = (window.location.hash || '').replace('#','');
+  if (!hash) { renderHome(); return; }
+
+  // Procura o módulo no mapa de cascata
+  let modCard = null;
+  let grupoId = null;
+  for (const [gid, data] of Object.entries(CASCATA.nivel1)) {
+    const card = data.cards.find(c => c.id === hash);
+    if (card) { modCard = card; grupoId = gid; break; }
+  }
+
+  if (modCard && modCard.status === 'active') {
+    // Reconstrói o breadcrumb sem animação
+    const grupo = CASCATA.nivel0.cards.find(c => c.id === grupoId);
+    if (grupo) cascataStack.push({ grupoId, titulo: grupo.label });
+    cascataStack.push({ grupoId: modCard.id, titulo: modCard.label, isModule: true });
+    renderBreadcrumb();
+    document.getElementById('btn-voltar').style.display = 'flex';
+    await navegarParaModulo(modCard);
+  } else {
+    renderHome();
+  }
 });
 </script>
 
