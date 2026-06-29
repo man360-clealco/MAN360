@@ -83,7 +83,7 @@
   // Filtro padrão: mostra só OS com parada definida (excluindo sem_parada)
   let F = {
     busca:'', parada:['geral','com_vapor','sem_vapor','caldeira_03','caldeira_04','caldeira_05'],
-    modalidade:[], prioridade:[], categoria:[], recurso:[], setor:[],
+    modalidade:[], prioridade:[], categoria:[], recurso:[], setor:[], midia:[],
   };
   let _container = null;
 
@@ -136,6 +136,11 @@
         if (!F.recurso.some(r=>rec.includes(r))) return false;
       }
       if (F.setor.length && !F.setor.includes(set)) return false;
+      if (F.midia.length) {
+        const temMidia = ((CFG[`${o.os}|${o.cod_servico||'1'}`]||{}).fotos||[]).length > 0;
+        if (F.midia.includes('com') && !temMidia) return false;
+        if (F.midia.includes('sem') && temMidia)  return false;
+      }
       return true;
     });
 
@@ -380,6 +385,7 @@
       categoria:  Object.entries(CAT_LABEL).map(([v,l])=>({v,l})),
       recurso:    Object.entries(REC_LABEL).map(([v,l])=>({v,l})),
       setor:      setores.map(s=>({v:s,l:s})),
+      midia:      [{v:'com',l:'Com foto/vídeo'},{v:'sem',l:'Sem foto/vídeo'}],
     };
 
     return `
@@ -392,6 +398,7 @@
     categoria:  {icon:'ti-star',           label:'Categoria'},
     recurso:    {icon:'ti-crane',          label:'Recurso'},
     setor:      {icon:'ti-building',       label:'Setor'},
+    midia:      {icon:'ti-photo',           label:'M\u00eddia'},
   }).map(([nome,{icon,label}]) => mkDD(nome, icon, label, ddOpts[nome])).join('')}
 </div>
 <div class="pc-chips" id="pc-chips">${htmlChips()}</div>
@@ -439,11 +446,11 @@
   }
 
   function htmlChips() {
-    const lbls={parada:'Parada',modalidade:'Modal.',prioridade:'Prio.',categoria:'Categ.',recurso:'Recurso',setor:'Setor'};
+    const lbls={parada:'Parada',modalidade:'Modal.',prioridade:'Prio.',categoria:'Categ.',recurso:'Recurso',setor:'Setor',midia:'Mídia'};
     const fmtV={
       parada:v=>PARADA_LABEL[v]||v, prioridade:v=>PRIO_LABEL[v]||v,
       categoria:v=>CAT_LABEL[v]||v, recurso:v=>REC_LABEL[v]||v,
-      modalidade:v=>v, setor:v=>v,
+      modalidade:v=>v, setor:v=>v, midia:v=>v==='com'?'Com foto/vídeo':'Sem foto/vídeo',
     };
     let h='';
     Object.keys(lbls).forEach(n=>{
@@ -484,7 +491,12 @@
 
     const key = `${o.os}|${o.cod_servico||'1'}`;
     return `<tr onclick="pcAbrirModal('${esc(o.os)}','${esc(o.cod_servico||'1')}')">
-      <td style="font-weight:600;color:#374151">${esc(o.os)}</td>
+      <td style="font-weight:600;color:#374151;white-space:nowrap">
+        ${esc(o.os)}
+        ${((CFG[`${o.os}|${o.cod_servico||'1'}`]||{}).fotos||[]).length>0
+          ? `<i class="ti ti-photo" title="Tem foto/vídeo" style="font-size:10px;color:#9ca3af;margin-left:4px;vertical-align:middle"></i>`
+          : ''}
+      </td>
       <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.desc_servico||o.desc_os||'—')}</td>
       <td style="font-size:11px;color:#4b5563;max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(set||'—')}</td>
       <td style="font-size:11px;color:#4b5563">${esc(mod||'—')}</td>
