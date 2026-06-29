@@ -20,7 +20,7 @@
   };
   const PARADA_GRUPOS_SV = ['sem_vapor','caldeira_03','caldeira_04','caldeira_05'];
   const PRIO_LABEL = { alta:'Alta', media:'Média', baixa:'Baixa' };
-  const CAT_LABEL  = { seguranca:'Segurança', correcao_perdas:'Correção Perdas', correcao_processos:'Correção Processos', melhoria:'Melhoria' };
+  const CAT_LABEL  = { seguranca:'Segurança', correcao_perdas:'Correção Perdas', correcao_processos:'Correção Processos', melhoria:'Melhoria', entressafra:'Entressafra' };
   const REC_LABEL  = { andaime:'Andaime', munck:'Munck', guindaste:'Guindaste', pta:'PTA' };
   const STATUS_EXCLUIR = ['cancelad','encerrad'];
 
@@ -229,13 +229,13 @@
 .pc-chip button{background:none;border:none;cursor:pointer;color:#92400e;font-size:13px;line-height:1;padding:0}
 /* Tabela */
 .pc-tw{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-.pc-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
+.pc-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
 .pc-table th{text-align:left;padding:8px 10px;background:var(--bg);color:#4b5563;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;cursor:pointer;user-select:none}
 .pc-table th.sorted{color:var(--yellow-dk)}
 .pc-table th.ns{cursor:default}
 .sico{font-size:10px;margin-left:3px;opacity:.3}
 .sorted .sico{opacity:1}
-.pc-table td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap}
+.pc-table td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;white-space:nowrap;overflow:hidden}
 .pc-table tbody tr:hover td{background:#fafafa;cursor:pointer}
 .pc-table tbody tr:last-child td{border-bottom:none}
 .pc-foot{padding:8px 14px;font-size:11px;color:#6b7280;background:var(--bg);border-top:1px solid var(--border)}
@@ -404,6 +404,18 @@
 <div class="pc-chips" id="pc-chips">${htmlChips()}</div>
 <div class="pc-tw">
   <table class="pc-table">
+      <colgroup>
+        <col style="width:80px"><!-- OS -->
+        <col><!-- Descrição — ocupa espaço restante -->
+        <col style="width:140px"><!-- Setor -->
+        <col style="width:100px"><!-- Modalidade -->
+        <col style="width:72px"><!-- HH Prev -->
+        <col style="width:140px"><!-- Tipo Parada -->
+        <col style="width:60px"><!-- Prio -->
+        <col style="width:110px"><!-- Categoria -->
+        <col style="width:72px"><!-- Recursos -->
+        <col style="width:34px"><!-- Ação -->
+      </colgroup>
     <thead><tr>
       ${th('os','OS')}${th('desc','Descrição')}${th('setor','Setor')}
       ${th('mod','Modalidade')}${th('hh','HH Prev.')}${th('parada','Tipo Parada')}
@@ -491,14 +503,16 @@
 
     const key = `${o.os}|${o.cod_servico||'1'}`;
     return `<tr onclick="pcAbrirModal('${esc(o.os)}','${esc(o.cod_servico||'1')}')">
-      <td style="font-weight:600;color:#374151;white-space:nowrap">
+      <td style="font-weight:600;color:#374151;">
         ${esc(o.os)}
         ${((CFG[`${o.os}|${o.cod_servico||'1'}`]||{}).fotos||[]).length>0
           ? `<i class="ti ti-photo" title="Tem foto/vídeo" style="font-size:10px;color:#9ca3af;margin-left:4px;vertical-align:middle"></i>`
           : ''}
       </td>
-      <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.desc_servico||o.desc_os||'—')}</td>
-      <td style="font-size:11px;color:#4b5563;max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(set||'—')}</td>
+      <td style="white-space:normal;overflow:hidden">
+        <div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4;word-break:break-word">${esc(o.desc_servico||o.desc_os||'—')}</div>
+      </td>
+      <td style="font-size:11px;color:#4b5563;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(set||'—')}</td>
       <td style="font-size:11px;color:#4b5563">${esc(mod||'—')}</td>
       <td style="font-size:11px;font-weight:500">${fmtH(o.hh_prev_servico)}</td>
       <td>${pBadge}</td>
