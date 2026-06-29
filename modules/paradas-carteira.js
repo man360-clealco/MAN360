@@ -405,16 +405,16 @@
 <div class="pc-tw">
   <table class="pc-table">
       <colgroup>
-        <col style="width:80px"><!-- OS -->
-        <col><!-- Descrição — ocupa espaço restante -->
-        <col style="width:140px"><!-- Setor -->
+        <col style="width:82px"><!-- OS -->
+        <col style="width:260px"><!-- Descrição — largura fixa, quebra 2 linhas -->
+        <col style="width:160px"><!-- Setor -->
         <col style="width:100px"><!-- Modalidade -->
-        <col style="width:72px"><!-- HH Prev -->
-        <col style="width:140px"><!-- Tipo Parada -->
-        <col style="width:60px"><!-- Prio -->
-        <col style="width:110px"><!-- Categoria -->
-        <col style="width:72px"><!-- Recursos -->
-        <col style="width:34px"><!-- Ação -->
+        <col style="width:70px"><!-- HH Prev -->
+        <col style="width:150px"><!-- Tipo Parada -->
+        <col style="width:58px"><!-- Prio -->
+        <col style="width:130px"><!-- Categoria -->
+        <col style="width:90px"><!-- Recursos -->
+        <col style="width:36px"><!-- Ação -->
       </colgroup>
     <thead><tr>
       ${th('os','OS')}${th('desc','Descrição')}${th('setor','Setor')}
@@ -518,8 +518,8 @@
       <td>${pBadge}</td>
       <td>${prioBadge}</td>
       <td style="font-size:10px;color:#4b5563">${c.categoria?esc(CAT_LABEL[c.categoria]||c.categoria):`<span class="pb-none">—</span>`}</td>
-      <td>${recHtml}</td>
-      <td><button class="edit-btn" onclick="pcAbrirModal('${esc(o.os)}','${esc(o.cod_servico||'1')}');event.stopPropagation()"><i class="ti ti-pencil" style="font-size:12px"></i></button></td>
+      <td style="overflow:visible">${recHtml}</td>
+      <td style="text-align:center;padding:9px 4px"><button class="edit-btn" onclick="pcAbrirModal('${esc(o.os)}','${esc(o.cod_servico||'1')}');event.stopPropagation()"><i class="ti ti-pencil" style="font-size:12px"></i></button></td>
     </tr>`;
   }
 
