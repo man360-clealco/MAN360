@@ -67,7 +67,7 @@
       if (isExcluido(o)) return false;
       const c   = cfg(o.os, o.cod_servico);
       const mod = modNome(o.equipe);
-      const set = (o.desc_setor||o.setor||'').trim();
+      const set = (o.desc_setor||'').trim();
       const tp  = c.tipo_parada || 'sem_parada';
 
       if (F.busca) {
@@ -127,7 +127,7 @@
   function render() {
     const lista = osFiltradas();
     const kpi   = calcKPIs(lista);
-    const setores     = [...new Set(osBase().map(o=>(o.desc_setor||o.setor||'').trim()).filter(Boolean))].sort();
+    const setores     = [...new Set(osBase().map(o=>(o.desc_setor||'').trim()).filter(s=>s&&!/^\d+$/.test(s)))].sort();
     const modalidades = [...new Set(osBase().map(o=>modNome(o.equipe)).filter(Boolean))].sort();
 
     _container.innerHTML = `
@@ -233,6 +233,15 @@
 .pc-media-del{position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);border:none;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fff;font-size:12px}
 .pc-media-item.uploading{opacity:.5}
 .pc-media-item .upload-prog{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.3);color:#fff;font-size:10px;font-weight:700}
+.pc-mselect{width:100%;height:32px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:12px;color:#374151;padding:0 10px;cursor:pointer;margin-bottom:6px}
+.pc-mselect:focus{outline:2px solid var(--yellow);outline-offset:-1px;border-color:transparent}
+.pc-msel-badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:600;margin-top:2px}
+.pc-msel-red{background:#fee2e2;color:#991b1b}
+.pc-msel-blue{background:#dbeafe;color:#1e3a8a}
+.pc-msel-purple{background:#ede9fe;color:#4c1d95}
+.pc-msel-amber{background:#fef3c7;color:#92400e}
+.pc-msel-green{background:#dcfce7;color:#14532d}
+.pc-msel-gray{background:#f3f4f6;color:#374151}
 .pc-save-btn{padding:7px 18px;border:none;border-radius:var(--radius-sm);background:var(--yellow);color:var(--dark1);font-family:var(--font);font-size:12px;font-weight:700;cursor:pointer}
 .pc-cancel-btn{padding:7px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:12px;font-weight:500;cursor:pointer;color:#374151}
 /* Recursos aba */
@@ -351,8 +360,8 @@
         <i class="ti ti-chevron-down arr"></i>
       </button>
       <div class="pc-dd-panel" id="pddp-${nome}">
-        ${opcoes.map(o=>`<label class="pc-dd-item" onclick="pcToggleChk('${nome}','${esc(o.v)}',event)">
-          <input type="checkbox" ${sel.includes(o.v)?'checked':''}> ${esc(o.l)}
+        ${opcoes.map((o,i)=>`<label class="pc-dd-item" onclick="pcToggleChk('${nome}',${i},event)">
+          <input type="checkbox" id="pchk-${nome}-${i}" data-val="${esc(o.v)}" ${sel.includes(o.v)?'checked':''}> ${esc(o.l)}
         </label>`).join('')}
       </div>
     </div>`;
@@ -406,7 +415,7 @@
     return `<tr onclick="pcAbrirModal('${esc(o.os)}','${esc(o.cod_servico||'1')}')">
       <td style="font-weight:600;color:#374151">${esc(o.os)}</td>
       <td class="wrap" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.desc_servico||o.desc_os||'—')}</td>
-      <td style="font-size:11px;color:#4b5563;max-width:110px;overflow:hidden;text-overflow:ellipsis">${esc((o.desc_setor||o.setor||'—').trim())}</td>
+      <td style="font-size:11px;color:#4b5563;max-width:110px;overflow:hidden;text-overflow:ellipsis">${esc((o.desc_setor||'—').trim())}</td>
       <td style="font-size:11px;color:#4b5563">${esc(mod||'—')}</td>
       <td style="font-size:11px;font-weight:500">${fmtH(o.hh_prev_servico)}</td>
       <td>${pBadge}</td>
@@ -512,27 +521,46 @@
     else btn?.classList.remove('open');
   };
 
-  window.pcToggleChk = function(nome, val, e) {
+  window.pcToggleChk = function(nome, itemIdx, e) {
     e?.stopPropagation();
+    // Pega o valor real pelo data-val do checkbox indexado
+    const inp = document.getElementById(`pchk-${nome}-${itemIdx}`);
+    if (!inp) return;
+    const val = inp.dataset.val;
+    inp.checked = !inp.checked;
     const arr = F[nome]||[];
-    const idx = arr.indexOf(val);
-    if (idx>=0) arr.splice(idx,1); else arr.push(val);
-    F[nome]=arr;
-    const inp = document.querySelector(`#pddp-${nome} input[value="${CSS.escape(val)}"]`);
-    if (inp) inp.checked=arr.includes(val);
+    const pos = arr.indexOf(val);
+    if (inp.checked && pos<0) arr.push(val);
+    else if (!inp.checked && pos>=0) arr.splice(pos,1);
+    F[nome] = arr;
     const btn = document.getElementById(`pddbtn-${nome}`);
     if (btn) {
-      btn.classList.toggle('ativo',arr.length>0);
-      let badge=btn.querySelector('.pc-dd-badge');
-      if (arr.length>0) { if(!badge){badge=document.createElement('span');badge.className='pc-dd-badge';btn.insertBefore(badge,btn.querySelector('.arr'));} badge.textContent=arr.length; }
-      else if(badge) badge.remove();
+      btn.classList.toggle('ativo', arr.length>0);
+      let badge = btn.querySelector('.pc-dd-badge');
+      if (arr.length>0) {
+        if (!badge) { badge=document.createElement('span'); badge.className='pc-dd-badge'; btn.insertBefore(badge, btn.querySelector('.arr')); }
+        badge.textContent = arr.length;
+      } else if (badge) badge.remove();
     }
     updateLista();
   };
 
   window.pcRemoveChip = function(campo, val) {
     if (campo==='busca') { F.busca=''; const b=document.getElementById('pc-busca'); if(b) b.value=''; }
-    else { F[campo]=(F[campo]||[]).filter(x=>x!==val); }
+    else {
+      F[campo]=(F[campo]||[]).filter(x=>x!==val);
+      // Desmarca visualmente o checkbox correspondente
+      document.querySelectorAll(`#pddp-${campo} input[data-val="${CSS.escape(val)}"]`)
+        .forEach(inp => inp.checked=false);
+      const btn=document.getElementById(`pddbtn-${campo}`);
+      if (btn) {
+        const arr=F[campo]||[];
+        btn.classList.toggle('ativo',arr.length>0);
+        const badge=btn.querySelector('.pc-dd-badge');
+        if (arr.length>0 && badge) badge.textContent=arr.length;
+        else if (badge) badge.remove();
+      }
+    }
     updateLista();
   };
 
@@ -599,27 +627,29 @@
 
     <div class="pc-msec">
       <div class="pc-msec-lbl">Tipo de Parada</div>
-      <div class="pc-sel-row">
-        ${Object.entries(PARADA_LABEL).map(([v,l])=>`
-          <button class="pc-sel-btn ${tp===v?pCor[v]||'sel':''}" onclick="pcDraftSet('tipo_parada','${v}')">${l}</button>`).join('')}
-      </div>
+      <select class="pc-mselect" onchange="pcDraftSet('tipo_parada',this.value)">
+        <option value="">— selecionar —</option>
+        ${Object.entries(PARADA_LABEL).map(([v,l])=>`<option value="${v}" ${tp===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      ${tp?`<span class="pc-msel-badge pc-msel-${tp==='geral'?'red':tp==='com_vapor'?'blue':tp==='sem_vapor'||tp.startsWith('cald')?'purple':'gray'}">${PARADA_LABEL[tp]}</span>`:''}
     </div>
 
     <div class="pc-msec">
       <div class="pc-msec-lbl">Prioridade</div>
-      <div class="pc-sel-row">
-        <button class="pc-sel-btn ${pr==='alta'?'sel-red':''}" onclick="pcDraftSet('prioridade','alta')">Alta</button>
-        <button class="pc-sel-btn ${pr==='media'?'sel-amber':''}" onclick="pcDraftSet('prioridade','media')">Média</button>
-        <button class="pc-sel-btn ${pr==='baixa'?'sel':''}" onclick="pcDraftSet('prioridade','baixa')">Baixa</button>
-      </div>
+      <select class="pc-mselect" onchange="pcDraftSet('prioridade',this.value)">
+        <option value="">— selecionar —</option>
+        ${Object.entries(PRIO_LABEL).map(([v,l])=>`<option value="${v}" ${pr===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      ${pr?`<span class="pc-msel-badge pc-msel-${pr==='alta'?'red':pr==='media'?'amber':'green'}">${PRIO_LABEL[pr]}</span>`:''}
     </div>
 
     <div class="pc-msec">
       <div class="pc-msec-lbl">Categoria</div>
-      <div class="pc-sel-row">
-        ${Object.entries(CAT_LABEL).map(([v,l])=>`
-          <button class="pc-sel-btn ${ct===v?'sel':''}" onclick="pcDraftSet('categoria','${v}')">${l}</button>`).join('')}
-      </div>
+      <select class="pc-mselect" onchange="pcDraftSet('categoria',this.value)">
+        <option value="">— selecionar —</option>
+        ${Object.entries(CAT_LABEL).map(([v,l])=>`<option value="${v}" ${ct===v?'selected':''}>${l}</option>`).join('')}
+      </select>
+      ${ct?`<span class="pc-msel-badge pc-msel-gray">${CAT_LABEL[ct]}</span>`:''}
     </div>
 
     <div class="pc-msec">
@@ -645,7 +675,23 @@
       <textarea class="pc-textarea" id="pc-det" placeholder="Descreva detalhes, impactos na produção, observações técnicas…" onchange="DRAFT.detalhamento=this.value">${esc(det)}</textarea>
     </div>
 
-    ${mediaHtml}
+    <div class="pc-msec">
+      <div class="pc-msec-lbl">Fotos e Vídeos</div>
+      <label class="pc-upload-area" style="display:flex;align-items:center;gap:10px;padding:10px 14px;text-align:left;cursor:pointer">
+        <input type="file" id="pc-file-media" accept="image/*,video/*" multiple style="display:none" onchange="pcUploadMidia(event)">
+        <i class="ti ti-cloud-upload" style="font-size:20px;color:#d1d5db;flex-shrink:0"></i>
+        <span style="font-size:11px;color:#9ca3af">Clique para adicionar fotos ou vídeos<br><span style="font-size:9px">JPG, PNG, MP4, MOV · máx 50MB</span></span>
+      </label>
+      ${fotos.length?`<div class="pc-media-grid" id="pc-media-grid" style="margin-top:8px">
+        ${fotos.map((f,i)=>{
+          const isVid=f.url&&/\.(mp4|mov|webm|avi)$/i.test(f.url);
+          return `<div class="pc-media-item">
+            ${isVid?`<video src="${esc(f.url)}" style="width:100%;height:100%;object-fit:cover"></video>`:`<img src="${esc(f.url)}" loading="lazy">`}
+            <button class="pc-media-del" onclick="pcRemoverMidia(${i})">×</button>
+          </div>`;
+        }).join('')}
+      </div>`:''}
+    </div>
 
   </div>
   <div class="pc-mfoot">
@@ -660,10 +706,16 @@
   }
 
   window.pcDraftSet = function(campo, val) {
-    // Toggle: clica no mesmo = desmarca
-    if (campo!=='andaime_ok' && DRAFT[campo]===val) DRAFT[campo]='';
-    else DRAFT[campo]=val;
-    if (campo==='tipo_parada'||campo==='prioridade'||campo==='categoria'||campo==='andaime_ok') renderModal();
+    DRAFT[campo] = val;
+    // Só re-renderiza o modal para campos que mudam a estrutura visual
+    if (campo==='andaime_ok') renderModal();
+    // Para tipo_parada, prioridade, categoria: apenas atualiza o badge inline
+    if (campo==='tipo_parada'||campo==='prioridade'||campo==='categoria') {
+      const pBadges={'tipo_parada':{'geral':'red','com_vapor':'blue','sem_vapor':'purple','caldeira_03':'purple','caldeira_04':'purple','caldeira_05':'purple','sem_parada':'gray'},'prioridade':{'alta':'red','media':'amber','baixa':'green'},'categoria':{}};
+      const lbs={'tipo_parada':PARADA_LABEL,'prioridade':PRIO_LABEL,'categoria':CAT_LABEL};
+      // re-render rápido só do badge (o select já tem o valor)
+      renderModal();
+    }
   };
 
   window.pcDraftToggleRec = function(rec) {
