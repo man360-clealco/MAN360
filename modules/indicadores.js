@@ -212,14 +212,17 @@ window.Modulos.indicadores = {
   async _buscarRegistros(empresaCodigo, dataInicioISO, dataFimISO) {
     const { data, error } = await getDB()
       .from('ordens_servico')
-      .select('tipo_atividade, hh_real_servico, ' + this.DATE_FIELD)
+      .select('tipo_atividade, hh_real_servico, hh_real_os, ' + this.DATE_FIELD)
       .eq('empresa', empresaCodigo)
       .not(this.DATE_FIELD, 'is', null)
-      .gt('hh_real_servico', 0)
+      .or('hh_real_servico.gt.0,hh_real_os.gt.0')
       .gte(this.DATE_FIELD, dataInicioISO)
       .lte(this.DATE_FIELD, dataFimISO);
     if (error) throw error;
     return data || [];
+  },
+  _hhReal(r) {
+    return Number(r.hh_real_servico) || Number(r.hh_real_os) || 0;
   },
   _agregarPorSemana(registros, semanas) {
     const acc = semanas.map(() => ({
@@ -233,7 +236,7 @@ window.Modulos.indicadores = {
       const idx = this._indiceDaSemana(semanas, this._parseISODateLocal(dataRef));
       if (idx === -1) continue;
       acc[idx][classe].qtd += 1;
-      acc[idx][classe].hh += Number(r.hh_real_servico) || 0;
+      acc[idx][classe].hh += this._hhReal(r);
     }
     return acc;
   },
@@ -243,7 +246,7 @@ window.Modulos.indicadores = {
       const classe = this._classificar(r.tipo_atividade);
       if (!classe) continue;
       tot[classe].qtd += 1;
-      tot[classe].hh += Number(r.hh_real_servico) || 0;
+      tot[classe].hh += this._hhReal(r);
     }
     return tot;
   },
