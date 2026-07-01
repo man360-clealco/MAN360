@@ -63,6 +63,26 @@ window.Modulos.indicadores = {
 
     const cardTitle = (txt) => `<div class="card-title" style="color:${this.TXT_ESCURO}">${txt}</div>`;
 
+    const legendaLocal = (itens) => `
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin:0 0 10px">
+        ${itens.map(it => `
+          <span style="display:flex;align-items:center;gap:5px;font-size:10px;color:${this.TXT_MEDIO};font-weight:500">
+            <span style="width:9px;height:9px;border-radius:2px;background:${it.cor};display:inline-block"></span>${it.label}
+          </span>`).join('')}
+      </div>`;
+
+    const legendaClassificacao = legendaLocal(
+      Object.values(this.CLASSIFICACAO).map(c => ({ cor: c.hex, label: c.label }))
+    );
+    const legendaQtdHh = legendaLocal([
+      { cor: this.TXT_ESCURO, label: '% Qtd. OS (cor escura)' },
+      { cor: '#9ca3af',       label: '% HH realizado (cor clara)' },
+    ]);
+    const legendaPrevReal = legendaLocal([
+      { cor: this.TXT_ESCURO, label: 'HH previsto (cor escura)' },
+      { cor: '#9ca3af',       label: 'HH realizado (cor clara)' },
+    ]);
+
     return `
 <div class="filters-bar">
   <span class="filter-label" style="color:${this.TXT_MEDIO}">Período</span>
@@ -82,16 +102,19 @@ window.Modulos.indicadores = {
 
 <div class="card" style="margin-bottom:16px">
   ${cardTitle('Pareto de HH realizado por classificação — intervalo total')}
+  ${legendaClassificacao}
   <div class="charts-row">${painel('paretohh')}</div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
   ${cardTitle('% quantidade de OS x % HH realizado por tipo — intervalo total')}
+  ${legendaQtdHh}
   <div class="charts-row">${painel('mix')}</div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
   ${cardTitle('HH previsto x HH realizado — corretiva programável e inspeção (exclui emergencial) — intervalo total')}
+  ${legendaPrevReal}
   <div class="charts-row">${painel('prevreal')}</div>
 </div>
 
