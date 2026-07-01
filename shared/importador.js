@@ -10,9 +10,9 @@ async function importarOS(rows) {
   const mcu  = regs.filter(r => r.tipo_atividade === 'MCU');
   const prog = regs.filter(r => r.tipo_atividade !== 'MCU');
 
-  // UNIQUE(os, cod_servico) — funciona para MCU (cod='1', os único)
-  // e programável (os repete, cod='1','2'...)
-  const { count, error } = await dbUpsert('ordens_servico', regs, 'os,cod_servico');
+  // UNIQUE(empresa, os, cod_servico) — Clementina e Queiroz numeram OS
+  // a partir do próprio zero, então a chave precisa incluir empresa.
+  const { count, error } = await dbUpsert('ordens_servico', regs, 'empresa,os,cod_servico');
   if (error) return { ok: false, msg: 'Erro: ' + error.message };
 
   /* Após importar OS, tentar resolver cod_servico='?' na programação */
