@@ -12,7 +12,7 @@ window.Modulos = window.Modulos || {};
 
 window.Modulos.indicadores = {
 
-  DATE_FIELD: 'data_fim_exec',
+  DATE_FIELD: 'data_encerramento',
 
   CLASSIFICACAO: {
     programavel: { label: 'Corretiva programável', tipos: ['MCP', 'RGS', 'MDP', 'MBT'], hex: '#2563eb' },
@@ -166,6 +166,10 @@ window.Modulos.indicadores = {
     }
     return null;
   },
+  _parseISODateLocal(isoStr) {
+    const [y, m, d] = String(isoStr).slice(0, 10).split('-').map(Number);
+    return new Date(y, m - 1, d);
+  },
   _segundaFeira(date) {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
@@ -187,8 +191,10 @@ window.Modulos.indicadores = {
     const ultima = this._segundaFeira(dataFim);
     let guard = 0;
     while (cursor.getTime() <= ultima.getTime() && guard < 260) {
-      const dom = this._domingoDaSemana(cursor);
-      semanas.push({ inicio: new Date(cursor), fim: dom, label: this._fmtDia(cursor) + '-' + this._fmtDia(dom) });
+      if (cursor.getTime() >= dataInicio.getTime()) {
+        const dom = this._domingoDaSemana(cursor);
+        semanas.push({ inicio: new Date(cursor), fim: dom, label: this._fmtDia(cursor) + '-' + this._fmtDia(dom) });
+      }
       cursor = new Date(cursor);
       cursor.setDate(cursor.getDate() + 7);
       guard++;
@@ -206,9 +212,9 @@ window.Modulos.indicadores = {
   async _buscarRegistros(empresaCodigo, dataInicioISO, dataFimISO) {
     const { data, error } = await getDB()
       .from('ordens_servico')
-      .select('tipo_atividade, hh_real_servico, ' + this.DATE_FIELD + ', status_servico')
+      .select('tipo_atividade, hh_real_servico, ' + this.DATE_FIELD)
       .eq('empresa', empresaCodigo)
-      .ilike('status_servico', '4%')
+      .not(this.DATE_FIELD, 'is', null)
       .gt('hh_real_servico', 0)
       .gte(this.DATE_FIELD, dataInicioISO)
       .lte(this.DATE_FIELD, dataFimISO);
@@ -224,7 +230,7 @@ window.Modulos.indicadores = {
       if (!classe) continue;
       const dataRef = r[this.DATE_FIELD];
       if (!dataRef) continue;
-      const idx = this._indiceDaSemana(semanas, new Date(dataRef));
+      const idx = this._indiceDaSemana(semanas, this._parseISODateLocal(dataRef));
       if (idx === -1) continue;
       acc[idx][classe].qtd += 1;
       acc[idx][classe].hh += Number(r.hh_real_servico) || 0;
@@ -351,7 +357,7 @@ window.Modulos.indicadores = {
     if (statusEl) statusEl.textContent = 'Carregando...';
 
     try {
-      const semanas = this._gerarSemanas(new Date(dataInicioISO), new Date(dataFimISO));
+      const semanas = this._gerarSemanas(this._parseISODateLocal(dataInicioISO), this._parseISODateLocal(dataFimISO));
       const resultados = await Promise.all(
         this.EMPRESAS.map(e => this._buscarRegistros(e.codigo, dataInicioISO, dataFimISO))
       );
