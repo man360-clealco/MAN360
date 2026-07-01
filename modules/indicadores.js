@@ -1,12 +1,11 @@
 /* ═══════════════════════════════════════════════════════
    MAN360 — Módulo: Indicadores Manutenção
    Comparativo Clementina x Queiroz: quantidade de OS, HH
-   realizado e mix qtd/HH por classificação, por semana
-   (segunda a domingo). Escopo atual: mecânica.
+   realizado, pareto de HH e comparativo previsto x realizado
+   por classificação. Escopo atual: mecânica.
 
    AJUSTE POSSÍVEL: DATE_FIELD abaixo define o campo usado
-   pra bucketizar por semana. Hoje é 'data_fim_exec'. Trocar
-   para 'data_encerramento' se fizer mais sentido.
+   pra bucketizar por semana e pra decidir "encerrado".
    ═══════════════════════════════════════════════════════ */
 window.Modulos = window.Modulos || {};
 
@@ -14,16 +13,22 @@ window.Modulos.indicadores = {
 
   DATE_FIELD: 'data_encerramento',
 
+  // hex = cor "normal" (usada em Qtd. por semana, HH por semana, barra de HH realizado)
+  // dark = variante escura da mesma cor (usada pra distinguir a série "Qtd."/"Previsto")
   CLASSIFICACAO: {
-    programavel: { label: 'Corretiva programável', tipos: ['MCP', 'RGS', 'MDP', 'MBT'], hex: '#2563eb' },
-    emergencial: { label: 'Emergencial',            tipos: ['MCU'],                     hex: '#C8102E' },
-    inspecao:    { label: 'Inspeção / preventiva',  tipos: ['IPE', 'INP'],               hex: '#16a34a' },
+    programavel: { label: 'Corretiva programável', tipos: ['MCP', 'RGS', 'MDP', 'MBT'], hex: '#2563eb', dark: '#1e3a8a' },
+    emergencial: { label: 'Emergencial',            tipos: ['MCU'],                     hex: '#C8102E', dark: '#7a0a1c' },
+    inspecao:    { label: 'Inspeção / preventiva',  tipos: ['IPE', 'INP'],               hex: '#16a34a', dark: '#166534' },
   },
 
   EMPRESAS: [
     { codigo: '1', nome: 'Clementina', slug: 'cle' },
     { codigo: '2', nome: 'Queiroz',    slug: 'que' },
   ],
+
+  TXT_ESCURO: '#1f2937',
+  TXT_MEDIO:  '#374151',
+  GRID:       '#e4e4e7',
 
   _s: { instancias: [] },
 
@@ -44,57 +49,64 @@ window.Modulos.indicadores = {
     const isoInicio = oitoSemanasAtras.toISOString().slice(0, 10);
 
     const legenda = Object.values(this.CLASSIFICACAO).map(c =>
-      `<span style="display:flex;align-items:center;gap:5px;font-size:11px;color:#6b7280">
+      `<span style="display:flex;align-items:center;gap:5px;font-size:11px;color:${this.TXT_MEDIO};font-weight:500">
          <span style="width:9px;height:9px;border-radius:2px;background:${c.hex};display:inline-block"></span>${c.label}
        </span>`
     ).join('');
 
     const painel = (idPrefix) => this.EMPRESAS.map(e => `
       <div class="chart-wrap">
-        <div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:6px">${e.nome}</div>
+        <div style="font-size:11px;font-weight:700;color:${this.TXT_ESCURO};margin-bottom:6px">${e.nome}</div>
         <div class="chart-container"><canvas id="ind-${idPrefix}-${e.slug}"></canvas></div>
       </div>`
     ).join('');
 
+    const cardTitle = (txt) => `<div class="card-title" style="color:${this.TXT_ESCURO}">${txt}</div>`;
+
     return `
 <div class="filters-bar">
-  <span class="filter-label">Período</span>
+  <span class="filter-label" style="color:${this.TXT_MEDIO}">Período</span>
   <input type="date" id="ind-data-inicio" value="${isoInicio}"
-    style="height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px">
-  <span style="color:#9ca3af;font-size:11px">até</span>
+    style="height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:${this.TXT_ESCURO}">
+  <span style="color:${this.TXT_MEDIO};font-size:11px">até</span>
   <input type="date" id="ind-data-fim" value="${isoHoje}"
-    style="height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px">
+    style="height:30px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:${this.TXT_ESCURO}">
   <button id="ind-btn-aplicar"
     style="flex:none;width:auto;padding:0 16px;height:30px;border:1px solid var(--yellow-dk);border-radius:var(--radius-sm);background:var(--yellow);color:var(--dark1);font-family:var(--font);font-size:11px;font-weight:700;cursor:pointer">
     Aplicar
   </button>
-  <span id="ind-status" style="font-size:11px;color:#9ca3af;margin-left:auto"></span>
+  <span id="ind-status" style="font-size:11px;color:${this.TXT_MEDIO};font-weight:500;margin-left:auto"></span>
 </div>
 
 <div style="display:flex;gap:16px;margin-bottom:14px;padding:0 4px">${legenda}</div>
 
 <div class="card" style="margin-bottom:16px">
-  <div class="card-title">Quantidade de OS por semana</div>
+  ${cardTitle('Quantidade de OS por semana')}
   <div class="charts-row">${painel('qtd')}</div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <div class="card-title">HH realizado por semana</div>
+  ${cardTitle('HH realizado por semana')}
   <div class="charts-row">${painel('hh')}</div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <div class="card-title">Tendência — corretiva emergencial (MCU)</div>
-  <div class="charts-row">${painel('trend')}</div>
+  ${cardTitle('Pareto de HH realizado por classificação — intervalo total')}
+  <div class="charts-row">${painel('paretohh')}</div>
 </div>
 
 <div class="card" style="margin-bottom:16px">
-  <div class="card-title">% quantidade de OS x % HH realizado por tipo — intervalo total</div>
-  <div class="charts-row">${painel('pareto')}</div>
+  ${cardTitle('% quantidade de OS x % HH realizado por tipo — intervalo total')}
+  <div class="charts-row">${painel('mix')}</div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  ${cardTitle('HH previsto x HH realizado — corretiva programável e inspeção (exclui emergencial) — intervalo total')}
+  <div class="charts-row">${painel('prevreal')}</div>
 </div>
 
 <div class="import-section"><div class="card">
-  <div class="card-title"><i class="ti ti-upload" style="color:var(--yellow)"></i> IMPORTAR DADOS</div>
+  <div class="card-title" style="color:${this.TXT_ESCURO}"><i class="ti ti-upload" style="color:var(--yellow)"></i> IMPORTAR DADOS</div>
   <div style="display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start">
     <div class="dropzone" id="ind-dz"
       ondragover="event.preventDefault();this.classList.add('over')"
@@ -108,8 +120,8 @@ window.Modulos.indicadores = {
         <div class="file-type"><i class="ti ti-file-spreadsheet" style="color:var(--amber)"></i><span class="ext">.xls</span></div>
       </div>
     </div>
-    <div style="font-size:11px;color:#6b7280;min-width:160px">
-      <div style="font-weight:600;color:#374151;margin-bottom:8px">Arquivos aceitos:</div>
+    <div style="font-size:11px;color:${this.TXT_MEDIO};min-width:160px">
+      <div style="font-weight:700;color:${this.TXT_ESCURO};margin-bottom:8px">Arquivos aceitos:</div>
       <div>• Ordens de Serviço (MEC_CLE / MEC_QUEIROZ)</div>
     </div>
   </div>
@@ -158,14 +170,8 @@ window.Modulos.indicadores = {
   },
 
   /* ══════════════════════════════════════════
-     CLASSIFICAÇÃO E SEMANAS
+     DATAS
   ══════════════════════════════════════════ */
-  _classificar(tipoAtividade) {
-    for (const [key, cfg] of Object.entries(this.CLASSIFICACAO)) {
-      if (cfg.tipos.includes(tipoAtividade)) return key;
-    }
-    return null;
-  },
   _parseISODateLocal(isoStr) {
     const [y, m, d] = String(isoStr).slice(0, 10).split('-').map(Number);
     return new Date(y, m - 1, d);
@@ -207,12 +213,28 @@ window.Modulos.indicadores = {
   },
 
   /* ══════════════════════════════════════════
+     CLASSIFICAÇÃO
+  ══════════════════════════════════════════ */
+  _classificar(tipoAtividade) {
+    for (const [key, cfg] of Object.entries(this.CLASSIFICACAO)) {
+      if (cfg.tipos.includes(tipoAtividade)) return key;
+    }
+    return null;
+  },
+  _hhReal(r) {
+    return Number(r.hh_real_servico) || Number(r.hh_real_os) || 0;
+  },
+  _hhPrev(r) {
+    return Number(r.hh_prev_servico) || Number(r.hh_prev_os) || 0;
+  },
+
+  /* ══════════════════════════════════════════
      BUSCA E AGREGAÇÃO
   ══════════════════════════════════════════ */
   async _buscarRegistros(empresaCodigo, dataInicioISO, dataFimISO) {
     const { data, error } = await getDB()
       .from('ordens_servico')
-      .select('tipo_atividade, hh_real_servico, hh_real_os, ' + this.DATE_FIELD)
+      .select('tipo_atividade, hh_real_servico, hh_real_os, hh_prev_servico, hh_prev_os, ' + this.DATE_FIELD)
       .eq('empresa', empresaCodigo)
       .not(this.DATE_FIELD, 'is', null)
       .or('hh_real_servico.gt.0,hh_real_os.gt.0')
@@ -220,9 +242,6 @@ window.Modulos.indicadores = {
       .lte(this.DATE_FIELD, dataFimISO);
     if (error) throw error;
     return data || [];
-  },
-  _hhReal(r) {
-    return Number(r.hh_real_servico) || Number(r.hh_real_os) || 0;
   },
   _agregarPorSemana(registros, semanas) {
     const acc = semanas.map(() => ({
@@ -250,17 +269,57 @@ window.Modulos.indicadores = {
     }
     return tot;
   },
+  _agregarPrevRealNaoMCU(registros) {
+    const tot = { programavel: { prev: 0, real: 0 }, inspecao: { prev: 0, real: 0 } };
+    for (const r of registros) {
+      const classe = this._classificar(r.tipo_atividade);
+      if (classe !== 'programavel' && classe !== 'inspecao') continue;
+      tot[classe].prev += this._hhPrev(r);
+      tot[classe].real += this._hhReal(r);
+    }
+    return tot;
+  },
   _round1(n) { return Math.round(n * 10) / 10; },
-  _montarParetoData(totais) {
+  _montarMixData(totais) {
     const totalQtd = totais.programavel.qtd + totais.emergencial.qtd + totais.inspecao.qtd;
     const totalHh  = totais.programavel.hh  + totais.emergencial.hh  + totais.inspecao.hh;
-    const linhas = Object.entries(this.CLASSIFICACAO).map(([key, cfg]) => ({
-      key, label: cfg.label, hex: cfg.hex,
+    // ordem fixa: programável, emergencial, inspeção — sem ordenar por magnitude
+    return Object.entries(this.CLASSIFICACAO).map(([key, cfg]) => ({
+      key, label: cfg.label, hex: cfg.hex, dark: cfg.dark,
       pctQtd: totalQtd > 0 ? this._round1((totais[key].qtd / totalQtd) * 100) : 0,
       pctHh:  totalHh  > 0 ? this._round1((totais[key].hh  / totalHh)  * 100) : 0,
     }));
-    linhas.sort((a, b) => b.pctQtd - a.pctQtd);
-    return linhas;
+  },
+
+  /* ══════════════════════════════════════════
+     PLUGIN: total flutuando acima do grupo de barras
+  ══════════════════════════════════════════ */
+  _pluginTotalGrupo(txtColor) {
+    return {
+      id: 'totalGrupo',
+      afterDatasetsDraw(chart) {
+        const meta0 = chart.getDatasetMeta(0);
+        if (!meta0 || !meta0.data.length) return;
+        const { ctx } = chart;
+        ctx.save();
+        ctx.font = 'bold 10px Sora, sans-serif';
+        ctx.fillStyle = txtColor;
+        ctx.textAlign = 'center';
+        meta0.data.forEach((bar, i) => {
+          let total = 0;
+          let topoMin = bar.y;
+          chart.data.datasets.forEach((ds, dsIdx) => {
+            total += Number(ds.data[i]) || 0;
+            const pt = chart.getDatasetMeta(dsIdx).data[i];
+            if (pt && pt.y < topoMin) topoMin = pt.y;
+          });
+          if (total > 0) {
+            ctx.fillText(Math.round(total).toLocaleString('pt-BR'), bar.x, topoMin - 16);
+          }
+        });
+        ctx.restore();
+      },
+    };
   },
 
   /* ══════════════════════════════════════════
@@ -272,13 +331,24 @@ window.Modulos.indicadores = {
   },
   _baseScalesBar(yMax) {
     return {
-      x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9ca3af' } },
-      y: { beginAtZero: true, max: yMax, grid: { color: '#e4e4e7' }, ticks: { font: { size: 10 }, color: '#9ca3af' } },
+      x: { grid: { display: false }, ticks: { font: { size: 10 }, color: this.TXT_MEDIO } },
+      y: { beginAtZero: true, max: yMax, grid: { color: this.GRID }, ticks: { font: { size: 10 }, color: this.TXT_MEDIO } },
     };
   },
-  _renderGraficoSemanal(canvasId, semanas, porSemana, campo, yMax) {
+  _datalabelsBar(formatter) {
+    return {
+      anchor: 'end', align: 'top', offset: 2,
+      color: this.TXT_ESCURO, font: { size: 9, weight: 'bold' },
+      formatter,
+    };
+  },
+
+  _renderGraficoSemanal(canvasId, semanas, porSemana, campo, yMax, comTotal) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
+    const datalabelsFmt = this._datalabelsBar(v => v > 0 ? Math.round(v).toLocaleString('pt-BR') : '');
+    const plugins = [ChartDataLabels];
+    if (comTotal) plugins.push(this._pluginTotalGrupo(this.TXT_ESCURO));
     const chart = new Chart(ctx, {
       type: 'bar',
       data: {
@@ -288,66 +358,113 @@ window.Modulos.indicadores = {
           backgroundColor: cfg.hex, borderRadius: 4,
         })),
       },
-      options: { responsive: true, maintainAspectRatio: false, scales: this._baseScalesBar(yMax), plugins: { legend: { display: false } } },
-    });
-    this._s.instancias.push(chart);
-  },
-  _renderGraficoTendencia(canvasId, semanas, porSemana, yMax) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-    const hex = this.CLASSIFICACAO.emergencial.hex;
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: semanas.map(s => s.label),
-        datasets: [{
-          data: porSemana.map(s => s.emergencial.qtd),
-          borderColor: hex, backgroundColor: hex + '1A', fill: true, tension: 0.3,
-          pointRadius: 4, pointBackgroundColor: hex, pointBorderColor: '#ffffff', pointBorderWidth: 2, borderWidth: 2,
-        }],
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: comTotal ? 22 : 14 } },
+        scales: this._baseScalesBar(yMax),
+        plugins: { legend: { display: false }, datalabels: datalabelsFmt },
       },
-      options: { responsive: true, maintainAspectRatio: false, scales: this._baseScalesBar(yMax), plugins: { legend: { display: false } } },
+      plugins,
     });
     this._s.instancias.push(chart);
   },
-  _renderGraficoPareto(canvasId, totais) {
+
+  _renderGraficoParetoHH(canvasId, totais) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
-    const linhas = this._montarParetoData(totais);
+    // pareto de verdade: ordenado do maior HH pro menor
+    const linhas = Object.entries(this.CLASSIFICACAO)
+      .map(([key, cfg]) => ({ key, label: cfg.label, hex: cfg.hex, hh: this._round1(totais[key].hh) }))
+      .sort((a, b) => b.hh - a.hh);
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: linhas.map(l => l.label),
+        datasets: [{ data: linhas.map(l => l.hh), backgroundColor: linhas.map(l => l.hex), borderRadius: 4 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
+        scales: this._baseScalesBar(undefined),
+        plugins: {
+          legend: { display: false },
+          datalabels: this._datalabelsBar(v => v > 0 ? Math.round(v).toLocaleString('pt-BR') + 'h' : ''),
+        },
+      },
+      plugins: [ChartDataLabels],
+    });
+    this._s.instancias.push(chart);
+  },
+
+  _renderGraficoMix(canvasId, totais) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    const linhas = this._montarMixData(totais);
     const chart = new Chart(ctx, {
       type: 'bar',
       data: {
         labels: linhas.map(l => l.label),
         datasets: [
-          { label: '% Qtd. OS',       data: linhas.map(l => l.pctQtd), backgroundColor: '#2563eb', borderRadius: 4 },
-          { label: '% HH realizado',  data: linhas.map(l => l.pctHh),  backgroundColor: '#d97706', borderRadius: 4 },
+          { label: '% Qtd. OS',      data: linhas.map(l => l.pctQtd), backgroundColor: linhas.map(l => l.dark), borderRadius: 4 },
+          { label: '% HH realizado', data: linhas.map(l => l.pctHh),  backgroundColor: linhas.map(l => l.hex),  borderRadius: 4 },
         ],
       },
       options: {
         responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
         scales: {
-          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9ca3af' } },
-          y: { beginAtZero: true, max: 100, grid: { color: '#e4e4e7' }, ticks: { font: { size: 10 }, color: '#9ca3af', callback: v => v + '%' } },
+          x: { grid: { display: false }, ticks: { font: { size: 10 }, color: this.TXT_MEDIO } },
+          y: { beginAtZero: true, max: 100, grid: { color: this.GRID }, ticks: { font: { size: 10 }, color: this.TXT_MEDIO, callback: v => v + '%' } },
         },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y + '%' } } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y + '%' } },
+          datalabels: this._datalabelsBar(v => v > 0 ? v + '%' : ''),
+        },
       },
+      plugins: [ChartDataLabels],
     });
     this._s.instancias.push(chart);
   },
+
+  _renderGraficoPrevReal(canvasId, totaisPrevReal) {
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return;
+    const chaves = ['programavel', 'inspecao'];
+    const labels = chaves.map(k => this.CLASSIFICACAO[k].label);
+    const darkCores = chaves.map(k => this.CLASSIFICACAO[k].dark);
+    const cores = chaves.map(k => this.CLASSIFICACAO[k].hex);
+    const chart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'HH previsto',  data: chaves.map(k => this._round1(totaisPrevReal[k].prev)), backgroundColor: darkCores, borderRadius: 4 },
+          { label: 'HH realizado', data: chaves.map(k => this._round1(totaisPrevReal[k].real)), backgroundColor: cores,     borderRadius: 4 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 18 } },
+        scales: this._baseScalesBar(undefined),
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => c.dataset.label + ': ' + c.parsed.y.toLocaleString('pt-BR') + 'h' } },
+          datalabels: this._datalabelsBar(v => v > 0 ? Math.round(v).toLocaleString('pt-BR') + 'h' : ''),
+        },
+      },
+      plugins: [ChartDataLabels],
+    });
+    this._s.instancias.push(chart);
+  },
+
   _maxDe(porSemanaLista, campo) {
     let max = 0;
     for (const porSemana of porSemanaLista)
       for (const s of porSemana)
         for (const classe of Object.keys(this.CLASSIFICACAO))
           if (s[classe][campo] > max) max = s[classe][campo];
-    return max === 0 ? 10 : Math.ceil(max * 1.15);
-  },
-  _maxTrend(porSemanaLista) {
-    let max = 0;
-    for (const porSemana of porSemanaLista)
-      for (const s of porSemana)
-        if (s.emergencial.qtd > max) max = s.emergencial.qtd;
-    return max === 0 ? 5 : Math.ceil(max * 1.2);
+    return max === 0 ? 10 : Math.ceil(max * 1.25);
   },
 
   /* ══════════════════════════════════════════
@@ -365,20 +482,21 @@ window.Modulos.indicadores = {
         this.EMPRESAS.map(e => this._buscarRegistros(e.codigo, dataInicioISO, dataFimISO))
       );
 
-      const porSemanaPorEmpresa = resultados.map(regs => this._agregarPorSemana(regs, semanas));
-      const totaisPorEmpresa    = resultados.map(regs => this._agregarTotal(regs));
+      const porSemanaPorEmpresa    = resultados.map(regs => this._agregarPorSemana(regs, semanas));
+      const totaisPorEmpresa       = resultados.map(regs => this._agregarTotal(regs));
+      const prevRealPorEmpresa     = resultados.map(regs => this._agregarPrevRealNaoMCU(regs));
 
       this._destruirCharts();
 
-      const yMaxQtd   = this._maxDe(porSemanaPorEmpresa, 'qtd');
-      const yMaxHh    = this._maxDe(porSemanaPorEmpresa, 'hh');
-      const yMaxTrend = this._maxTrend(porSemanaPorEmpresa);
+      const yMaxQtd = this._maxDe(porSemanaPorEmpresa, 'qtd');
+      const yMaxHh  = this._maxDe(porSemanaPorEmpresa, 'hh');
 
       this.EMPRESAS.forEach((e, i) => {
-        this._renderGraficoSemanal('ind-qtd-' + e.slug, semanas, porSemanaPorEmpresa[i], 'qtd', yMaxQtd);
-        this._renderGraficoSemanal('ind-hh-' + e.slug, semanas, porSemanaPorEmpresa[i], 'hh', yMaxHh);
-        this._renderGraficoTendencia('ind-trend-' + e.slug, semanas, porSemanaPorEmpresa[i], yMaxTrend);
-        this._renderGraficoPareto('ind-pareto-' + e.slug, totaisPorEmpresa[i]);
+        this._renderGraficoSemanal('ind-qtd-' + e.slug, semanas, porSemanaPorEmpresa[i], 'qtd', yMaxQtd, false);
+        this._renderGraficoSemanal('ind-hh-' + e.slug, semanas, porSemanaPorEmpresa[i], 'hh', yMaxHh, true);
+        this._renderGraficoParetoHH('ind-paretohh-' + e.slug, totaisPorEmpresa[i]);
+        this._renderGraficoMix('ind-mix-' + e.slug, totaisPorEmpresa[i]);
+        this._renderGraficoPrevReal('ind-prevreal-' + e.slug, prevRealPorEmpresa[i]);
       });
 
       if (statusEl) {
