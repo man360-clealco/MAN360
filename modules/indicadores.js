@@ -81,16 +81,6 @@ window.Modulos.indicadores = {
 <div style="display:flex;gap:16px;margin-bottom:14px;padding:0 4px">${legenda}</div>
 
 <div class="card" style="margin-bottom:16px">
-  ${cardTitle('Quantidade de OS por semana')}
-  <div class="charts-row">${painel('qtd')}</div>
-</div>
-
-<div class="card" style="margin-bottom:16px">
-  ${cardTitle('HH realizado por semana')}
-  <div class="charts-row">${painel('hh')}</div>
-</div>
-
-<div class="card" style="margin-bottom:16px">
   ${cardTitle('Pareto de HH realizado por classificação — intervalo total')}
   <div class="charts-row">${painel('paretohh')}</div>
 </div>
@@ -176,41 +166,6 @@ window.Modulos.indicadores = {
     const [y, m, d] = String(isoStr).slice(0, 10).split('-').map(Number);
     return new Date(y, m - 1, d);
   },
-  _segundaFeira(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    const day = d.getDay();
-    d.setDate(d.getDate() + (day === 0 ? -6 : 1) - day);
-    return d;
-  },
-  _domingoDaSemana(monday) {
-    const d = new Date(monday);
-    d.setDate(d.getDate() + 6);
-    return d;
-  },
-  _fmtDia(d) {
-    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-  },
-  _gerarSemanas(dataInicio, dataFim) {
-    const semanas = [];
-    let cursor = this._segundaFeira(dataInicio);
-    const ultima = this._segundaFeira(dataFim);
-    let guard = 0;
-    while (cursor.getTime() <= ultima.getTime() && guard < 260) {
-      if (cursor.getTime() >= dataInicio.getTime()) {
-        const dom = this._domingoDaSemana(cursor);
-        semanas.push({ inicio: new Date(cursor), fim: dom, label: this._fmtDia(cursor) + '-' + this._fmtDia(dom) });
-      }
-      cursor = new Date(cursor);
-      cursor.setDate(cursor.getDate() + 7);
-      guard++;
-    }
-    return semanas;
-  },
-  _indiceDaSemana(semanas, data) {
-    const seg = this._segundaFeira(data).getTime();
-    return semanas.findIndex(s => s.inicio.getTime() === seg);
-  },
 
   /* ══════════════════════════════════════════
      CLASSIFICAÇÃO
@@ -242,22 +197,6 @@ window.Modulos.indicadores = {
       .lte(this.DATE_FIELD, dataFimISO);
     if (error) throw error;
     return data || [];
-  },
-  _agregarPorSemana(registros, semanas) {
-    const acc = semanas.map(() => ({
-      programavel: { qtd: 0, hh: 0 }, emergencial: { qtd: 0, hh: 0 }, inspecao: { qtd: 0, hh: 0 },
-    }));
-    for (const r of registros) {
-      const classe = this._classificar(r.tipo_atividade);
-      if (!classe) continue;
-      const dataRef = r[this.DATE_FIELD];
-      if (!dataRef) continue;
-      const idx = this._indiceDaSemana(semanas, this._parseISODateLocal(dataRef));
-      if (idx === -1) continue;
-      acc[idx][classe].qtd += 1;
-      acc[idx][classe].hh += this._hhReal(r);
-    }
-    return acc;
   },
   _agregarTotal(registros) {
     const tot = { programavel: { qtd: 0, hh: 0 }, emergencial: { qtd: 0, hh: 0 }, inspecao: { qtd: 0, hh: 0 } };
@@ -292,37 +231,6 @@ window.Modulos.indicadores = {
   },
 
   /* ══════════════════════════════════════════
-     PLUGIN: total flutuando acima do grupo de barras
-  ══════════════════════════════════════════ */
-  _pluginTotalGrupo(txtColor) {
-    return {
-      id: 'totalGrupo',
-      afterDatasetsDraw(chart) {
-        const meta0 = chart.getDatasetMeta(0);
-        if (!meta0 || !meta0.data.length) return;
-        const { ctx } = chart;
-        ctx.save();
-        ctx.font = 'bold 10px Sora, sans-serif';
-        ctx.fillStyle = txtColor;
-        ctx.textAlign = 'center';
-        meta0.data.forEach((bar, i) => {
-          let total = 0;
-          let topoMin = bar.y;
-          chart.data.datasets.forEach((ds, dsIdx) => {
-            total += Number(ds.data[i]) || 0;
-            const pt = chart.getDatasetMeta(dsIdx).data[i];
-            if (pt && pt.y < topoMin) topoMin = pt.y;
-          });
-          if (total > 0) {
-            ctx.fillText(Math.round(total).toLocaleString('pt-BR'), bar.x, topoMin - 16);
-          }
-        });
-        ctx.restore();
-      },
-    };
-  },
-
-  /* ══════════════════════════════════════════
      GRÁFICOS
   ══════════════════════════════════════════ */
   _destruirCharts() {
@@ -343,32 +251,6 @@ window.Modulos.indicadores = {
     };
   },
 
-  _renderGraficoSemanal(canvasId, semanas, porSemana, campo, yMax, comTotal) {
-    const ctx = document.getElementById(canvasId);
-    if (!ctx) return;
-    const datalabelsFmt = this._datalabelsBar(v => v > 0 ? Math.round(v).toLocaleString('pt-BR') : '');
-    const plugins = [ChartDataLabels];
-    if (comTotal) plugins.push(this._pluginTotalGrupo(this.TXT_ESCURO));
-    const chart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: semanas.map(s => s.label),
-        datasets: Object.entries(this.CLASSIFICACAO).map(([key, cfg]) => ({
-          label: cfg.label, data: porSemana.map(s => this._round1(s[key][campo])),
-          backgroundColor: cfg.hex, borderRadius: 4,
-        })),
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        layout: { padding: { top: comTotal ? 22 : 14 } },
-        scales: this._baseScalesBar(yMax),
-        plugins: { legend: { display: false }, datalabels: datalabelsFmt },
-      },
-      plugins,
-    });
-    this._s.instancias.push(chart);
-  },
-
   _renderGraficoParetoHH(canvasId, totais) {
     const ctx = document.getElementById(canvasId);
     if (!ctx) return;
@@ -376,6 +258,7 @@ window.Modulos.indicadores = {
     const linhas = Object.entries(this.CLASSIFICACAO)
       .map(([key, cfg]) => ({ key, label: cfg.label, hex: cfg.hex, hh: this._round1(totais[key].hh) }))
       .sort((a, b) => b.hh - a.hh);
+    const totalHh = linhas.reduce((s, l) => s + l.hh, 0);
     const chart = new Chart(ctx, {
       type: 'bar',
       data: {
@@ -388,7 +271,11 @@ window.Modulos.indicadores = {
         scales: this._baseScalesBar(undefined),
         plugins: {
           legend: { display: false },
-          datalabels: this._datalabelsBar(v => v > 0 ? Math.round(v).toLocaleString('pt-BR') + 'h' : ''),
+          datalabels: this._datalabelsBar(v => {
+            if (v <= 0) return '';
+            const pct = totalHh > 0 ? this._round1((v / totalHh) * 100) : 0;
+            return Math.round(v).toLocaleString('pt-BR') + 'h  (' + pct + '%)';
+          }),
         },
       },
       plugins: [ChartDataLabels],
@@ -458,15 +345,6 @@ window.Modulos.indicadores = {
     this._s.instancias.push(chart);
   },
 
-  _maxDe(porSemanaLista, campo) {
-    let max = 0;
-    for (const porSemana of porSemanaLista)
-      for (const s of porSemana)
-        for (const classe of Object.keys(this.CLASSIFICACAO))
-          if (s[classe][campo] > max) max = s[classe][campo];
-    return max === 0 ? 10 : Math.ceil(max * 1.25);
-  },
-
   /* ══════════════════════════════════════════
      ORQUESTRADOR
   ══════════════════════════════════════════ */
@@ -477,23 +355,16 @@ window.Modulos.indicadores = {
     if (statusEl) statusEl.textContent = 'Carregando...';
 
     try {
-      const semanas = this._gerarSemanas(this._parseISODateLocal(dataInicioISO), this._parseISODateLocal(dataFimISO));
       const resultados = await Promise.all(
         this.EMPRESAS.map(e => this._buscarRegistros(e.codigo, dataInicioISO, dataFimISO))
       );
 
-      const porSemanaPorEmpresa    = resultados.map(regs => this._agregarPorSemana(regs, semanas));
-      const totaisPorEmpresa       = resultados.map(regs => this._agregarTotal(regs));
-      const prevRealPorEmpresa     = resultados.map(regs => this._agregarPrevRealNaoMCU(regs));
+      const totaisPorEmpresa   = resultados.map(regs => this._agregarTotal(regs));
+      const prevRealPorEmpresa = resultados.map(regs => this._agregarPrevRealNaoMCU(regs));
 
       this._destruirCharts();
 
-      const yMaxQtd = this._maxDe(porSemanaPorEmpresa, 'qtd');
-      const yMaxHh  = this._maxDe(porSemanaPorEmpresa, 'hh');
-
       this.EMPRESAS.forEach((e, i) => {
-        this._renderGraficoSemanal('ind-qtd-' + e.slug, semanas, porSemanaPorEmpresa[i], 'qtd', yMaxQtd, false);
-        this._renderGraficoSemanal('ind-hh-' + e.slug, semanas, porSemanaPorEmpresa[i], 'hh', yMaxHh, true);
         this._renderGraficoParetoHH('ind-paretohh-' + e.slug, totaisPorEmpresa[i]);
         this._renderGraficoMix('ind-mix-' + e.slug, totaisPorEmpresa[i]);
         this._renderGraficoPrevReal('ind-prevreal-' + e.slug, prevRealPorEmpresa[i]);
@@ -501,7 +372,7 @@ window.Modulos.indicadores = {
 
       if (statusEl) {
         const total = resultados.reduce((sum, r) => sum + r.length, 0);
-        statusEl.textContent = total + ' serviços encerrados no período · ' + semanas.length + ' semana(s)';
+        statusEl.textContent = total + ' serviços encerrados no período selecionado';
       }
     } catch (err) {
       console.error('[indicadores]', err);
