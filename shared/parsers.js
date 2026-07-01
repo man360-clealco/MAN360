@@ -116,6 +116,7 @@ function parseOS(rows) {
   const hdr = rows[hdrIdx].map(c => String(c || ''));
   const g = (i, row) => (i >= 0 && i < row.length) ? String(row[i] || '').trim() : '';
 
+  const iEmpresa  = colIdx(hdr, ['Empresa']);
   const iOS       = colIdx(hdr, ['O.S.', 'OS']);
   const iCod      = colIdx(hdr, ['Codigo Serviço', 'Código Serviço', 'Cod Servico', 'Codigo Servico']);
   const iTipo     = colIdx(hdr, ['Tipo Ativ.', 'Tipo Atividade', 'Tipo Ativ']);
@@ -160,6 +161,7 @@ function parseOS(rows) {
     const tipo      = g(iTipo, row) || null;
 
     registros.push({
+      empresa:           normNum(g(iEmpresa, row)) || '2',
       os,
       cod_servico:       cod,
       tipo_atividade:    tipo,
