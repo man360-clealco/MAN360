@@ -176,11 +176,19 @@ window.Modulos.indicadores = {
     }
     return null;
   },
-  _hhReal(r) {
-    return Number(r.hh_real_servico) || Number(r.hh_real_os) || 0;
+  _hhReal(r, classe) {
+    // MCU nunca tem HH no nível de serviço (OS não se divide em serviços) — usa a OS inteira.
+    // Programável/Inspeção podem ter mais de um serviço por OS, então NUNCA usam o nível da OS
+    // (senão o valor total da OS vaza pra dentro de cada linha de serviço e infla a soma).
+    if (classe === 'emergencial') return Number(r.hh_real_os) || 0;
+    return Number(r.hh_real_servico) || 0;
   },
   _hhPrev(r) {
-    return Number(r.hh_prev_servico) || Number(r.hh_prev_os) || 0;
+    // só chamado pra programável/inspeção (MCU é excluída dessa comparação) — sem fallback pra OS
+    return Number(r.hh_prev_servico) || 0;
+  },
+  _hhValido(r, classe) {
+    return this._hhReal(r, classe) > 0;
   },
 
   /* ══════════════════════════════════════════
@@ -189,10 +197,10 @@ window.Modulos.indicadores = {
   async _buscarRegistros(empresaCodigo, dataInicioISO, dataFimISO) {
     const { data, error } = await getDB()
       .from('ordens_servico')
-      .select('tipo_atividade, hh_real_servico, hh_real_os, hh_prev_servico, hh_prev_os, ' + this.DATE_FIELD)
+      .select('tipo_atividade, hh_real_servico, hh_real_os, hh_prev_servico, ' + this.DATE_FIELD)
       .eq('empresa', empresaCodigo)
+      .eq('modalidade', 'MEC')
       .not(this.DATE_FIELD, 'is', null)
-      .or('hh_real_servico.gt.0,hh_real_os.gt.0')
       .gte(this.DATE_FIELD, dataInicioISO)
       .lte(this.DATE_FIELD, dataFimISO);
     if (error) throw error;
@@ -203,8 +211,9 @@ window.Modulos.indicadores = {
     for (const r of registros) {
       const classe = this._classificar(r.tipo_atividade);
       if (!classe) continue;
+      if (!this._hhValido(r, classe)) continue;
       tot[classe].qtd += 1;
-      tot[classe].hh += this._hhReal(r);
+      tot[classe].hh += this._hhReal(r, classe);
     }
     return tot;
   },
@@ -213,8 +222,9 @@ window.Modulos.indicadores = {
     for (const r of registros) {
       const classe = this._classificar(r.tipo_atividade);
       if (classe !== 'programavel' && classe !== 'inspecao') continue;
+      if (!this._hhValido(r, classe)) continue;
       tot[classe].prev += this._hhPrev(r);
-      tot[classe].real += this._hhReal(r);
+      tot[classe].real += this._hhReal(r, classe);
     }
     return tot;
   },
@@ -371,8 +381,10 @@ window.Modulos.indicadores = {
       });
 
       if (statusEl) {
-        const total = resultados.reduce((sum, r) => sum + r.length, 0);
-        statusEl.textContent = total + ' serviços encerrados no período selecionado';
+        const total = totaisPorEmpresa.reduce(
+          (sum, t) => sum + t.programavel.qtd + t.emergencial.qtd + t.inspecao.qtd, 0
+        );
+        statusEl.textContent = total + ' serviços encerrados no período selecionado (modalidade MEC)';
       }
     } catch (err) {
       console.error('[indicadores]', err);
