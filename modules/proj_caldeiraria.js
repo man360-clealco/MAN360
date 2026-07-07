@@ -34,6 +34,10 @@ window.Modulos.proj_caldeiraria = (() => {
   let _valorHH    = 120;
   let _osExpandida= null;
   let _osVerFotos = null;
+  let _filtBusca  = '';
+  let _dtInicioTerc = '';
+  let _visaoSetor = 'hh';
+  let _curvaExpanded = false;
 
   /* ── Helpers ── */
   function fmtNum(n,d){ return (n||0).toLocaleString('pt-BR',{minimumFractionDigits:d||0,maximumFractionDigits:d||0}); }
@@ -50,10 +54,15 @@ window.Modulos.proj_caldeiraria = (() => {
           if (fs==='encerrada')    return sl.includes('encerr');
           if (fs==='programada')   return sl.includes('program')||sl.includes('gerada')||sl.includes('aberta')||sl===''||!sl;
           if (fs==='andamento')    return sl.includes('andamento')||sl.includes('execu');
-          if (fs==='cancelada')    return sl.includes('cancel')||sl.includes('suspend');
           return sl.includes(fs);
         });
         if (!match) return false;
+      }
+      // Filtro busca por texto parcial
+      if (_filtBusca) {
+        const q = _filtBusca.toLowerCase();
+        const txt = ((o.desc_servico||'') + ' ' + (o.desc_os||'')).toLowerCase();
+        if (!txt.includes(q)) return false;
       }
       return true;
     });
@@ -80,19 +89,58 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   /* ── Previsão de conclusão ── */
+  function _isCan(o){ const sl=(o.status_os||'').toLowerCase(); return sl.includes('cancel')||sl.includes('suspend'); }
+  // HH do serviço individual — evita dupla contagem de hh_prev_os em OS multi-serviço
+  // Regra: se hh_prev_servico existe, usa. Se não existe, só conta no pai (cod='1'/null).
+  // Filhas sem hh_prev_servico retornam 0 (HH já está no pai).
+  function _ehPai(o){ return !o.cod_servico || String(o.cod_servico) === '1'; }
+  function _hhServ(o){
+    if (o.hh_prev_servico != null) return o.hh_prev_servico;  // dado correto na filha
+    if (_ehPai(o)) return o.hh_prev_os ?? 0;                  // pai carrega o HH da OS
+    return 0;                                                   // filha sem dado = não duplicar
+  }
+  // Serviço encerrado: usa status_servico quando disponível, fallback para status_os
+  // Se é filha sem status_servico, não conta separadamente (evita double-count de enc)
+  function _servEnc(o){
+    const ss=(o.status_servico||'').toLowerCase();
+    if (ss) return ss.includes('encerr');           // tem status_servico → usa ele
+    if (_ehPai(o)) {                                // pai sem status_servico → fallback OS
+      return (o.status_os||'').toLowerCase().includes('encerr');
+    }
+    return false;                                   // filha sem status_servico → não conta
+  }
+
   function calcPrevisao(lista) {
     if (!_dtInicio) return {prop:null,terc:null,custoTerc:null};
-    const hhTotProp = lista.filter(o=>o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro').reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+    const hoje = new Date().toISOString().split('T')[0];
+    // Projeção usa apenas OS válidas (sem canceladas/suspensas) — assim alinha com slide.html
+    const hhTotProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhTotTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhEncProp = lista.filter(o=>(o.proj_mo_tipo==='proprio'||!o.proj_mo_tipo)&&!_isCan(o)&&_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhEncTerc = lista.filter(o=>o.proj_mo_tipo==='terceiro'&&!_isCan(o)&&_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
     const hhRestProp = Math.max(0, hhTotProp - hhEncProp);
     const hhRestTerc = Math.max(0, hhTotTerc - hhEncTerc);
     const hhDiarioProp = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
     const hhDiarioTerc = HH_DIA_COLAB * PESSOAS_EQ * _nEqTerc;
-    const resProp = _nEqProp>0 ? calcDataConclusao(_dtInicio, hhRestProp, hhDiarioProp) : null;
-    const resTerc = _nEqTerc>0 ? calcDataConclusao(_dtInicio, hhRestTerc, hhDiarioTerc) : null;
+    // Data do plano original (partindo do início, sem considerar execução atual)
+    const resIdeal = (_nEqProp>0 && _dtInicio) ? calcDataConclusao(_dtInicio, hhTotProp, hhDiarioProp) : null;
+    // Projeção real: se já executou algo, projeta a partir de hoje com HH restante
+    const startProp = hhEncProp > 0 ? hoje : _dtInicio;
+    const resProp = _nEqProp>0 ? calcDataConclusao(startProp, hhRestProp, hhDiarioProp) : null;
+    // Projeção terceiro: usa data de início específica da equipe terceira
+    const resTerc = (_nEqTerc>0 && _dtInicioTerc) ? calcDataConclusao(_dtInicioTerc, hhRestTerc, hhDiarioTerc) : null;
     const custoTerc = _nEqTerc>0 ? hhRestTerc * _valorHH : null;
+    // Calcular delta (atraso / adiantado) via curva ideal
+    let diasDelta = null, adiantado = null, hhDelta = null;
+    if (_dtInicio && hhDiarioProp > 0 && hhTotProp > 0) {
+      const _ideal = _curvaIdealFn(_dtInicio, hhTotProp, hhDiarioProp);
+      const _hojeD = new Date(); _hojeD.setHours(12,0,0,0);
+      let _hhIdealHoje = 0;
+      for (const pt of _ideal) { if (pt.d <= _hojeD) _hhIdealHoje = pt.hh; else break; }
+      hhDelta    = hhEncProp - _hhIdealHoje;
+      diasDelta  = Math.round(hhDelta / hhDiarioProp);
+      adiantado  = diasDelta >= 0;
+    }
     return {
       prop:      resProp ? resProp.data : null,
       terc:      resTerc ? resTerc.data : null,
@@ -101,6 +149,8 @@ window.Modulos.proj_caldeiraria = (() => {
       custoTerc, hhRestTerc,
       mesesProp: resProp ? (resProp.dias/26).toFixed(1) : null,
       mesesTerc: resTerc ? (resTerc.dias/26).toFixed(1) : null,
+      diasDelta, adiantado, hhDelta,
+      propIdeal: resIdeal ? resIdeal.data : null,
     };
   }
 
@@ -121,12 +171,17 @@ window.Modulos.proj_caldeiraria = (() => {
 
   async function carregarOS() {
     let q = getDB().from('ordens_servico')
-      .select('os,desc_os,desc_servico,hh_prev_os,hh_real_os,status_os,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
+      .select('os,cod_servico,desc_os,desc_servico,hh_prev_os,hh_prev_servico,hh_real_os,status_os,status_servico,tipo_atividade,data_encerramento,setor,desc_setor,proj_tipo_intervencao,proj_criticidade,proj_mo_tipo')
       .eq('equipe',_filtEquipe).neq('tipo_atividade','MCU');
     if (_filtTipos.length) q = q.in('proj_tipo_intervencao',_filtTipos);
     const { data, error } = await q.order('os');
     if (error) console.error('carregarOS:',error);
-    _os = data||[];
+    // Excluir canceladas/suspensas de TUDO na fonte
+    _os = (data||[]).filter(o=>{ const sl=(o.status_os||'').toLowerCase(); return !sl.includes('cancel')&&!sl.includes('suspend'); });
+    // Propagar tipo da OS pai (cod_servico=1) para OS filhas (cod_servico>1)
+    const _tipoByOS = {};
+    _os.forEach(o => { if (!o.cod_servico || String(o.cod_servico) === '1') _tipoByOS[o.os] = o.proj_tipo_intervencao; });
+    _os.forEach(o => { if (o.cod_servico && String(o.cod_servico) !== '1' && !o.proj_tipo_intervencao) o.proj_tipo_intervencao = _tipoByOS[o.os] || null; });
   }
 
   async function carregarFotos(osList) {
@@ -207,7 +262,7 @@ window.Modulos.proj_caldeiraria = (() => {
             <button class="ps-btn-sm" id="btn-edit-tipos" title="Editar tipos"><i class="ti ti-pencil"></i></button>
           </label>
           <div class="ps-chips-wrap" id="ps-chips-tipos">
-            ${tiposChips||'<span style="font-size:10px;color:#9ca3af">Nenhum tipo</span>'}
+            ${tiposChips||'<span style="font-size:10px;color:#4b5563">Nenhum tipo</span>'}
           </div>
         </div>
       </div>
@@ -215,18 +270,33 @@ window.Modulos.proj_caldeiraria = (() => {
   }
 
   function htmlKPIs(lista) {
-    const total  = lista.length;
-    const enc    = osEnc(lista).length;
-    const hhTot  = lista.reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const hhEnc  = osEnc(lista).reduce((s,o)=>s+(o.hh_prev_os||0),0);
-    const pOS    = total>0?Math.round(enc/total*100):0;
+    // Total e encerradas: todos os serviços (pai + filho), sem filtro de estrutura
+    const total   = lista.length;
+    const enc     = lista.filter(o => _servEnc(o)).length;
+    // Pontos = OS com cod_servico '1' (ponto principal); sem cod_servico tambem conta
+    const pontos  = lista.filter(o => {
+      const _sl = (o.status_os||'').toLowerCase();
+      if (_sl.includes('cancel')||_sl.includes('suspend')) return false;
+      return !o.cod_servico || String(o.cod_servico) === '1';
+    });
+    const ptTotal = pontos.length;
+    const ptEnc   = osEnc(pontos).length;
+    const pPT     = ptTotal>0?Math.round(ptEnc/ptTotal*100):0;
+    const hhTot  = lista.reduce((s,o)=>s+_hhServ(o),0);
+    const hhEnc  = lista.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const pOS    = total>0?Math.round(enc/total*100):0; // % sobre OS pai
     const pHH    = hhTot>0?Math.round(hhEnc/hhTot*100):0;
     const cor    = p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
     return `<div class="ps-kpi-grid">
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">Qtd. OS</div>
         <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(total)}</div>
-        <div class="ps-kpi-sub">${enc} encerradas</div>
+        <div class="ps-kpi-sub">${enc} encerrados</div>
+      </div>
+      <div class="ps-kpi">
+        <div class="ps-kpi-lbl">Pontos</div>
+        <div class="ps-kpi-val" style="color:var(--blue)">${fmtNum(ptTotal)}</div>
+        <div class="ps-kpi-sub">${ptEnc} encerrados · ${pPT}%</div>
       </div>
       <div class="ps-kpi">
         <div class="ps-kpi-lbl">HH Previsto</div>
@@ -234,7 +304,7 @@ window.Modulos.proj_caldeiraria = (() => {
         <div class="ps-kpi-sub">${fmtNum(hhEnc,0)}h encerradas</div>
       </div>
       <div class="ps-kpi">
-        <div class="ps-kpi-lbl">% OS Encerradas</div>
+        <div class="ps-kpi-lbl">% Serviços Enc.</div>
         <div class="ps-kpi-val" style="color:${cor(pOS)}">${pOS}%</div>
         <div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div>
       </div>
@@ -254,7 +324,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const blocoProp = [
       '<div class="ps-bloco-mo">',
       '<div class="ps-bloco-mo-titulo"><i class="ti ti-users"></i> MO Própria — Distribuição por Setor</div>',
-      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      '<div class="ps-bloco-mo-sub-titulo">Distribuição por setor · criticidade</div>',
       htmlTabelaSetor(lista, 'proprio'),
       '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqProp+' eq. · '+fmtNum(hhMesProp(_nEqProp),0)+'h/mês)</div>',
       '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
@@ -265,7 +335,7 @@ window.Modulos.proj_caldeiraria = (() => {
     const blocoTerc = temTerc ? [
       '<div class="ps-bloco-mo">',
       '<div class="ps-bloco-mo-titulo"><i class="ti ti-building-factory"></i> MO Terceiro — Distribuição por Setor</div>',
-      '<div class="ps-bloco-mo-sub-titulo">HH por setor e criticidade</div>',
+      '<div class="ps-bloco-mo-sub-titulo">Distribuição por setor · criticidade</div>',
       htmlTabelaSetor(lista, 'terceiro'),
       '<div class="ps-bloco-mo-sub-titulo" style="margin-top:14px">Cenários de previsão ('+_nEqTerc+' eq. · '+(_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'sem equipes')+')</div>',
       '<div class="ps-cen-hdr"><span>Cenário</span><span>HH Total</span><span>Previsão</span></div>',
@@ -280,13 +350,31 @@ window.Modulos.proj_caldeiraria = (() => {
     const prev = calcPrevisao(lista);
     const valorOpts = VALORES_HH.map(v=>`<option value="${v}"${v===_valorHH?' selected':''}>R$ ${v}/HH</option>`).join('');
 
+    const corSit = prev.adiantado === null ? '#374151' : prev.adiantado ? 'var(--green)' : 'var(--red)';
+    const sitLabel = prev.diasDelta === null ? '—'
+      : prev.diasDelta === 0 ? 'Em dia'
+      : prev.adiantado ? `Adiantado +${prev.diasDelta}D`
+      : `Atraso ${prev.diasDelta}D`;
+    // Mostrar deslocamento: data plano → data prevista
+    const movLabel = (prev.propIdeal && prev.prop && prev.propIdeal !== prev.prop)
+      ? `${prev.propIdeal} → ${prev.prop}`
+      : '';
+    const cardSit = `<div class="ps-prev-card">
+      <div class="ps-prev-lbl"><i class="ti ti-activity"></i> Em Relação ao Plano</div>
+      <div class="ps-prev-val" style="color:${corSit};font-size:${prev.diasDelta!==null?'20px':'16px'}">${sitLabel}</div>
+      ${(prev.propIdeal||prev.prop)?`<div style="display:grid;grid-template-columns:max-content 1fr;gap:2px 8px;margin-top:8px;font-size:9.5px;line-height:1.5">
+        <span style="color:#6b7280;font-weight:500">Plano</span><span style="color:#374151">${prev.propIdeal||'—'}</span>
+        <span style="color:#6b7280;font-weight:500">Previsto</span><span style="font-weight:700;color:${corSit}">${prev.prop||'—'}</span>
+      </div>`:''}
+    </div>`;
+
     const cardProp = `<div class="ps-prev-card">
       <div class="ps-prev-lbl"><i class="ti ti-users"></i> Previsão Conclusão — MO Própria</div>
       <div class="ps-prev-val${prev.prop?'':' vazio'}">${prev.prop||'—'}</div>
       ${prev.mesesProp
         ?`<div class="ps-prev-sub">${prev.mesesProp} meses · ${_nEqProp} eq. · ${fmtNum(hhMesProp(_nEqProp),0)}h/mês</div>`
         :'<div class="ps-prev-sub">Informe a data de início</div>'}
-      <div class="ps-prev-obs">* Considerando a execução de toda a matriz</div>
+      <div class="ps-prev-obs">* Projetado a partir de hoje com HH restante — o atraso já está embutido nesta data</div>
     </div>`;
 
     const cardTerc = `<div class="ps-prev-card">
@@ -331,17 +419,196 @@ window.Modulos.proj_caldeiraria = (() => {
           </div>
           <div class="ps-cap-sub">${_nEqTerc>0?fmtNum(hhMesTerc(_nEqTerc),0)+'h/mês':'—'}</div>
         </div>
+        ${_nEqTerc>0?`
+        <div class="ps-cap-sep"></div>
+        <div class="ps-cap-bloco">
+          <label class="ps-flbl"><i class="ti ti-calendar"></i> Início eq. terceiro</label>
+          <input type="date" class="ps-date-input" id="ps-dt-inicio-terc" value="${_dtInicioTerc}">
+        </div>`:''}
       </div>
       <div class="ps-prev-grid">
-        ${cardProp}${cardTerc}${cardCusto}
+        ${cardSit}${cardProp}${_nEqTerc>0?cardTerc:''}${_nEqTerc>0?cardCusto:''}
       </div>
 
       ${htmlBlocosMO(lista)}
+      <div class="ps-bloco-mo" style="border-right:none;padding:0;border-top:1px solid var(--border)">
+        ${htmlCurvaS(lista)}
+      </div>
     </div>`;
   }
 
 
-  /* ── Tabela Setor × Criticidade ── */
+  /* ── Helpers Curva S inline ── */
+  function _curvaIdealFn(dtIni, totalHH, hhDia) {
+    const pts=[]; let acum=0, d=new Date(dtIni+'T12:00:00');
+    pts.push({d:new Date(d),hh:0}); let g=0;
+    while(acum<totalHH&&g<500){
+      g++; if(d.getDay()!==0) acum=Math.min(acum+hhDia,totalHH);
+      d=new Date(d); d.setDate(d.getDate()+1); pts.push({d:new Date(d),hh:acum});
+    }
+    return pts;
+  }
+  function _dataConcFn(dtIni, hhRest, hhDia) {
+    if(hhRest<=0) return new Date(dtIni+'T12:00:00');
+    let d=new Date(dtIni+'T12:00:00'), cont=0;
+    const mx=hhRest/Math.max(hhDia,1);
+    while(cont<mx&&cont<500){d=new Date(d);d.setDate(d.getDate()+1);if(d.getDay()!==0)cont++;}
+    return d;
+  }
+
+  function desenharCurvaS(cvEl, lista) {
+    if (!_dtInicio||!lista.length) return;
+    const dpr=window.devicePixelRatio||1;
+    const W=cvEl.offsetWidth||760;
+    const H=260;
+    cvEl.width=Math.round(W*dpr);
+    cvEl.height=Math.round(H*dpr);
+    cvEl.style.width=W+'px';
+    cvEl.style.height=H+'px';
+    const ctx=cvEl.getContext('2d');
+    ctx.scale(dpr,dpr);
+    const _listaVal=lista.filter(o=>!_isCan(o));
+    const totalHH=_listaVal.reduce((s,o)=>s+_hhServ(o),0);
+    if(!totalHH) return;
+    const hhEnc=_listaVal.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
+    const hhDia=HH_DIA_COLAB*PESSOAS_EQ*_nEqProp;
+    const hojeIso=new Date().toISOString().split('T')[0];
+    const hoje=new Date(hojeIso+'T12:00:00');
+    const dtIniDt=new Date(_dtInicio+'T12:00:00');
+    const hhRest=Math.max(0,totalHH-hhEnc);
+    const dtConc=_dataConcFn(hojeIso,hhRest,hhDia);
+    const ideal=_curvaIdealFn(_dtInicio,totalHH,hhDia);
+    const real=[{d:dtIniDt,hh:0},{d:new Date(hoje),hh:hhEnc}];
+    const proj=[{d:new Date(hoje),hh:hhEnc}];
+    let a=hhEnc, d2=new Date(hoje), g=0;
+    while(a<totalHH&&g<500){g++;d2=new Date(d2);d2.setDate(d2.getDate()+1);if(d2.getDay()!==0)a=Math.min(a+hhDia,totalHH);proj.push({d:new Date(d2),hh:a});}
+    const PAD={t:26,r:12,b:28,l:48};
+    const cW=W-PAD.l-PAD.r, cH=H-PAD.t-PAD.b;
+    const ax=PAD.l, ay=PAD.t;
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+    const tMin=dtIniDt.getTime(), tMax=dtConc.getTime();
+    function px(d){return ax+Math.max(0,Math.min(1,(d.getTime()-tMin)/(tMax-tMin)))*cW;}
+    function py(hh){return ay+cH-(hh/totalHH)*cH;}
+    // Grid
+    const nG=4;
+    for(let i=0;i<=nG;i++){
+      const y=ay+(i/nG)*cH, hh=totalHH*(1-i/nG);
+      ctx.strokeStyle='#e8e8e8';ctx.lineWidth=0.8;ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(ax,y);ctx.lineTo(ax+cW,y);ctx.stroke();
+      ctx.fillStyle='#6b7280';ctx.font='bold 8px Arial';ctx.textAlign='right';
+      ctx.fillText(Math.round(hh)+'h',ax-4,y+3);
+    }
+    // Riscas verticais semana
+    const ms=new Date(dtIniDt); while(ms.getDay()!==1) ms.setDate(ms.getDate()+1);
+    ctx.strokeStyle='#eeeeee';ctx.lineWidth=0.6;ctx.setLineDash([2,2]);
+    while(ms.getTime()<=tMax){const x=px(ms);ctx.beginPath();ctx.moveTo(x,ay);ctx.lineTo(x,ay+cH);ctx.stroke();ms.setDate(ms.getDate()+7);}
+    ctx.setLineDash([]);
+    // Labels X meses
+    const meses=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    ctx.fillStyle='#6b7280';ctx.font='bold 8.5px Arial';ctx.textAlign='center';
+    let dm=new Date(dtIniDt.getFullYear(),dtIniDt.getMonth(),1);
+    while(dm.getTime()<=tMax){
+      const x=px(dm);
+      if(x>ax+10&&x<=ax+cW-10) ctx.fillText(meses[dm.getMonth()]+'/'+String(dm.getFullYear()).slice(2),x,ay+cH+18);
+      dm=new Date(dm.getFullYear(),dm.getMonth()+1,1);
+    }
+    // Ideal
+    ctx.beginPath();ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2.5;ctx.setLineDash([]);
+    ideal.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();
+    // Projeção área+linha
+    ctx.beginPath();ctx.moveTo(px(proj[0].d),py(0));
+    proj.forEach(pt=>ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.lineTo(px(proj[proj.length-1].d),py(0));
+    ctx.closePath();ctx.fillStyle='rgba(134,239,172,0.15)';ctx.fill();
+    ctx.beginPath();ctx.strokeStyle='#22c55e';ctx.lineWidth=2.5;ctx.setLineDash([7,4]);
+    proj.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();ctx.setLineDash([]);
+    // Real
+    ctx.beginPath();ctx.strokeStyle='#16a34a';ctx.lineWidth=3;
+    real.forEach((pt,i)=>i===0?ctx.moveTo(px(pt.d),py(pt.hh)):ctx.lineTo(px(pt.d),py(pt.hh)));
+    ctx.stroke();
+    const lr=real[real.length-1];
+    ctx.beginPath();ctx.arc(px(lr.d),py(lr.hh),4.5,0,Math.PI*2);ctx.fillStyle='#16a34a';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    // Label início
+    const xIni=px(dtIniDt),yIni=py(0);
+    ctx.beginPath();ctx.arc(xIni,yIni,4,0,Math.PI*2);ctx.fillStyle='#16a34a';ctx.fill();
+    // Hoje
+    const xH=px(hoje);
+    ctx.strokeStyle='#111';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(xH,ay);ctx.lineTo(xH,ay+cH);ctx.stroke();ctx.setLineDash([]);
+    const hjW=34,hjH=13;
+    ctx.fillStyle='#111';ctx.beginPath();ctx.roundRect(xH-hjW/2,ay-hjH-2,hjW,hjH,2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 7.5px Arial';ctx.textAlign='center';
+    ctx.fillText('HOJE',xH,ay-4);
+    // Legenda
+    const LX=ax,LY=12;
+    ctx.font='bold 8px Arial';ctx.textAlign='left';ctx.setLineDash([]);
+    ctx.strokeStyle='#1d4ed8';ctx.lineWidth=2.5;
+    ctx.beginPath();ctx.moveTo(LX,LY);ctx.lineTo(LX+18,LY);ctx.stroke();
+    ctx.fillStyle='#374151';ctx.fillText('Plano ideal',LX+22,LY+3);
+    ctx.strokeStyle='#16a34a';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(LX+96,LY);ctx.lineTo(LX+114,LY);ctx.stroke();
+    ctx.fillStyle='#374151';ctx.fillText('Realizado',LX+118,LY+3);
+    ctx.strokeStyle='#22c55e';ctx.lineWidth=2.5;ctx.setLineDash([6,3]);
+    ctx.beginPath();ctx.moveTo(LX+190,LY);ctx.lineTo(LX+208,LY);ctx.stroke();
+    ctx.setLineDash([]);ctx.fillStyle='#374151';ctx.fillText('Projeção',LX+212,LY+3);
+
+    // Badge atraso / adiantado no canto superior direito do gráfico
+    if (_dtInicio && hhDia > 0 && totalHH > 0) {
+      const _idealD=_curvaIdealFn(_dtInicio,totalHH,hhDia);
+      const _hojeD2=new Date(); _hojeD2.setHours(12,0,0,0);
+      let _hhIdealH=0;
+      for(const pt of _idealD){if(pt.d<=_hojeD2)_hhIdealH=pt.hh; else break;}
+      const _diasD=Math.round((hhEnc-_hhIdealH)/Math.max(hhDia,1));
+      const _bdgLbl=_diasD===0?'Em dia':_diasD>0?`+${_diasD}D`:`${_diasD}D`;
+      const _bdgCor=_diasD>=0?'#16a34a':'#dc2626';
+      ctx.font='bold 9px Arial';
+      const _bW=ctx.measureText(_bdgLbl).width+14;
+      const _bX=ax+cW-_bW-4, _bY=ay+6;
+      ctx.fillStyle=_bdgCor;
+      ctx.beginPath();ctx.roundRect(_bX,_bY,_bW,16,3);ctx.fill();
+      ctx.fillStyle='#fff';ctx.textAlign='center';
+      ctx.fillText(_bdgLbl,_bX+_bW/2,_bY+11);
+    }
+  }
+
+  function htmlCurvaS(lista) {
+    if (!_dtInicio) return '';
+    const exp=_curvaExpanded;
+    const icon=exp?'ti-chevron-up':'ti-chevron-down';
+    const hdr=`<div class="ps-curva-hdr" data-action="toggle-curva">
+      <i class="ti ti-chart-line" aria-hidden="true"></i>
+      <span class="ps-bloco-mo-sub-titulo" style="margin:0">Curva S</span>
+      <i class="ti ${icon} ps-curva-chev"></i>
+    </div>`;
+    if (!exp) return hdr;
+    const hhTot=lista.reduce((s,o)=>s+_hhServ(o),0);
+    const encL=lista.filter(o=>_servEnc(o));
+    const hhEnc=encL.reduce((s,o)=>s+_hhServ(o),0);
+    const _pais=lista.filter(o=>_ehPai(o));
+    const pOS=_pais.length>0?Math.round(_pais.filter(o=>_servEnc(o)).length/_pais.length*100):0;
+    const pHH=hhTot>0?Math.round(hhEnc/hhTot*100):0;
+    const pontos=lista.filter(o=>{const sl=(o.status_os||'').toLowerCase();if(sl.includes('cancel')||sl.includes('suspend'))return false;return !o.cod_servico||String(o.cod_servico)==='1';});
+    const ptTotal=pontos.length;
+    const ptEnc=pontos.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).length; // OS-level: correto
+    const cor=p=>p>=70?'var(--green)':p>=40?'var(--amber)':'var(--red)';
+    const prev=calcPrevisao(lista);
+    return `${hdr}<div class="ps-curva-body">
+      <div class="ps-kpi-grid" style="border:none;border-top:1px solid var(--border);grid-template-columns:repeat(auto-fit,minmax(100px,1fr))">
+        <div class="ps-kpi"><div class="ps-kpi-lbl">HH Executado</div><div class="ps-kpi-val" style="font-size:16px">${fmtNum(hhEnc,0)}<span style="font-size:11px">/${fmtNum(hhTot,0)}h</span></div><div class="ps-kpi-sub">${fmtNum(hhTot-hhEnc,0)}h restantes</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">OS Executadas</div><div class="ps-kpi-val" style="font-size:16px">${_pais.filter(o=>_servEnc(o)).length}<span style="font-size:11px">/${_pais.length}</span></div><div class="ps-kpi-sub">${_pais.length-_pais.filter(o=>_servEnc(o)).length} pendentes</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">Pontos</div><div class="ps-kpi-val" style="font-size:16px">${ptEnc}<span style="font-size:11px">/${ptTotal} PT</span></div><div class="ps-kpi-sub">${Math.round(ptTotal>0?ptEnc/ptTotal*100:0)}% encerrados</div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">% OS Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pOS)}">${pOS}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pOS}%;background:${cor(pOS)}"></div></div></div>
+        <div class="ps-kpi"><div class="ps-kpi-lbl">% HH Enc.</div><div class="ps-kpi-val" style="font-size:16px;color:${cor(pHH)}">${pHH}%</div><div class="ps-kpi-bar"><div class="ps-kpi-fill" style="width:${pHH}%;background:${cor(pHH)}"></div></div></div>
+        ${prev.prop?`<div class="ps-kpi"><div class="ps-kpi-lbl">Previsão conclusão</div><div class="ps-kpi-val" style="font-size:14px">${prev.prop}</div><div class="ps-kpi-sub">${prev.mesesProp?prev.mesesProp+' meses':''}</div></div>`:''}
+      </div>
+      <canvas id="ps-curva-canvas" style="display:block;width:100%;border-top:1px solid var(--border)"></canvas>
+    </div>`;
+  }
+
+  /* ── Pareto Setor × Criticidade (substitui tabela antiga) ── */
   function htmlTabelaSetor(lista, moTipo) {
     const osMO = moTipo === 'proprio'
       ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
@@ -350,80 +617,132 @@ window.Modulos.proj_caldeiraria = (() => {
     const osValidas = osMO.filter(o => o.proj_criticidade && (o.desc_setor||o.setor));
     if (!osValidas.length) return '<div class="ps-tab-vazio">Sem dados com setor e criticidade definidos</div>';
 
-    // Separar pendentes (backlog real) das encerradas
-    const isPendente = o => !(o.status_os && o.status_os.toLowerCase().includes('encerr'));
-    const osPendentes = osValidas.filter(isPendente);
+    // Apenas OS pendentes (backlog real) — encerradas não entram no pareto
+    const osPendentes = osValidas.filter(o => !(o.status_os && o.status_os.toLowerCase().includes('encerr')));
+    if (!osPendentes.length) return '<div class="ps-tab-vazio">Todas as OS encerradas neste tipo de MO</div>';
 
-    // Usar desc_setor como chave de agrupamento — baseado apenas em pendentes
-    const setores = [...new Set(osPendentes.map(o=>o.desc_setor||o.setor))].sort();
-    if (!setores.length) return '<div class="ps-tab-vazio">Todas as OS deste tipo já foram encerradas</div>';
-
-    const crits   = ['alta','media','baixa'].filter(cr => osPendentes.some(o=>o.proj_criticidade===cr));
-    const nomeCrit = {alta:'Alta',media:'Média',baixa:'Baixa'};
-    const corCrit  = {alta:'#dc2626',media:'#d97706',baixa:'#16a34a'};
-
-    const matriz = {}, totaisCrit = {}, totaisSetor = {};
-    let totalGeral = 0;
-    setores.forEach(s => { matriz[s] = {}; totaisSetor[s] = 0; });
-    crits.forEach(cr => { totaisCrit[cr] = 0; });
-
+    // Construir matriz por setor: HH e Pontos por criticidade
+    const setoresSet = [...new Set(osPendentes.map(o=>o.desc_setor||o.setor))];
+    const data = {};
+    setoresSet.forEach(s => { data[s] = {hh:{alta:0,media:0,baixa:0}, pts:{alta:0,media:0,baixa:0}}; });
     osPendentes.forEach(o => {
-      const s  = o.desc_setor||o.setor;
-      const hh = o.hh_prev_os || 0;
-      if (!matriz[s][o.proj_criticidade]) matriz[s][o.proj_criticidade] = 0;
-      matriz[s][o.proj_criticidade] += hh;
-      totaisSetor[s] += hh;
-      totaisCrit[o.proj_criticidade] = (totaisCrit[o.proj_criticidade]||0) + hh;
-      totalGeral += hh;
+      const s = o.desc_setor||o.setor;
+      const cr = o.proj_criticidade;
+      if (!data[s] || !cr) return;
+      data[s].hh[cr]  = (data[s].hh[cr]||0) + _hhServ(o);
+      const _psl=(o.status_os||'').toLowerCase();
+      if ((!o.cod_servico||String(o.cod_servico)==='1')&&!_psl.includes('cancel')&&!_psl.includes('suspend'))
+        data[s].pts[cr] = (data[s].pts[cr]||0) + 1;
     });
 
-    // HH diário da equipe própria para calcular dias
-    const hhDiaEq = HH_DIA_COLAB * PESSOAS_EQ * _nEqProp;
-    const diasTotal = hhDiaEq > 0 ? Math.round(totalGeral / hhDiaEq) : null;
+    const isHH   = _visaoSetor !== 'pts';
+    const chave  = isHH ? 'hh' : 'pts';
+    const unid   = isHH ? 'h' : '';
+    const label  = isHH ? 'HH' : 'Pontos';
 
-    const thead = `<div class="ps-tab-row ps-tab-head">
-      <div class="ps-tab-cell ps-tab-setor-col">Setor</div>
-      ${crits.map(cr=>`<div class="ps-tab-cell ps-tab-crit ps-tab-crit-narrow" style="color:${corCrit[cr]}">${nomeCrit[cr]}</div>`).join('')}
-      <div class="ps-tab-cell ps-tab-total">Total Setor</div>
+    const setores = setoresSet.map(s => {
+      const v = data[s][chave];
+      const total = (v.alta||0)+(v.media||0)+(v.baixa||0);
+      return {s, v, total};
+    }).filter(d=>d.total>0).sort((a,b)=>b.total-a.total);
+
+    if (!setores.length) return '<div class="ps-tab-vazio">Sem dados</div>';
+
+    const totalGeral = setores.reduce((sum,d)=>sum+d.total,0);
+    const maxVal = setores[0].total;
+
+    // Acumulado
+    let acum = 0;
+    const rows = setores.map(d => {
+      acum += d.total;
+      const pctAcum = Math.round(acum/totalGeral*100);
+      const pct     = Math.round(d.total/totalGeral*100);
+      return {...d, pct, pctAcum};
+    });
+
+    // índice do corte 80%
+    const corteIdx = rows.findIndex(d=>d.pctAcum>=80);
+
+    // Toggle
+    const toggle = `<div style="display:flex;gap:4px;margin-bottom:10px">
+      <button class="ps-pareto-toggle${isHH?' on':''}" data-action="set-visao-setor" data-val="hh">${label==='HH'?'<b>HH</b>':'HH'}</button>
+      <button class="ps-pareto-toggle${!isHH?' on':''}" data-action="set-visao-setor" data-val="pts">${!isHH?'<b>Pontos</b>':'Pontos'}</button>
     </div>`;
 
-    const rows = setores.map(s => {
-      const pctSetor = totalGeral>0?Math.round(totaisSetor[s]/totalGeral*100):0;
-      const cells = crits.map(cr => {
-        const hh = matriz[s][cr] || 0;
-        return `<div class="ps-tab-cell ps-tab-crit-narrow">${hh>0?fmtNum(hh,0)+'h':'—'}</div>`;
-      }).join('');
-      return `<div class="ps-tab-row">
-        <div class="ps-tab-cell ps-tab-setor-col" title="${s}">${s}</div>
-        ${cells}
-        <div class="ps-tab-cell ps-tab-total">${fmtNum(totaisSetor[s],0)}h <span class="ps-tab-pct">(${pctSetor}%)</span></div>
+    // Barras pareto com rótulos internos
+    // Mostra rótulo dentro do segmento se ele ocupa >= 8% do total do maior setor
+    const _seg = (w, bg, val, u) => {
+      const showLbl = w >= 8 && val > 0;
+      return `<div style="width:${w.toFixed(1)}%;background:${bg};height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+        ${showLbl?`<span style="font-size:7.5px;font-weight:700;color:#fff;white-space:nowrap;padding:0 2px;pointer-events:none">${fmtNum(val,0)}${u}</span>`:''}
+      </div>`;
+    };
+    const barsHtml = rows.map((d,i) => {
+      const wA = maxVal>0?(d.v.alta||0)/maxVal*100:0;
+      const wM = maxVal>0?(d.v.media||0)/maxVal*100:0;
+      const wB = maxVal>0?(d.v.baixa||0)/maxVal*100:0;
+      const corAcum = d.pctAcum<=80?'#dc2626':'var(--color-text-tertiary)';
+      const divider = (corteIdx>=0&&i===corteIdx+1)
+        ? `<div class="ps-pareto-divider"><span>80:20</span></div>` : '';
+      return divider+`<div class="ps-pareto-row">
+        <div class="ps-pareto-lbl" title="${d.s}">${d.s}</div>
+        <div class="ps-pareto-bar-wrap">
+          <div class="ps-pareto-bar">
+            ${d.v.alta>0?_seg(wA,'#ef4444',d.v.alta,unid):''}
+            ${d.v.media>0?_seg(wM,'#f59e0b',d.v.media,unid):''}
+            ${d.v.baixa>0?_seg(wB,'#22c55e',d.v.baixa,unid):''}
+          </div>
+        </div>
+        <div class="ps-pareto-val">${fmtNum(d.total,0)}${unid}</div>
+        <div class="ps-pareto-acum" style="color:${corAcum}">${d.pctAcum}%</div>
       </div>`;
     }).join('');
 
-    const tfoot = `
-      <div class="ps-tab-row ps-tab-foot">
-        <div class="ps-tab-cell ps-tab-setor-col">Total HH</div>
-        ${crits.map(cr=>`<div class="ps-tab-cell">${fmtNum(totaisCrit[cr]||0,0)}h</div>`).join('')}
-        <div class="ps-tab-cell ps-tab-total">${fmtNum(totalGeral,0)}h</div>
-      </div>
-      <div class="ps-tab-row ps-tab-foot" style="background:#f0fdf4">
-        <div class="ps-tab-cell ps-tab-setor-col" style="color:#16a34a">Total dias</div>
-        ${crits.map(cr=>{
-          const hhCr = totaisCrit[cr]||0;
-          const dias = hhDiaEq>0 ? Math.round(hhCr/hhDiaEq) : null;
-          return `<div class="ps-tab-cell" style="color:#16a34a">${dias!==null?dias+'d':'—'}</div>`;
-        }).join('')}
-        <div class="ps-tab-cell ps-tab-total" style="color:#16a34a">${diasTotal!==null?diasTotal+'d':'—'}</div>
-      </div>`;
+    // Legenda barras
+    const legenda = `<div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--color-text-secondary)">
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#ef4444;display:inline-block"></span>Alta</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#f59e0b;display:inline-block"></span>Média</span>
+      <span style="display:flex;align-items:center;gap:3px"><span style="width:8px;height:8px;border-radius:2px;background:#22c55e;display:inline-block"></span>Baixa</span>
+      <span style="color:var(--color-text-tertiary);margin-left:4px">% = acumulado</span>
+    </div>`;
 
-    return `<div class="ps-tabela-wrap">${thead}${rows}${tfoot}</div>`;
+    // Tabela compacta
+    const tabHtml = `<table class="ps-pareto-tab">
+      <thead><tr>
+        <th>#</th><th>Setor</th>
+        <th style="text-align:right">${label}</th>
+        <th style="text-align:right">%</th>
+        <th style="text-align:right">Acum.</th>
+      </tr></thead>
+      <tbody>${rows.map((d,i)=>`<tr${d.pctAcum<=80?' class="ps-pareto-top"':''}>
+        <td style="color:var(--color-text-tertiary)">${i+1}</td>
+        <td title="${d.s}" style="font-size:9.5px">${d.s}</td>
+        <td style="text-align:right;font-weight:500">${fmtNum(d.total,0)}${unid}</td>
+        <td style="text-align:right;color:var(--color-text-secondary)">${d.pct}%</td>
+        <td style="text-align:right;font-weight:500;color:${d.pctAcum<=80?'#dc2626':'var(--color-text-secondary)'}">${d.pctAcum}%</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr>
+        <td colspan="2" style="font-weight:500">Total</td>
+        <td style="text-align:right;font-weight:500">${fmtNum(totalGeral,0)}${unid}</td>
+        <td style="text-align:right">100%</td><td></td>
+      </tr></tfoot>
+    </table>`;
+
+    return `<div>
+      ${toggle}
+      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px;align-items:start">
+        <div>${barsHtml}${legenda}</div>
+        <div>${tabHtml}</div>
+      </div>
+    </div>`;
   }
 
   /* ── 3 Cenários de previsão ── */
   function htmlCenarios(lista, moTipo, nEq, hhMesFn) {
-    const osMO = moTipo === 'proprio'
+    const osMO = (moTipo === 'proprio'
       ? lista.filter(o => o.proj_mo_tipo === 'proprio' || !o.proj_mo_tipo)
-      : lista.filter(o => o.proj_mo_tipo === 'terceiro');
+      : lista.filter(o => o.proj_mo_tipo === 'terceiro')
+    ).filter(o => !_isCan(o));
 
     const cenarios = [
       { label: 'Só Alta criticidade',      crits: ['alta'],                isTudo: false },
@@ -437,24 +756,30 @@ window.Modulos.proj_caldeiraria = (() => {
     // Calcular HH de cada cenário antecipadamente para delta
     const hhCenarios = cenarios.map(cen =>
       (cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade)))
-        .reduce((s,o)=>s+(o.hh_prev_os||0),0)
+        .reduce((s,o)=>s+_hhServ(o),0)
     );
 
     const rows = cenarios.map((cen, idx) => {
       const osC    = cen.isTudo ? osMO : osMO.filter(o=>cen.crits.includes(o.proj_criticidade));
       const hhTot  = hhCenarios[idx];
-      const hhEnc  = osC.filter(o=>o.status_os&&o.status_os.toLowerCase().includes('encerr')).reduce((s,o)=>s+(o.hh_prev_os||0),0);
+      const hhEnc  = osC.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
       const hhRest = Math.max(0, hhTot - hhEnc);
 
-      // Previsão + dias — mesma lógica que calcPrevisao (pula domingos)
+      // Previsão + dias — projeta a partir de hoje se há execução, ou da data início
+      const _hoje = new Date().toISOString().split('T')[0];
+      const _startCen = moTipo === 'terceiro'
+        ? (_dtInicioTerc || _dtInicio)
+        : (hhEnc > 0 ? _hoje : _dtInicio);
       let previsao = '—';
-      if (_dtInicio && hhDiario > 0 && hhRest > 0) {
-        const res = calcDataConclusao(_dtInicio, hhRest, hhDiario);
+      if (_startCen && hhDiario > 0 && hhRest > 0) {
+        const res = calcDataConclusao(_startCen, hhRest, hhDiario);
         if (res) previsao = res.data + ' <span class="ps-cen-dias">('+res.dias+' dias)</span>';
       } else if (hhRest === 0 && hhTot > 0) {
         previsao = 'Concluído';
       } else if (nEq === 0) {
         previsao = 'Sem equipes';
+      } else if (!_startCen) {
+        previsao = moTipo === 'terceiro' ? 'Informe início da equipe' : '—';
       }
 
       // Delta — cenário 1 compara c/ 0, cenário 2 compara com cenário 1
@@ -479,7 +804,8 @@ window.Modulos.proj_caldeiraria = (() => {
       ? 'Informe a data de início para ver previsões'
       : nEq === 0 ? 'Configure equipes para ver previsões' : '';
 
-    return `<div class="ps-cen-wrap">${rows}${hint?`<div class="ps-cen-hint">${hint}</div>`:''}</div>`;
+    const notaCen = _dtInicio ? `<div class="ps-cen-hint" style="color:#4b5563">* Datas calculadas a partir de hoje com o HH restante de cada cenário · atraso atual já incorporado</div>` : '';
+    return `<div class="ps-cen-wrap">${rows}${hint?`<div class="ps-cen-hint">${hint}</div>`:''}${notaCen}</div>`;
   }
 
   function htmlListaOS(lista) {
@@ -581,7 +907,6 @@ window.Modulos.proj_caldeiraria = (() => {
       ['encerrada','Encerrada','#16a34a','#dcfce7'],
       ['programada','Programada','#d97706','#fef3c7'],
       ['andamento','Em andamento','#2563eb','#dbeafe'],
-      ['cancelada','Cancelada','#dc2626','#fee2e2'],
     ];
     const setores = setoresDistintos();
     const setorOpts = setores.map(s=>`<option value="${s}"${s===_filtSetor?' selected':''}>${s}</option>`).join('');
@@ -609,25 +934,46 @@ window.Modulos.proj_caldeiraria = (() => {
       ${htmlFiltros()}
       ${htmlKPIs(metricas)}
       ${htmlProjecao(metricas)}
-      <div class="ps-aviso-terc">
-        <div class="ps-aviso-terc-inner">
-          <i class="ti ti-info-circle"></i>
-          <span>Custo total se 100% terceirizado:</span>
-          <strong>${fmtMoeda(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0) * _valorHH)}</strong>
-          <span class="ps-aviso-sub">${fmtNum(metricas.reduce((s,o)=>s+(o.hh_prev_os||0),0),0)} HH × R$${_valorHH}/HH</span>
-        </div>
-      </div>
+      ${(()=>{
+        const _hhTG = metricas.reduce((s,o)=>s+_hhServ(o),0);
+        const _hhEG = metricas.filter(o=>_servEnc(o)).reduce((s,o)=>s+_hhServ(o),0);
+        const _hhRG = Math.max(0,_hhTG-_hhEG);
+        return `<div class="ps-aviso-terc">
+          <div class="ps-aviso-terc-inner" style="gap:16px;flex-wrap:wrap">
+            <i class="ti ti-info-circle" style="flex-shrink:0"></i>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:10px;color:#92400e">Custo se 100% terceirizado</span>
+              <strong style="font-size:15px">${fmtMoeda(_hhTG*_valorHH)}</strong>
+              <span class="ps-aviso-sub">${fmtNum(_hhTG,0)} HH × R$${_valorHH}/HH</span>
+            </div>
+            <div style="width:1px;background:#fcd34d;align-self:stretch"></div>
+            <div style="display:flex;flex-direction:column;gap:2px">
+              <span style="font-size:10px;color:#92400e">Custo se terceirizado o restante</span>
+              <strong style="font-size:15px">${fmtMoeda(_hhRG*_valorHH)}</strong>
+              <span class="ps-aviso-sub">${fmtNum(_hhRG,0)} HH restantes × R$${_valorHH}/HH</span>
+            </div>
+          </div>
+        </div>`;
+      })()}
       <div class="ps-card">
         <div class="ps-lista-hdr">
-          <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;width:100%;flex-wrap:wrap">
+            <div class="ps-card-titulo" style="border:none;padding:0"><i class="ti ti-list"></i> Lista de OS <span class="ps-lista-count">${lista.length}</span></div>
+            <input type="text" id="ps-busca" class="ps-busca-input" placeholder="Pesquisar..." value="${_filtBusca}" style="flex:1;min-width:140px;max-width:260px">
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
+            </div>
+          </div>
           ${htmlFiltrosLista()}
-          <button class="ps-btn-primary" id="btn-relatorio" style="flex-shrink:0"><i class="ti ti-external-link"></i> Abrir Relatório</button>
-          <button class="ps-btn-secondary" id="btn-slide" style="flex-shrink:0"><i class="ti ti-chart-line"></i> Gerar Slide</button>
         </div>
         <div class="ps-lista">${htmlListaOS(lista)}</div>
       </div>
     </div>`;
     bindEventos();
+    if (_curvaExpanded && _dtInicio) {
+      const _cv=_container.querySelector('#ps-curva-canvas');
+      if (_cv) desenharCurvaS(_cv, osParaMetricas());
+    }
   }
 
   /* ══════════════════════════════════════
@@ -697,6 +1043,22 @@ window.Modulos.proj_caldeiraria = (() => {
     /* Data início */
     c.querySelector('#ps-dt-inicio').addEventListener('change', e=>{ _dtInicio=e.target.value; renderizar(); });
 
+    /* Data início equipe terceiro */
+    const inpDtTerc = c.querySelector('#ps-dt-inicio-terc');
+    if (inpDtTerc) inpDtTerc.addEventListener('change', e=>{ _dtInicioTerc=e.target.value; renderizar(); });
+
+    /* Busca por texto */
+    const inpBusca = c.querySelector('#ps-busca');
+    if (inpBusca) inpBusca.addEventListener('input', e=>{
+      _filtBusca = e.target.value;
+      clearTimeout(window._psBuscaTimer);
+      window._psBuscaTimer = setTimeout(()=>{
+        renderizar();
+        const nb = _container.querySelector('#ps-busca');
+        if (nb) { nb.focus(); nb.setSelectionRange(_filtBusca.length, _filtBusca.length); }
+      }, 250);
+    });
+
     /* Valor HH */
     const selValor=c.querySelector('#ps-valor-hh');
     if (selValor) selValor.addEventListener('change', e=>{ _valorHH=parseInt(e.target.value); renderizar(); });
@@ -708,6 +1070,8 @@ window.Modulos.proj_caldeiraria = (() => {
         e.stopPropagation();
         const a=btn.dataset.action, os=btn.dataset.os;
         switch(a){
+          case 'toggle-curva': _curvaExpanded=!_curvaExpanded; renderizar(); break;
+          case 'set-visao-setor': _visaoSetor=btn.dataset.val; renderizar(); break;
           case 'inc-prop': _nEqProp++; renderizar(); break;
           case 'dec-prop': if(_nEqProp>1)_nEqProp--; renderizar(); break;
           case 'inc-terc': _nEqTerc++; renderizar(); break;
@@ -755,8 +1119,7 @@ window.Modulos.proj_caldeiraria = (() => {
     if (btnRel) btnRel.addEventListener('click', ()=>gerarRelatorio());
 
     /* Slide */
-    const btnSlide = c.querySelector('#btn-slide');
-    if (btnSlide) btnSlide.addEventListener('click', ()=>gerarSlide());
+    // btn-slide removido (Curva S agora embutida na página)
   }
 
   /* ══════════════════════════════════════
@@ -909,17 +1272,17 @@ window.Modulos.proj_caldeiraria = (() => {
       '<div id="rel-opts" style="display:flex;flex-direction:column;gap:8px">' +
         '<button id="opc-none" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">📄</span>' +
-          '<span><b style="display:block;font-size:12px">Sem fotos</b><span style="font-size:10px;color:#6b7280">Leve e rápido · ideal para e-mail</span></span>' +
+          '<span><b style="display:block;font-size:12px">Sem fotos</b><span style="font-size:10px;color:#374151">Leve e rápido · ideal para e-mail</span></span>' +
         '</button>' +
         '<button id="opc-comp" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">🗜</span>' +
-          '<span><b style="display:block;font-size:12px">Fotos comprimidas</b><span style="font-size:10px;color:#6b7280">Equilibrado · ~5MB estimado</span></span>' +
+          '<span><b style="display:block;font-size:12px">Fotos comprimidas</b><span style="font-size:10px;color:#374151">Equilibrado · ~5MB estimado</span></span>' +
         '</button>' +
         '<button id="opc-orig" style="display:flex;align-items:center;gap:12px;width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:22px">📷</span>' +
-          '<span><b style="display:block;font-size:12px">Fotos originais</b><span style="font-size:10px;color:#6b7280">Alta qualidade · arquivo maior</span></span>' +
+          '<span><b style="display:block;font-size:12px">Fotos originais</b><span style="font-size:10px;color:#374151">Alta qualidade · arquivo maior</span></span>' +
         '</button>' +
-        '<button id="opc-cancel" style="width:100%;margin-top:4px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:10px;color:#6b7280">Cancelar</button>' +
+        '<button id="opc-cancel" style="width:100%;margin-top:4px;padding:7px;border:1px solid #e5e7eb;border-radius:6px;background:#fff;cursor:pointer;font-family:inherit;font-size:10px;color:#374151">Cancelar</button>' +
       '</div>';
     ov.appendChild(modal);
     document.body.appendChild(ov);
@@ -932,7 +1295,7 @@ window.Modulos.proj_caldeiraria = (() => {
       var agora  = new Date();
       var dtStr  = agora.toLocaleDateString('pt-BR') + ' ' + agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
       var totalHH = 0;
-      for (var i=0; i<lista.length; i++) totalHH += (lista[i].hh_prev_os||0);
+      for (var i=0; i<lista.length; i++) totalHH += _hhServ(lista[i]);
 
       var qs = 'equipe='  + encodeURIComponent(_filtEquipe)
              + '&tipos='  + encodeURIComponent(_filtTipos.join('|'))
@@ -972,7 +1335,7 @@ window.Modulos.proj_caldeiraria = (() => {
     s.textContent=`
 .ps-mod{display:flex;flex-direction:column;gap:12px;}
 .ps-card{background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;}
-.ps-card-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);}
+.ps-card-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--border);}
 .ps-card-titulo i{font-size:13px;}
 
 /* Filtros */
@@ -981,26 +1344,26 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-filtro-bloco{display:flex;flex-direction:column;gap:6px;padding:0 16px 0 0;}
 .ps-filtro-equipe{min-width:120px;flex-shrink:0;}
 .ps-filtro-sep-v{width:1px;background:var(--border);flex-shrink:0;margin:0 16px;}
-.ps-flbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;display:flex;align-items:center;gap:5px;}
-.ps-flbl-inline{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;flex-shrink:0;}
+.ps-flbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;display:flex;align-items:center;gap:5px;}
+.ps-flbl-inline{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;flex-shrink:0;}
 .ps-sel{height:30px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
 .ps-chips-wrap{display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-height:26px;}
-.ps-chip{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;user-select:none;flex-shrink:0;}
+.ps-chip{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:var(--bg);font-size:10px;font-weight:600;color:#374151;cursor:pointer;user-select:none;flex-shrink:0;}
 .ps-chip.ativo{border-color:var(--chip-c,#7c3aed);background:var(--chip-bg,#ede9fe);color:var(--chip-c,#7c3aed);}
 .ps-chip[data-tipo].ativo{border-color:#7c3aed;background:#ede9fe;color:#7c3aed;}
-.ps-btn-sm{width:22px;height:22px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:#6b7280;flex-shrink:0;padding:0;}
+.ps-btn-sm{width:22px;height:22px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:11px;color:#374151;flex-shrink:0;padding:0;}
 .ps-btn-sm:hover{background:#1e1e1e;color:#fff;border-color:#1e1e1e;}
 .ps-btn-sm.red:hover{background:#dc2626;border-color:#dc2626;color:#fff;}
 .ps-fsep{width:1px;height:20px;background:var(--border);flex-shrink:0;}
 
 /* KPIs */
-.ps-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
+.ps-kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);}
 @media(max-width:600px){.ps-kpi-grid{grid-template-columns:repeat(2,1fr);}}
 .ps-kpi{padding:13px 14px;border-right:1px solid var(--border);}
 .ps-kpi:last-child{border-right:none;}
-.ps-kpi-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:5px;}
+.ps-kpi-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:5px;}
 .ps-kpi-val{font-size:22px;font-weight:700;line-height:1;margin-bottom:2px;color:#1a1a1a;}
-.ps-kpi-sub{font-size:9px;color:#9ca3af;}
+.ps-kpi-sub{font-size:9px;color:#4b5563;}
 .ps-kpi-bar{height:3px;border-radius:2px;background:var(--border);margin-top:7px;overflow:hidden;}
 .ps-kpi-fill{height:100%;border-radius:2px;}
 
@@ -1008,7 +1371,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-projecao-config{display:flex;gap:16px;padding:12px 14px;flex-wrap:wrap;align-items:flex-start;border-bottom:1px solid var(--border);}
 .ps-cap-bloco{display:flex;flex-direction:column;gap:5px;}
 .ps-cap-sep{width:1px;background:var(--border);flex-shrink:0;align-self:stretch;}
-.ps-cap-sub{font-size:9px;color:#9ca3af;}
+.ps-cap-sub{font-size:9px;color:#4b5563;}
 .ps-num-input{display:flex;align-items:center;gap:6px;}
 .ps-num-btn{width:26px;height:26px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);cursor:pointer;font-size:14px;font-weight:700;color:#374151;display:flex;align-items:center;justify-content:center;}
 .ps-num-btn:hover{background:var(--yellow,#F8C100);border-color:#daa900;}
@@ -1016,36 +1379,38 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-date-input{height:30px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
 
 /* Cards previsão */
-.ps-prev-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--border);}
+.ps-prev-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0;border-top:1px solid var(--border);}
 @media(max-width:600px){.ps-prev-grid{grid-template-columns:1fr;}}
 .ps-prev-card{padding:14px 16px;border-right:1px solid var(--border);}
 .ps-prev-card:last-child{border-right:none;}
-.ps-prev-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
+.ps-prev-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4b5563;margin-bottom:6px;display:flex;align-items:center;gap:5px;}
 .ps-prev-lbl i{font-size:12px;}
 .ps-prev-val{font-size:20px;font-weight:700;color:#1a1a1a;margin-bottom:3px;}
 .ps-prev-val.vazio{color:#d1d5db;font-size:16px;}
-.ps-prev-sub{font-size:9px;color:#9ca3af;display:flex;align-items:center;gap:4px;}
+.ps-prev-sub{font-size:9px;color:#4b5563;display:flex;align-items:center;gap:4px;}
 .ps-sel-valor{height:22px;padding:0 5px;border:1px solid var(--border);border-radius:3px;font-family:var(--font);font-size:9px;color:#374151;background:var(--bg);}
 
 /* Lista */
-.ps-lista-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;}
+.ps-busca-input{height:28px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;color:#374151;background:var(--bg);}
+.ps-busca-input:focus{outline:none;border-color:#F8C100;}
+.ps-lista-hdr{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
 .ps-lista-filtros{display:flex;gap:5px;align-items:center;flex-wrap:wrap;}
-.ps-lista-count{padding:1px 7px;border-radius:10px;background:#f3f4f6;font-size:9px;font-weight:700;color:#9ca3af;margin-left:4px;}
+.ps-lista-count{padding:1px 7px;border-radius:10px;background:#f3f4f6;font-size:9px;font-weight:700;color:#4b5563;margin-left:4px;}
 .ps-lista{overflow-x:auto;}
-.ps-lista-empty{padding:24px;text-align:center;color:#9ca3af;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;}
+.ps-lista-empty{padding:24px;text-align:center;color:#4b5563;font-size:12px;display:flex;align-items:center;justify-content:center;gap:8px;}
 .ps-os-row{border-bottom:1px solid var(--border);}
 .ps-os-row:last-child{border-bottom:none;}
 .ps-os-row.enc{opacity:.65;}
 .ps-os-head{display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;min-width:520px;}
 .ps-os-head:hover{background:#fafafa;}
 .ps-os-num{font-size:10px;font-weight:700;color:#374151;flex-shrink:0;width:75px;}
-.ps-os-desc{font-size:11px;color:#6b7280;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ps-os-hh{font-size:10px;font-weight:600;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;}
+.ps-os-desc{font-size:11px;color:#374151;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ps-os-hh{font-size:10px;font-weight:600;color:#4b5563;flex-shrink:0;width:52px;text-align:right;}
 .ps-os-badges{display:flex;gap:4px;flex-shrink:0;}
 .ps-badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:9px;font-weight:700;}
-.ps-os-chev{font-size:12px;color:#9ca3af;flex-shrink:0;transition:transform .2s;}
+.ps-os-chev{font-size:12px;color:#4b5563;flex-shrink:0;transition:transform .2s;}
 .ps-os-chev.rot{transform:rotate(180deg);}
-.ps-foto-btn{display:flex;align-items:center;gap:3px;height:22px;padding:0 7px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;color:#9ca3af;flex-shrink:0;}
+.ps-foto-btn{display:flex;align-items:center;gap:3px;height:22px;padding:0 7px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;color:#4b5563;flex-shrink:0;}
 .ps-foto-btn:hover{border-color:#2563eb;color:#2563eb;}
 .ps-foto-btn.tem-fotos{border-color:#2563eb;color:#2563eb;background:#dbeafe;}
 .ps-foto-btn span{font-size:9px;font-weight:700;}
@@ -1055,13 +1420,13 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-os-edit-grid{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;}
 .ps-os-edit-bloco{display:flex;flex-direction:column;gap:5px;min-width:130px;}
 .ps-crit-opts,.ps-mo-opts{display:flex;gap:4px;}
-.ps-crit-btn,.ps-mo-btn{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;}
+.ps-crit-btn,.ps-mo-btn{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;}
 .ps-crit-btn.ativo{background:var(--cc,#9ca3af);border-color:var(--cc,#9ca3af);color:#fff;}
 .ps-mo-btn.ativo{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
 
 /* Fotos */
 .ps-fotos-wrap{padding:10px 14px 12px;background:#f9fafb;border-top:1px solid var(--border);}
-.ps-fotos-titulo{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:10px;font-weight:700;color:#6b7280;}
+.ps-fotos-titulo{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:10px;font-weight:700;color:#374151;}
 .ps-btn-upload{display:flex;align-items:center;gap:4px;height:24px;padding:0 9px;border:1px solid var(--border);border-radius:4px;background:var(--bg);cursor:pointer;font-size:10px;font-weight:600;color:#374151;font-family:var(--font);}
 .ps-btn-upload:hover{border-color:var(--yellow,#F8C100);background:#fffbeb;}
 .ps-fotos-grid{display:flex;gap:8px;flex-wrap:wrap;}
@@ -1075,7 +1440,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;}
 .ps-modal{background:var(--card-bg);border-radius:var(--radius);box-shadow:0 8px 30px rgba(0,0,0,.15);padding:18px;width:300px;max-width:100%;}
 .ps-modal-titulo{font-size:13px;font-weight:700;margin-bottom:12px;color:#1a1a1a;}
-.ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#6b7280;cursor:pointer;width:100%;}
+.ps-modal-cancel{padding:7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;width:100%;}
 .ps-btn-primary{height:28px;padding:0 12px;border:none;border-radius:var(--radius-sm);background:var(--yellow,#F8C100);font-family:var(--font);font-size:11px;font-weight:700;color:#1a1a1a;cursor:pointer;display:flex;align-items:center;gap:5px;justify-content:center;}
 .ps-btn-secondary{height:28px;padding:0 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card-bg);font-family:var(--font);font-size:10px;font-weight:700;color:#374151;cursor:pointer;display:flex;align-items:center;gap:4px;flex-shrink:0;}
 .ps-btn-secondary:hover{background:#f3f4f6;}
@@ -1083,7 +1448,7 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-rel-opt:hover{border-color:var(--yellow);background:#fffbeb;}
 .ps-rel-opt-icone{font-size:22px;flex-shrink:0;}
 .ps-rel-opt-titulo{font-size:12px;font-weight:700;color:#1a1a1a;}
-.ps-rel-opt-sub{font-size:10px;color:#6b7280;margin-top:2px;}
+.ps-rel-opt-sub{font-size:10px;color:#374151;margin-top:2px;}
 .ps-btn-primary:hover{background:#daa900;}
 .ps-tipos-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;margin-bottom:4px;}
 .ps-tipo-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);}
@@ -1111,11 +1476,26 @@ window.Modulos.proj_caldeiraria = (() => {
 }
 .ps-bloco-mo{padding:14px 16px;border-right:1px solid var(--border);}
 .ps-bloco-mo:last-child{border-right:none;}
-.ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6b7280;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
+.ps-bloco-mo-titulo{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#374151;display:flex;align-items:center;gap:5px;margin-bottom:8px;}
 .ps-bloco-mo-titulo i{font-size:13px;}
-.ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;margin-bottom:6px;}
+.ps-bloco-mo-sub-titulo{font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;margin-bottom:6px;}
 
-/* Tabela setor x criticidade */
+/* Pareto setor */
+.ps-pareto-toggle{height:22px;padding:0 10px;border:0.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:10px;font-weight:600;color:#374151;cursor:pointer;}
+.ps-pareto-toggle.on{background:var(--yellow,#F8C100);border-color:#daa900;color:#1a1a1a;}
+.ps-pareto-row{display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;}
+.ps-pareto-lbl{font-size:9.5px;color:#4b5563;width:140px;flex-shrink:0;white-space:normal;word-break:break-word;line-height:1.25;}
+.ps-pareto-bar-wrap{flex:1;}
+.ps-pareto-bar{height:18px;border-radius:2px;overflow:hidden;display:flex;background:var(--color-background-secondary);}
+.ps-pareto-val{font-size:10px;font-weight:600;color:var(--color-text-primary);width:50px;text-align:right;flex-shrink:0;}
+.ps-pareto-acum{font-size:10px;font-weight:600;width:30px;text-align:right;flex-shrink:0;}
+.ps-pareto-divider{font-size:9px;color:#dc2626;padding:5px 0 3px;border-top:1px dashed #dc2626;margin:5px 0 4px;display:flex;align-items:center;gap:6px;}
+.ps-pareto-tab{width:100%;font-size:10px;border-collapse:collapse;}
+.ps-pareto-tab th{text-align:left;font-size:9px;font-weight:700;color:#4b5563;padding:4px 6px;border-bottom:1px solid var(--border);letter-spacing:.04em;text-transform:uppercase;}
+.ps-pareto-tab td{padding:4px 6px;border-bottom:0.5px solid var(--border);color:var(--color-text-primary);font-size:10px;}
+.ps-pareto-tab tfoot tr td{border-top:1px solid var(--border);border-bottom:none;font-weight:600;}
+.ps-pareto-tab tr.ps-pareto-top td{background:var(--color-background-secondary);}
+/* Tabela setor x criticidade (mantida para fallback) */
 .ps-tabela-wrap{overflow-x:auto;}
 .ps-tab-row{display:flex;border-bottom:1px solid var(--border);min-width:300px;}
 .ps-tab-row:last-child{border-bottom:none;}
@@ -1127,13 +1507,24 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-tab-crit{font-weight:700;}
 .ps-tab-crit-narrow{flex:0.6;min-width:44px;}
 .ps-tab-total{flex:1.2;font-weight:700;color:#374151;}
-.ps-tab-pct{font-size:9px;color:#9ca3af;font-weight:400;}
-.ps-tab-vazio{font-size:10px;color:#9ca3af;padding:8px 0;}
+.ps-tab-pct{font-size:9px;color:#4b5563;font-weight:400;}
+.ps-tab-vazio{font-size:10px;color:#4b5563;padding:8px 0;}
 .ps-tabela-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+
+/* Curva S inline */
+.ps-curva-hdr{display:flex;align-items:center;gap:7px;padding:9px 14px;cursor:pointer;user-select:none;border-radius:0;}
+.ps-curva-hdr:hover{background:#fafafa;}
+.ps-curva-hdr .ti-chart-line{font-size:13px;color:#F8C100;}
+.ps-curva-chev{font-size:12px;color:#4b5563;margin-left:auto;}
+.ps-curva-body{border-top:1px solid var(--border);}
+.ps-curva-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));border-bottom:1px solid var(--border);}
+.ps-curva-kpi-item{padding:10px 12px;border-right:1px solid var(--border);}
+.ps-curva-kpi-item:last-child{border-right:none;}
+.ps-curva-kpi-val{font-size:15px;font-weight:700;color:#1a1a1a;margin-top:3px;}
 
 /* Cenários */
 .ps-cen-hdr{display:flex;gap:0;background:#fafafa;border:1px solid var(--border);border-bottom:none;border-radius:var(--radius-sm) var(--radius-sm) 0 0;}
-.ps-cen-hdr span{flex:1;padding:5px 8px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#9ca3af;border-right:1px solid var(--border);}
+.ps-cen-hdr span{flex:1;padding:5px 8px;font-size:8px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#4b5563;border-right:1px solid var(--border);}
 .ps-cen-hdr span:first-child{flex:2;}
 .ps-cen-hdr span:last-child{border-right:none;}
 .ps-cen-wrap{border:1px solid var(--border);border-radius:0 0 var(--radius-sm) var(--radius-sm);overflow:hidden;}
@@ -1142,10 +1533,10 @@ window.Modulos.proj_caldeiraria = (() => {
 .ps-cen-label{flex:2;padding:7px 8px;font-size:10px;font-weight:600;color:#374151;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:2px;}
 .ps-cen-hh{flex:1;padding:7px 8px;font-size:10px;font-weight:700;color:#374151;text-align:right;border-right:1px solid var(--border);}
 .ps-cen-prev{flex:1;padding:7px 8px;font-size:10px;color:#374151;text-align:right;}
-.ps-cen-hint{padding:6px 8px;font-size:9px;color:#9ca3af;background:#fafafa;border-top:1px solid var(--border);}
+.ps-cen-hint{padding:6px 8px;font-size:9px;color:#4b5563;background:#fafafa;border-top:1px solid var(--border);}
 .ps-delta{font-size:8px;font-weight:600;color:#d97706;background:#fef3c7;padding:1px 5px;border-radius:3px;width:fit-content;}
-.ps-cen-dias{font-size:9px;color:#9ca3af;font-weight:400;}
-.ps-prev-obs{font-size:8px;color:#9ca3af;font-style:italic;margin-top:4px;}
+.ps-cen-dias{font-size:9px;color:#4b5563;font-weight:400;}
+.ps-prev-obs{font-size:8px;color:#4b5563;font-style:italic;margin-top:4px;}
 .ps-blocos-mo.ps-bloco-unico{grid-template-columns:1fr;}
 
 /* Aviso custo terceirizado */
@@ -1171,7 +1562,7 @@ window.Modulos.proj_caldeiraria = (() => {
     try { await carregarTudo(); renderizar(); }
     catch(e) {
       console.error('proj_caldeiraria:',e);
-      _container.innerHTML=`<div style="padding:40px;text-align:center;color:#9ca3af"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
+      _container.innerHTML=`<div style="padding:40px;text-align:center;color:#4b5563"><i class="ti ti-alert-circle" style="font-size:28px;display:block;margin-bottom:8px"></i>Erro: ${e.message}</div>`;
     }
   }
 
