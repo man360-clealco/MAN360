@@ -662,6 +662,260 @@
   }
 
   /* ══ MODAL ══════════════════════════════════════════════════ */
+  function atualizarTimestamp(){
+    const el=document.getElementById('ssma-ts');
+    const ts=localStorage.getItem('man360_ssma_ultima_importacao');
+    if(el) el.textContent=ts?`Última importação: ${ts}`:'Nenhuma importação';
+  }
+
+  function renderAqs(p) {
+    const items=p._aquisicoes||[];
+    const sub=items.reduce((s,i)=>s+(parseFloat(i.qtd)||0)*(parseFloat(i.valor_unit)||0),0);
+    const modOpts=MODS.map(m=>`<option value="${esc(m.nome)}">${esc(m.nome)}</option>`).join('');
+
+    const rows=items.map((it,i)=>{
+      if (aqEditando===i) return `<tr class="erow">
+        <td><input class="ssma-ci" id="aq-cod" value="${esc(it.sem_cadastro?'':it.cod_item||'')}" ${it.sem_cadastro?'disabled':''} placeholder="Código" style="width:76px">
+          <div style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:#6b7280"><input type="checkbox" id="aq-sc" ${it.sem_cadastro?'checked':''} onchange="ssmaAqToggleSC()"> sem cadastro</div></td>
+        <td><input class="ssma-ci" id="aq-desc" value="${esc(it.descricao||'')}" placeholder="Descrição"></td>
+        <td><select class="ssma-cs" id="aq-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}" ${it.modalidade===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('')}</select></td>
+        <td><input class="ssma-ci" id="aq-qtd" value="${it.qtd||''}" style="width:46px;text-align:center" placeholder="0"></td>
+        <td><input class="ssma-ci" id="aq-vunit" value="${it.valor_unit||''}" style="width:78px;text-align:right" placeholder="0,00"></td>
+        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.qtd)||0)*(parseFloat(it.valor_unit)||0))}</td>
+        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaAqSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaAqCancelar()"><i class="ti ti-x"></i></button></td>
+      </tr>`;
+      return `<tr>
+        <td style="font-size:11px;color:#6b7280">${esc(it.sem_cadastro?'(s/cad.)':it.cod_item||'—')}</td>
+        <td>${esc(it.descricao||'—')}</td>
+        <td>${esc(it.modalidade||'—')}</td>
+        <td style="text-align:center">${it.qtd||'—'}</td>
+        <td style="text-align:right">${it.valor_unit?fmtBRL(parseFloat(it.valor_unit)):'—'}</td>
+        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.qtd)||0)*(parseFloat(it.valor_unit)||0))}</td>
+        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaAqEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaAqRemover(${i})"><i class="ti ti-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+
+    const novaLinha = aqEditando===-1?`<tr class="erow">
+      <td><input class="ssma-ci" id="aq-cod" placeholder="Código" style="width:76px">
+        <div style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:#6b7280"><input type="checkbox" id="aq-sc" onchange="ssmaAqToggleSC()"> sem cadastro</div></td>
+      <td><input class="ssma-ci" id="aq-desc" placeholder="Descrição"></td>
+      <td><select class="ssma-cs" id="aq-mod"><option value="">—</option>${modOpts}</select></td>
+      <td><input class="ssma-ci" id="aq-qtd" style="width:46px;text-align:center" placeholder="0"></td>
+      <td><input class="ssma-ci" id="aq-vunit" style="width:78px;text-align:right" placeholder="0,00"></td>
+      <td>—</td>
+      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaAqSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaAqCancelar()"><i class="ti ti-x"></i></button></td>
+    </tr>`:'';
+
+    return `<table class="ssma-itab"><thead><tr>
+      <th style="width:100px">Código</th><th>Descrição</th><th style="width:100px">Modalidade</th>
+      <th style="width:52px;text-align:center">Qtd</th><th style="width:88px;text-align:right">Vl. unit.</th>
+      <th style="width:80px;text-align:right">Total</th><th style="width:60px"></th>
+    </tr></thead><tbody>${rows}${novaLinha}</tbody></table>
+    ${aqEditando===null?`<button class="ssma-add-row" onclick="ssmaAqNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Adicionar item</button>`:''}
+    <div class="ssma-sub"><span>Subtotal aquisições</span>${fmtBRL(sub)}</div>`;
+  }
+
+  function renderHH(ov) {
+    const rows=MODS.map((m,i)=>{
+      if(hhEditando===i) return `<tr class="erow">
+        <td><input class="ssma-hh-input" id="hh-nome" value="${esc(m.nome)}" placeholder="Modalidade"></td>
+        <td><input class="ssma-hh-input" id="hh-val" value="${m.valor_hh}" style="width:90px;text-align:right"></td>
+        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaHHSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaHHCancelar()"><i class="ti ti-x"></i></button></td>
+      </tr>`;
+      return `<tr>
+        <td>${esc(m.nome)}</td><td style="text-align:right">${fmtBRL(m.valor_hh)}/h</td>
+        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaHHEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaHHRemover(${i})"><i class="ti ti-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+    const novaLinha=hhEditando===-1?`<tr class="erow">
+      <td><input class="ssma-hh-input" id="hh-nome" placeholder="Nome da modalidade"></td>
+      <td><input class="ssma-hh-input" id="hh-val" style="width:90px;text-align:right" placeholder="0"></td>
+      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaHHSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaHHCancelar()"><i class="ti ti-x"></i></button></td>
+    </tr>`:'';
+    ov.innerHTML=`<div class="ssma-modal" style="max-width:420px">
+      <div class="ssma-modal-head">
+        <div class="ssma-modal-code">Configurações</div>
+        <div class="ssma-modal-title">Modalidades de Serviço — HH Terceiro</div>
+        <div class="ssma-modal-meta"><button class="ssma-modal-close" onclick="ssmaFecharHH()">×</button></div>
+      </div>
+      <div class="ssma-modal-body">
+        <table class="ssma-hh-table"><thead><tr><th>Modalidade</th><th style="text-align:right">R$/h</th><th style="width:60px"></th></tr></thead>
+        <tbody>${rows}${novaLinha}</tbody></table>
+        ${hhEditando===null?`<button class="ssma-add-row" onclick="ssmaHHNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Nova modalidade</button>`:''}
+      </div>
+    </div>`;
+    ov.style.display='flex';
+  }
+
+  function renderLista() {
+    const dados = dadosFiltrados();
+    const tbody = document.getElementById('ssma-tbody');
+    const tfoot = document.getElementById('ssma-tfoot');
+    if (!tbody) return;
+
+    const at=dados.filter(p=>p.situacao==='Atrasado').length;
+    const av=dados.filter(p=>p.situacao==='A vencer').length;
+    const np=dados.filter(p=>p.situacao==='No prazo').length;
+
+    tbody.innerHTML = dados.map(p => {
+      const vt = calcValorTotal(p);
+      const rc = p.reclassificacao||'';
+      const trat = temTratativa(p);
+      let dotCls = 'trat-gray';
+      if (trat) dotCls='trat-green';
+      else if (p.situacao==='Atrasado'||p.situacao==='A vencer') dotCls='trat-red';
+      const dot = `<span class="trat-dot ${dotCls}" style="margin-right:5px;vertical-align:middle"></span>`;
+      const pc = p.situacao==='Atrasado'?'prazo-r':p.situacao==='A vencer'?'prazo-a':'prazo-g';
+      return `<tr onclick="ssmaAbrirModal('${esc(p.codigo)}')">
+        <td style="font-size:11px;color:#374151;font-weight:600">${dot}${esc(p.codigo)}</td>
+        <td class="desc-td"><div class="ssma-desc">${esc(p.descricao)}</div></td>
+        <td class="${pc}">${esc(p.prazo||'—')}</td>
+        <td style="font-size:11px;color:#374151">${esc(p.responsavel||'—')}</td>
+        <td style="text-align:right;font-size:12px;font-weight:${vt.total>0?600:400};color:${vt.total>0?'#111':'#9ca3af'}">${vt.total>0?fmtBRL(vt.total):'—'}</td>
+        <td>${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco}</span>`:`<span class="sb-none">—</span>`}</td>
+        <td>${p.classificacao?`<span class="${badgeClassif(p.classificacao)}">${esc(p.classificacao)}</span>`:`<span class="sb-none">—</span>`}</td>
+        <td>${rc?`<span class="${badgeClassif(rc)}">${esc(rc)}</span>`:`<span class="sb-none">—</span>`}</td>
+      </tr>`;
+    }).join('');
+
+    const concluidos = DB.filter(p=>(p.status||'').toLowerCase().includes('conclu')).length;
+    const totalBase  = filtros.ocultarConcluidos ? DB.length - concluidos : DB.length;
+    if (tfoot) tfoot.innerHTML=`Exibindo <span>${dados.length}</span> de <span>${totalBase}</span> planos
+      ${concluidos>0?`&nbsp;·&nbsp;<span style="color:#9ca3af">${concluidos} concluídos ${filtros.ocultarConcluidos?'(ocultos)':''}</span>`:''} &nbsp;·&nbsp;
+      <span style="color:#dc2626">${at} atrasados</span> &nbsp;·&nbsp;
+      <span style="color:#d97706">${av} a vencer</span> &nbsp;·&nbsp;
+      <span style="color:#16a34a">${np} no prazo</span>`;
+
+    renderChips();
+  }
+
+  function renderModal() {
+    const p = DB.find(d=>d.codigo===modalCodigo); if(!p) return;
+    const vt=calcValorTotal(p); const rc=p.reclassificacao||''; const cl=p.classificacao||'';
+    const situBadge = p.situacao==='Atrasado'?`<span class="sb-alto">Atrasado</span>`:p.situacao==='A vencer'?`<span class="sb-medio">A vencer</span>`:`<span class="sb-baixo">No prazo</span>`;
+
+    let classifHtml='';
+    if (cl && rc && cl!==rc) {
+      classifHtml=`<div class="classif-display"><span class="${badgeClassif(cl)}">${esc(cl)}</span><span style="color:#9ca3af">→</span><span class="${badgeClassif(rc)}">${esc(rc)}</span><span class="classif-nota">(alterado)</span></div>`;
+    } else {
+      const v=rc||cl;
+      classifHtml=v?`<div class="classif-display"><span class="${badgeClassif(v)}">${esc(v)}</span></div>`:`<div class="classif-display"><span class="sb-none">—</span></div>`;
+    }
+
+    let bodyHtml='';
+    if (modalTab==='geral') {
+      const pc=p.situacao==='Atrasado'?'prazo-r':p.situacao==='A vencer'?'prazo-a':'prazo-g';
+      bodyHtml=`
+        <div class="ssma-grid4">
+          <div><div class="ssma-field-label">Responsável</div><div class="ssma-field-val">${esc(p.responsavel||'—')}</div></div>
+          <div><div class="ssma-field-label">Usuário (abertura)</div><div class="ssma-field-val">${esc(p.usuario_criacao||'—')}</div></div>
+          <div><div class="ssma-field-label">Data de criação</div><div class="ssma-field-val">${esc(p.data_criacao||'—')}</div></div>
+          <div><div class="ssma-field-label">Status</div><div class="ssma-field-val">${esc(p.status||'—')}</div></div>
+        </div>
+        <div class="ssma-grid3">
+          <div><div class="ssma-field-label">Prazo</div><div class="${pc}">${esc(p.prazo||'—')}</div></div>
+          <div><div class="ssma-field-label">Risco</div><div style="margin-top:4px">${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco} · ${p.resultado}</span>`:`<span class="sb-none">—</span>`}</div></div>
+          <div><div class="ssma-field-label">Categoria</div><div class="ssma-field-val" style="font-size:11px">${esc(p.checklist_cat||'—')}</div></div>
+        </div>
+        <div class="ssma-grid2">
+          <div><div class="ssma-field-label">Classificação → Reclassificação</div>${classifHtml}</div>
+          <div>
+            <div class="ssma-field-label">Alterar reclassificação</div>
+            <select class="ssma-select" onchange="ssmaAlterarReclassif(this.value)">
+              <option value="">— selecionar —</option>
+              ${CLASSIF_OPTIONS.map(o=>`<option value="${o}" ${rc===o?'selected':''}>${o}</option>`).join('')}
+            </select>
+          </div>
+        </div>`;
+    } else if (modalTab==='aquisicoes') {
+      bodyHtml = renderAqs(p);
+    } else {
+      bodyHtml = renderSvs(p);
+    }
+
+    let ov = document.getElementById('ssma-modal-ov');
+    if (!ov) { ov=document.createElement('div'); ov.id='ssma-modal-ov'; ov.className='ssma-modal-overlay'; ov.onclick=e=>{if(e.target===ov)ssmaFecharModal();}; document.body.appendChild(ov); }
+    ov.innerHTML=`<div class="ssma-modal">
+      <div class="ssma-modal-head">
+        <div class="ssma-modal-code"># ${esc(p.codigo)} · ${esc(p.checklist_cat||'')} · ${esc(p.responsavel||'')}</div>
+        <div class="ssma-modal-title">${esc(p.descricao)}</div>
+        <div class="ssma-modal-meta">${situBadge} ${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco} · resultado ${p.resultado}</span>`:''}<button class="ssma-modal-close" onclick="ssmaFecharModal()">×</button></div>
+      </div>
+      <div class="ssma-modal-tabs">
+        <button class="ssma-modal-tab ${modalTab==='geral'?'active':''}" onclick="ssmaMudarTab('geral')">Geral</button>
+        <button class="ssma-modal-tab ${modalTab==='aquisicoes'?'active':''}" onclick="ssmaMudarTab('aquisicoes')">Aquisições</button>
+        <button class="ssma-modal-tab ${modalTab==='servicos'?'active':''}" onclick="ssmaMudarTab('servicos')">Serviços</button>
+      </div>
+      <div class="ssma-modal-body">${bodyHtml}</div>
+      <div class="ssma-modal-footer">
+        <div class="ssma-vt-block">
+          <div class="ssma-vt-main">${fmtBRL(vt.total)}</div>
+          <div class="ssma-vt-sub">Aq: ${fmtBRL(vt.aq)} + Sv: ${fmtBRL(vt.sv)}</div>
+        </div>
+      </div>
+    </div>`;
+    ov.style.display='flex';
+  }
+
+  function renderSvs(p) {
+    const items=p._servicos||[];
+    const sub=items.reduce((s,i)=>{const m=MODS.find(m=>m.nome===i.modalidade);return s+(parseFloat(i.hh_prev)||0)*(m?parseFloat(m.valor_hh)||0:0);},0);
+
+    const rows=items.map((it,i)=>{
+      const m=MODS.find(m=>m.nome===it.modalidade); const taxa=m?parseFloat(m.valor_hh)||0:0;
+      if (svEditando===i) return `<tr class="erow">
+        <td><input class="ssma-ci" id="sv-os" value="${esc(it.os||'')}" placeholder="OS" style="width:70px"></td>
+        <td><input class="ssma-ci" id="sv-desc" value="${esc(it.descricao||'')}" placeholder="Descrição"></td>
+        <td><select class="ssma-cs" id="sv-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}" ${it.modalidade===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('')}</select></td>
+        <td><input class="ssma-ci" id="sv-hh" value="${it.hh_prev||''}" style="width:48px;text-align:center" placeholder="0"></td>
+        <td style="text-align:right;font-size:10px;color:#6b7280">${taxa?fmtBRL(taxa)+'/h':'—'}</td>
+        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.hh_prev)||0)*taxa)}</td>
+        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaSvSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaSvCancelar()"><i class="ti ti-x"></i></button></td>
+      </tr>`;
+      return `<tr>
+        <td style="font-size:11px;color:#6b7280">${esc(it.os||'—')}</td>
+        <td>${esc(it.descricao||'—')}</td>
+        <td>${esc(it.modalidade||'—')}</td>
+        <td style="text-align:center">${it.hh_prev||'—'}</td>
+        <td style="text-align:right;font-size:10px;color:#6b7280">${taxa?fmtBRL(taxa)+'/h':'—'}</td>
+        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.hh_prev)||0)*taxa)}</td>
+        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaSvEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaSvRemover(${i})"><i class="ti ti-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+
+    const novaLinha=svEditando===-1?`<tr class="erow">
+      <td><input class="ssma-ci" id="sv-os" placeholder="OS" style="width:70px"></td>
+      <td><input class="ssma-ci" id="sv-desc" placeholder="Descrição"></td>
+      <td><select class="ssma-cs" id="sv-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}">${esc(m.nome)}</option>`).join('')}</select></td>
+      <td><input class="ssma-ci" id="sv-hh" style="width:48px;text-align:center" placeholder="0"></td>
+      <td>—</td><td>—</td>
+      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaSvSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaSvCancelar()"><i class="ti ti-x"></i></button></td>
+    </tr>`:'';
+
+    return `<table class="ssma-itab"><thead><tr>
+      <th style="width:78px">OS</th><th>Descrição</th><th style="width:110px">Modalidade</th>
+      <th style="width:58px;text-align:center">HH prev.</th><th style="width:74px;text-align:right">R$/h</th>
+      <th style="width:80px;text-align:right">Subtotal</th><th style="width:60px"></th>
+    </tr></thead><tbody>${rows}${novaLinha}</tbody></table>
+    ${svEditando===null?`<button class="ssma-add-row" onclick="ssmaSvNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Adicionar serviço</button>`:''}
+    <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
+      <div class="ssma-field-label">Modalidades</div>
+      <div class="ssma-mod-list">${MODS.map(m=>`<span class="ssma-mod-pill">${esc(m.nome)} · ${fmtBRL(m.valor_hh)}/h</span>`).join('')}
+        <button class="ssma-mod-link" onclick="ssmaFecharModal();ssmaAbrirHH()"><i class="ti ti-external-link" style="font-size:10px"></i> Gerenciar HH</button>
+      </div>
+    </div>
+    <div class="ssma-sub"><span>Subtotal serviços</span>${fmtBRL(sub)}</div>`;
+  }
+
+  function showToastMod(msg,tipo){
+    if(window.showToast){ window.showToast(msg,tipo); return; }
+    const t=document.getElementById('toast'); if(!t) return;
+    t.className=tipo||'info';
+    document.getElementById('toast-icon').className='ti '+(tipo==='ok'?'ti-check':tipo==='erro'?'ti-alert-circle':'ti-info-circle');
+    document.getElementById('toast-msg').textContent=msg;
+    t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3500);
+  }
+
   function renderGraficos() {
     const el = document.getElementById('ssma-graficos'); if(!el) return;
     const hoje = new Date(); hoje.setHours(0,0,0,0);
