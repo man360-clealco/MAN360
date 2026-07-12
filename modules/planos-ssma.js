@@ -94,7 +94,7 @@
     busca:'', responsavel:[], status:[], situacao:[], checklist:[],
     risco:[], reclassificacao:[], composicao:[], modalidadeSv:[],
     valorMin:null, valorMax:null,
-    ocultarConcluidos: true,  // padrão: não exibe concluídos automaticamente
+    ocultarConcluidos: true,
   };
   let modalCodigo = null;
   let modalTab    = 'geral';
@@ -125,7 +125,6 @@
       dbSelect('ssma_modalidades', {order:{col:'nome',asc:true}}),
       dbSelect('ssma_responsavel_setor'),
     ]);
-    // Mapa responsavel -> setor para uso nos gráficos
     window._ssmaRespSetor = {};
     (rRS.data||[]).forEach(x => { window._ssmaRespSetor[x.responsavel] = x.setor; });
     if (!window._ssmaGrafSetores) window._ssmaGrafSetores = [];
@@ -198,37 +197,21 @@
     showToastMod(`Salvando ${registros.length} planos…`,'info');
     const {count,error} = await dbUpsert('ssma_planos', registros, 'codigo');
     if (error) { showToastMod('Erro: '+error.message,'erro'); return; }
-
-    // ── Tombamento automático: planos que sumiram da planilha foram concluídos ──
+    // Tombamento automático
     const codigosImportados = new Set(registros.map(r => r.codigo));
-    const db = getDB();
-    // Busca todos os planos que ainda estão "abertos" no banco
-    const { data: ativos } = await db.from('ssma_planos')
-      .select('codigo')
-      .not('status', 'ilike', '%conclu%')
-      .not('status', 'ilike', '%cancel%');
-
+    const db2 = getDB();
+    const { data: ativos } = await db2.from('ssma_planos').select('codigo')
+      .not('status','ilike','%conclu%').not('status','ilike','%cancel%');
     const tombados = (ativos||[]).filter(p => !codigosImportados.has(p.codigo));
-
     if (tombados.length > 0) {
       const dataHoje = new Date().toISOString().slice(0,10);
-      const codsTombar = tombados.map(p => p.codigo);
-      await db.from('ssma_planos')
-        .update({
-          status:         'Concluído (auto)',
-          situacao:       'Concluído',
-          data_conclusao: dataHoje,
-          atualizado_em:  new Date().toISOString(),
-        })
-        .in('codigo', codsTombar);
-
-      // Guarda para exibir no resumo pós-importação
-      window._ssma_tombados = tombados.map(p => p.codigo);
-    } else {
-      window._ssma_tombados = [];
-    }
-
-    await finalizarImportacao(count, 'Planilha 1', tombados.length);
+      await db2.from('ssma_planos').update({
+        status:'Concluído (auto)', situacao:'Concluído',
+        data_conclusao:dataHoje, atualizado_em:new Date().toISOString(),
+      }).in('codigo', tombados.map(p=>p.codigo));
+      window._ssma_tombados = tombados.map(p=>p.codigo);
+    } else { window._ssma_tombados = []; }
+    await finalizarImportacao(count,'Planilha 1', tombados.length);
   }
 
   async function processarP2(rows) {
@@ -257,16 +240,12 @@
     renderLista();
     atualizarTimestamp();
     showToastMod(`${label} importada — ${count} registros`,'ok');
-    // Exibe modal de resumo se houve tombamentos
-    if (qtdTombados > 0) {
-      setTimeout(() => ssmaExibirResumoTombamento(qtdTombados), 600);
-    }
+    if (qtdTombados > 0) setTimeout(() => ssmaExibirResumoTombamento(qtdTombados), 600);
   }
 
   /* ══ Filtros ════════════════════════════════════════════════ */
   function dadosFiltrados() {
     let dados = DB.filter(p => {
-      // Oculta concluídos por padrão (a menos que o usuário desative)
       if (filtros.ocultarConcluidos) {
         const st = (p.status||'').toLowerCase();
         if (st.includes('conclu') || st.includes('cancel')) return false;
@@ -666,80 +645,70 @@
   };
 
   /* ══ GRÁFICOS ═══════════════════════════════════════════════ */
+  function renderChips() {
+    const el = document.getElementById('ssma-chips'); if(!el) return;
+    const labels={responsavel:'Responsável',status:'Status',situacao:'Situação',checklist:'Checklist',risco:'Risco',reclassificacao:'Reclassificação',composicao:'Composição',modalidadeSv:'Modalidade'};
+    let html='';
+    ['responsavel','status','situacao','checklist','risco','reclassificacao','composicao','modalidadeSv'].forEach(n=>{
+      (filtros[n]||[]).forEach(v=>{
+        html+=`<span class="ssma-chip">${labels[n]}: ${esc(v)} <button onclick="ssmaRemoverChip('${n}','${esc(v)}')">×</button></span>`;
+      });
+    });
+    if (filtros.valorMin!==null||filtros.valorMax!==null) {
+      html+=`<span class="ssma-chip">Valor: ${filtros.valorMin!==null?fmtBRL(filtros.valorMin):'∞'} – ${filtros.valorMax!==null?fmtBRL(filtros.valorMax):'∞'} <button onclick="ssmaRemoverChip('valor','')">×</button></span>`;
+    }
+    if (filtros.busca) html+=`<span class="ssma-chip">Busca: "${esc(filtros.busca)}" <button onclick="ssmaRemoverChip('busca','')">×</button></span>`;
+    el.innerHTML=html;
+  }
+
+  /* ══ MODAL ══════════════════════════════════════════════════ */
   function renderGraficos() {
     const el = document.getElementById('ssma-graficos'); if(!el) return;
-
     const hoje = new Date(); hoje.setHours(0,0,0,0);
-
-    // Exclui concluídos e cancelados
     const atrasados = DB.filter(p => {
-      const st = (p.status||'').toLowerCase();
-      if (st.includes('conclu') || st.includes('cancel')) return false;
-      if (!p.prazo) return false;
-      const pts = p.prazo.split('/'); if(pts.length!==3) return false;
-      const d = new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
-      return !isNaN(d) && (d-hoje)/86400000 < 0;
+      const st=(p.status||'').toLowerCase();
+      if(st.includes('conclu')||st.includes('cancel')) return false;
+      if(!p.prazo) return false;
+      const pts=p.prazo.split('/'); if(pts.length!==3) return false;
+      const d=new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
+      return !isNaN(d)&&(d-hoje)/86400000<0;
     });
-
-    // Aplica filtro de setor dos gráficos
-    const setoresSel = window._ssmaGrafSetores || [];
+    const setoresSel = window._ssmaGrafSetores||[];
     const dadosGraf  = setoresSel.length
-      ? atrasados.filter(p => {
-          const setor = (window._ssmaRespSetor||{})[p.responsavel] || '';
-          return setoresSel.includes(setor);
-        })
+      ? atrasados.filter(p=>(window._ssmaRespSetor||{})[p.responsavel]&&setoresSel.includes((window._ssmaRespSetor||{})[p.responsavel]))
       : atrasados;
 
-    // Agrupa: reclassificacao > classificacao > 'PENDENTE CLASSIF'
-    const grupos = {};
-    dadosGraf.forEach(p => {
-      const raw = p.reclassificacao || p.classificacao || 'PENDENTE CLASSIF';
-      const key = raw === 'Não classificado' ? 'PENDENTE CLASSIF' : raw;
-      if (!grupos[key]) grupos[key] = { Alto:0, Médio:0, Baixo:0, total:0, vt:0 };
-      const risco = p.risco || 'Sem risco';
-      if (grupos[key][risco] !== undefined) grupos[key][risco]++;
-      else grupos[key][risco] = 1;
-      grupos[key].total++;
-      grupos[key].vt += calcValorTotal(p).total;
+    const grupos={};
+    dadosGraf.forEach(p=>{
+      const raw=p.reclassificacao||p.classificacao||'PENDENTE CLASSIF';
+      const key=raw==='Não classificado'?'PENDENTE CLASSIF':raw;
+      if(!grupos[key]) grupos[key]={Alto:0,Médio:0,Baixo:0,total:0,vt:0};
+      const risco=p.risco||'Sem risco';
+      if(grupos[key][risco]!==undefined) grupos[key][risco]++; else grupos[key][risco]=1;
+      grupos[key].total++; grupos[key].vt+=calcValorTotal(p).total;
     });
 
-    // Entradas ordenadas por valor (para gráfico 1 e 3)
-    const entriesByVT = Object.entries(grupos)
-      .filter(([,g]) => g.vt > 0)
-      .sort((a,b) => b[1].vt - a[1].vt);
+    const entriesByVT=Object.entries(grupos).filter(([,g])=>g.vt>0).sort((a,b)=>b[1].vt-a[1].vt);
+    const entriesByQt=Object.entries(grupos).filter(([,g])=>g.total>0).sort((a,b)=>b[1].total-a[1].total);
+    const labelsVT=entriesByVT.map(e=>e[0]);
+    const vtVals=entriesByVT.map(e=>e[1].vt);
+    const vtTotal=vtVals.reduce((a,b)=>a+b,0);
+    const vtCumPct=vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
+    const labelsQT=entriesByQt.map(e=>e[0]);
+    const totais=entriesByQt.map(e=>e[1].total);
+    const qtTotal=totais.reduce((a,b)=>a+b,0);
+    const cumPct=totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
+    const labelsD3=entriesByVT.map(e=>e[0]);
+    const vtD3=entriesByVT.map(e=>e[1].vt);
+    const qtD3=entriesByVT.map(e=>e[1].total);
 
-    // Entradas ordenadas por quantidade (para gráfico 2)
-    const entriesByQt = Object.entries(grupos)
-      .filter(([,g]) => g.total > 0)
-      .sort((a,b) => b[1].total - a[1].total);
-
-    // Dados gráfico 1 — valores
-    const labelsVT  = entriesByVT.map(e=>e[0]);
-    const vtVals    = entriesByVT.map(e=>e[1].vt);
-    const vtTotal   = vtVals.reduce((a,b)=>a+b,0);
-    const vtCumPct  = vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
-
-    // Dados gráfico 2 — quantidade
-    const labelsQT  = entriesByQt.map(e=>e[0]);
-    const totais    = entriesByQt.map(e=>e[1].total);
-    const qtTotal   = totais.reduce((a,b)=>a+b,0);
-    const cumPct    = totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
-
-    // Dados gráfico 3 — dual (só classif com valor)
-    const labelsD3  = entriesByVT.map(e=>e[0]);
-    const vtD3      = entriesByVT.map(e=>e[1].vt);
-    const qtD3      = entriesByVT.map(e=>e[1].total);
-
-    // Setor dropdown HTML
-    const todosSetores = [...new Set(
-      Object.values(window._ssmaRespSetor||{}).filter(Boolean)
-    )].sort();
-    const setDropdown = todosSetores.length ? `
+    const todosSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    const setDD=todosSetores.length?`
       <div class="ssma-dd" id="graf-setor-dd" style="margin-bottom:10px">
-        <button class="ssma-dd-btn ${setoresSel.length?'ativo':''}"
-          id="graf-setor-btn" onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
-          <i class="ti ti-building ico" style="font-size:12px;color:#6b7280"></i>
-          ${setoresSel.length ? setoresSel.join(', ').slice(0,30)+(setoresSel.join(', ').length>30?'…':'') : 'Todos os setores'}
+        <button class="ssma-dd-btn ${setoresSel.length?'ativo':''}" id="graf-setor-btn"
+          onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
+          <i class="ti ti-building" style="font-size:12px;color:#6b7280"></i>
+          ${setoresSel.length?setoresSel.join(', ').slice(0,30)+(setoresSel.join(', ').length>30?'…':''):'Todos os setores'}
           ${setoresSel.length?`<span class="dd-badge">${setoresSel.length}</span>`:''}
           <i class="ti ti-chevron-down arr"></i>
         </button>
@@ -752,714 +721,181 @@
             <input type="checkbox" id="gschk-${i}" data-val="${esc(s)}" ${setoresSel.includes(s)?'checked':''}> ${esc(s)}
           </label>`).join('')}
         </div>
-      </div>` : '';
+      </div>`:'';
 
-    el.innerHTML = `
-      ${setDropdown}
+    el.innerHTML=`${setDD}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head">
-            <div class="ssma-grafico-title">Valores por Classificação de Investimento
-              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
-          </div>
+          <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
           <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
         </div>
         <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head">
-            <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento
-              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
-          </div>
+          <div class="ssma-grafico-head"><div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
           <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
         </div>
       </div>
       <div class="ssma-grafico-card" style="margin-bottom:14px">
-        <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento
-            <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas classif. com valor)</span></div>
-        </div>
+        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span></div></div>
         <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
       </div>`;
 
-    // ── Gráfico 1: Valores ──
-    if (vtTotal === 0) {
-      const cv = document.getElementById('graf-vt');
-      if (cv) {
-        cv.width=cv.parentElement?.offsetWidth||500; cv.height=220;
-        if(window.__ch_grafvt){window.__ch_grafvt.destroy();window.__ch_grafvt=null;}
-        const ctx=cv.getContext('2d');
-        ctx.clearRect(0,0,cv.width,cv.height);
-        ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif';
-        ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText('Nenhum valor registrado nos planos atrasados',cv.width/2,cv.height/2);
-      }
-    } else {
-      desenharParetoSimples('graf-vt','__ch_grafvt', labelsVT, vtVals, vtCumPct, v=>fmtBRL(v), 'Valor (R$)');
-    }
-
-    // ── Gráfico 2: Quantidade (excluindo zeros) ──
-    if (!labelsQT.length) {
-      const cv=document.getElementById('graf-qt');
-      if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;
-        if(window.__ch_grafqt){window.__ch_grafqt.destroy();window.__ch_grafqt=null;}
-        const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
-        ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillText('Sem planos atrasados',cv.width/2,cv.height/2);}
-    } else {
-      desenharParetoEmpilhado('graf-qt','__ch_grafqt', labelsQT, entriesByQt, totais, cumPct);
-    }
-
-    // ── Gráfico 3: Dual valor × quantidade ──
-    if (!labelsD3.length) {
-      const cv=document.getElementById('graf-dual');
-      if(cv){cv.width=cv.parentElement?.offsetWidth||900;cv.height=260;
-        if(window.__ch_grafdual){window.__ch_grafdual.destroy();window.__ch_grafdual=null;}
-        const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
-        ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-        ctx.fillText('Sem dados com valor para exibir',cv.width/2,cv.height/2);}
-    } else {
-      desenharDual('graf-dual','__ch_grafdual', labelsD3, vtD3, qtD3);
-    }
+    if(vtTotal===0){const cv=document.getElementById('graf-vt');if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;if(window.__ch_grafvt){window.__ch_grafvt.destroy();window.__ch_grafvt=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Nenhum valor registrado',cv.width/2,cv.height/2);}}
+    else{desenharParetoSimples('graf-vt','__ch_grafvt',labelsVT,vtVals,vtCumPct,v=>fmtBRL(v),'Valor (R$)');}
+    if(!labelsQT.length){const cv=document.getElementById('graf-qt');if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;if(window.__ch_grafqt){window.__ch_grafqt.destroy();window.__ch_grafqt=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem planos atrasados',cv.width/2,cv.height/2);}}
+    else{desenharParetoEmpilhado('graf-qt','__ch_grafqt',labelsQT,entriesByQt,totais,cumPct);}
+    if(!labelsD3.length){const cv=document.getElementById('graf-dual');if(cv){cv.width=cv.parentElement?.offsetWidth||900;cv.height=260;if(window.__ch_grafdual){window.__ch_grafdual.destroy();window.__ch_grafdual=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados com valor',cv.width/2,cv.height/2);}}
+    else{desenharDual('graf-dual','__ch_grafdual',labelsD3,vtD3,qtD3);}
   }
 
-  /* ── Funções de filtro de setor dos gráficos ── */
-  window.ssmaGrafToggleSetorDD = function(e) {
-    e?.stopPropagation();
-    const p=document.getElementById('graf-setor-panel');
-    const b=document.getElementById('graf-setor-btn');
-    const open=p?.classList.contains('show');
-    document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));
-    if(!open){p?.classList.add('show');b?.classList.add('open');}
-  };
-  window.ssmaGrafToggleSetor = function(val,e) {
-    e?.stopPropagation();
-    const arr=window._ssmaGrafSetores||[];
-    const idx=arr.indexOf(val);
-    if(idx>=0)arr.splice(idx,1);else arr.push(val);
-    window._ssmaGrafSetores=arr;
-    renderGraficos();
-  };
-  window.ssmaGrafSetorAll = function(e) {
-    e?.stopPropagation();
-    window._ssmaGrafSetores=[];
-    renderGraficos();
-  };
-  window.ssmaGrafSetorNone = function(e) {
-    e?.stopPropagation();
-    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
-    window._ssmaGrafSetores=[...todos];
-    renderGraficos();
-  };
+  window.ssmaGrafToggleSetorDD=function(e){e?.stopPropagation();const p=document.getElementById('graf-setor-panel');const b=document.getElementById('graf-setor-btn');const open=p?.classList.contains('show');document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));if(!open){p?.classList.add('show');b?.classList.add('open');}};
+  window.ssmaGrafToggleSetor=function(val,e){e?.stopPropagation();const arr=window._ssmaGrafSetores||[];const i=arr.indexOf(val);if(i>=0)arr.splice(i,1);else arr.push(val);window._ssmaGrafSetores=arr;renderGraficos();};
+  window.ssmaGrafSetorAll=function(e){e?.stopPropagation();window._ssmaGrafSetores=[];renderGraficos();};
+  window.ssmaGrafSetorNone=function(e){e?.stopPropagation();window._ssmaGrafSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];renderGraficos();};
 
-  /* Pareto simples — valores */
-  function desenharParetoSimples(canvasId, chartKey, labels, vals, cumPct, fmtTick, yLabel) {
-    const canvas=document.getElementById(canvasId); if(!canvas) return;
-    canvas.width=canvas.parentElement?.offsetWidth||500; canvas.height=220;
+  function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
+    const canvas=document.getElementById(canvasId);if(!canvas)return;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=220;
     const ctx=canvas.getContext('2d');
-    if(!vals.length){
-      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
-    }
+    if(!vals.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...vals);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
     window[chartKey]=new Chart(ctx,{
-      data:{
-        labels,
-        datasets:[
-          { type:'bar', label:yLabel, data:vals,
-            backgroundColor:'#F8C100', borderColor:'#d4a000', borderWidth:1,
-            yAxisID:'y', order:2,
-            datalabels:{
-              display:true, color:'#374151', font:{size:8,weight:'700'},
-              anchor:'end', align:'end', offset:1, clamp:true,
-              formatter:v=>fmtTick(v),
-            }},
-          { type:'line', label:'% Acumulado', data:cumPct,
-            borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.07)',
-            borderWidth:2, pointRadius:3, pointBackgroundColor:'#C8102E',
-            fill:false, tension:.3, yAxisID:'y2', order:1,
-            datalabels:{
-              display:true, color:'#C8102E', font:{size:8,weight:'700'},
-              anchor:'top', align:'top', offset:4,
-              formatter:v=>v.toFixed(0)+'%',
-            }}
-        ]
-      },
-      options:{
-        responsive:false, maintainAspectRatio:false,
-        interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
-          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},
-          datalabels:{},
-        },
+      data:{labels,datasets:[
+        {type:'bar',label:yLabel,data:vals,backgroundColor:'#F8C100',borderColor:'#d4a000',borderWidth:1,yAxisID:'y',order:2,
+          datalabels:{display:true,color:'#374151',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:1,clamp:true,formatter:v=>fmtTick(v)}},
+        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#C8102E',backgroundColor:'rgba(200,16,46,.07)',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C8102E',fill:false,tension:.3,yAxisID:'y2',order:1,
+          datalabels:{display:true,color:'#C8102E',font:{size:8,weight:'700'},anchor:'top',align:'top',offset:4,formatter:v=>v.toFixed(0)+'%'}}
+      ]},
+      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},datalabels:{}},
         scales:{
           x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,
-            ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},
-            grid:{color:'#e5e7eb'},
-            title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:108,
-            ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},
-            grid:{display:false},
-            title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
-        }
-      }
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},grid:{color:'#e5e7eb'},title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:108,ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
+        }}
     });
   }
 
-  /* Pareto empilhado por risco — quantidade */
-  function desenharParetoEmpilhado(canvasId, chartKey, labels, entries, totais, cumPct) {
-    const canvas=document.getElementById(canvasId); if(!canvas) return;
-    canvas.width=canvas.parentElement?.offsetWidth||500; canvas.height=220;
+  function desenharParetoEmpilhado(canvasId,chartKey,labels,entries,totais,cumPct){
+    const canvas=document.getElementById(canvasId);if(!canvas)return;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=220;
     const ctx=canvas.getContext('2d');
-    if(!entries.length){
-      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
-    }
+    if(!entries.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...totais);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
-    const altoData =entries.map(e=>e[1].Alto||0);
+    const altoData=entries.map(e=>e[1].Alto||0);
     const medioData=entries.map(e=>e[1].Médio||0);
     const baixoData=entries.map(e=>e[1].Baixo||0);
     window[chartKey]=new Chart(ctx,{
-      data:{
-        labels,
-        datasets:[
-          {type:'bar',label:'Alto', data:altoData, backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
-            datalabels:{display:false}},
-          {type:'bar',label:'Médio',data:medioData,backgroundColor:'#f59e0b',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
-            datalabels:{display:false}},
-          {type:'bar',label:'Baixo',data:baixoData,backgroundColor:'#16a34a',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
-            datalabels:{
-              display:true, color:'#1f2937', font:{size:8,weight:'700'},
-              anchor:'end', align:'end', offset:2, clamp:true,
-              formatter:(v,ctx2)=>totais[ctx2.dataIndex]>0?String(totais[ctx2.dataIndex]):'',
-            }},
-          {type:'line',label:'% Acumulado',data:cumPct,
-            borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',
-            borderWidth:2,pointRadius:3,pointBackgroundColor:'#1d4ed8',
-            fill:false,tension:.3,yAxisID:'y2',order:1,
-            datalabels:{
-              display:true, color:'#1d4ed8', font:{size:8,weight:'700'},
-              anchor:'top', align:'top', offset:4,
-              formatter:v=>v.toFixed(0)+'%',
-            }}
-        ]
-      },
-      options:{
-        responsive:false,maintainAspectRatio:false,
-        interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:true,position:'top',
-            labels:{font:{size:10},color:'#374151',boxWidth:10,
-              filter(item){return item.text!=='% Acumulado';}}},
-          tooltip:{callbacks:{
-            label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},
-            footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}
-          }},
-          datalabels:{},
-        },
+      data:{labels,datasets:[
+        {type:'bar',label:'Alto',data:altoData,backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
+        {type:'bar',label:'Médio',data:medioData,backgroundColor:'#f59e0b',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
+        {type:'bar',label:'Baixo',data:baixoData,backgroundColor:'#16a34a',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
+          datalabels:{display:true,color:'#1f2937',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:(v,c2)=>totais[c2.dataIndex]>0?String(totais[c2.dataIndex]):''}},
+        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',borderWidth:2,pointRadius:3,pointBackgroundColor:'#1d4ed8',fill:false,tension:.3,yAxisID:'y2',order:1,
+          datalabels:{display:true,color:'#1d4ed8',font:{size:8,weight:'700'},anchor:'top',align:'top',offset:4,formatter:v=>v.toFixed(0)+'%'}}
+      ]},
+      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10,filter(item){return item.text!=='% Acumulado';}}},
+          tooltip:{callbacks:{label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}}},datalabels:{}},
         scales:{
           x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,stacked:true,
-            ticks:{font:{size:9},color:'#4b5563',precision:0},
-            grid:{color:'#e5e7eb'},
-            title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:108,
-            ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},
-            grid:{display:false},
-            title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
-        }
-      }
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,stacked:true,ticks:{font:{size:9},color:'#4b5563',precision:0},grid:{color:'#e5e7eb'},title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:108,ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
+        }}
     });
   }
 
-  /* Gráfico dual — Valor × Quantidade por classificação */
-  function desenharDual(canvasId, chartKey, labels, vtVals, qtVals) {
-    const canvas=document.getElementById(canvasId); if(!canvas) return;
-    canvas.width=canvas.parentElement?.offsetWidth||900; canvas.height=260;
+  function desenharDual(canvasId,chartKey,labels,vtVals,qtVals){
+    const canvas=document.getElementById(canvasId);if(!canvas)return;
+    canvas.width=canvas.parentElement?.offsetWidth||900;canvas.height=260;
     const ctx=canvas.getContext('2d');
-    if(!labels.length){
-      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
-    }
-    const maxVT=Math.max(...vtVals);
-    const maxQT=Math.max(...qtVals);
+    if(!labels.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
+    const maxVT=Math.max(...vtVals);const maxQT=Math.max(...qtVals);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
     window[chartKey]=new Chart(ctx,{
-      data:{
-        labels,
-        datasets:[
-          { type:'bar', label:'Valor (R$)', data:vtVals,
-            backgroundColor:'rgba(248,193,0,0.85)', borderColor:'#d4a000', borderWidth:1,
-            yAxisID:'yVT', order:1,
-            datalabels:{
-              display:true, color:'#92400e', font:{size:8,weight:'700'},
-              anchor:'end', align:'end', offset:2, clamp:true,
-              formatter:v=>fmtBRL(v),
-            }},
-          { type:'bar', label:'Qtd. Planos', data:qtVals,
-            backgroundColor:'rgba(29,78,216,0.75)', borderColor:'#1e3a8a', borderWidth:1,
-            yAxisID:'yQT', order:1,
-            datalabels:{
-              display:true, color:'#1e3a8a', font:{size:8,weight:'700'},
-              anchor:'end', align:'end', offset:2, clamp:true,
-              formatter:v=>String(v),
-            }}
-        ]
-      },
-      options:{
-        responsive:false, maintainAspectRatio:false,
-        interaction:{mode:'index',intersect:false},
-        plugins:{
-          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
-          tooltip:{callbacks:{
-            label(c){
-              if(c.dataset.yAxisID==='yVT') return`Valor: ${fmtBRL(c.raw)}`;
-              return`Qtd.: ${c.raw} planos`;
-            }
-          }},
-          datalabels:{},
-        },
+      data:{labels,datasets:[
+        {type:'bar',label:'Valor (R$)',data:vtVals,backgroundColor:'rgba(248,193,0,0.85)',borderColor:'#d4a000',borderWidth:1,yAxisID:'yVT',order:1,
+          datalabels:{display:true,color:'#92400e',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:v=>fmtBRL(v)}},
+        {type:'bar',label:'Qtd. Planos',data:qtVals,backgroundColor:'rgba(29,78,216,0.75)',borderColor:'#1e3a8a',borderWidth:1,yAxisID:'yQT',order:1,
+          datalabels:{display:true,color:'#1e3a8a',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:v=>String(v)}}
+      ]},
+      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{callbacks:{label(c){return c.dataset.yAxisID==='yVT'?`Valor: ${fmtBRL(c.raw)}`:`Qtd.: ${c.raw} planos`;}}},datalabels:{}},
         scales:{
           x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          yVT:{type:'linear',position:'left',min:0,suggestedMax:maxVT*1.3,
-            ticks:{font:{size:9},color:'#92400e',callback:v=>fmtBRL(v)},
-            grid:{color:'#e5e7eb'},
-            title:{display:true,text:'Valor (R$)',font:{size:9},color:'#92400e'}},
-          yQT:{type:'linear',position:'right',min:0,suggestedMax:maxQT*1.3,
-            ticks:{font:{size:9},color:'#1d4ed8',precision:0},
-            grid:{display:false},
-            title:{display:true,text:'Qtd. Planos',font:{size:9},color:'#1d4ed8'}}
-        }
-      }
+          yVT:{type:'linear',position:'left',min:0,suggestedMax:maxVT*1.3,ticks:{font:{size:9},color:'#92400e',callback:v=>fmtBRL(v)},grid:{color:'#e5e7eb'},title:{display:true,text:'Valor (R$)',font:{size:9},color:'#92400e'}},
+          yQT:{type:'linear',position:'right',min:0,suggestedMax:maxQT*1.3,ticks:{font:{size:9},color:'#1d4ed8',precision:0},grid:{display:false},title:{display:true,text:'Qtd. Planos',font:{size:9},color:'#1d4ed8'}}
+        }}
     });
   }
 
 
-  window.ssmaAbrirModal = function(codigo) { modalCodigo=codigo; modalTab='geral'; aqEditando=null; svEditando=null; renderModal(); };
-
-  function renderModal() {
-    const p = DB.find(d=>d.codigo===modalCodigo); if(!p) return;
-    const vt=calcValorTotal(p); const rc=p.reclassificacao||''; const cl=p.classificacao||'';
-    const situBadge = p.situacao==='Atrasado'?`<span class="sb-alto">Atrasado</span>`:p.situacao==='A vencer'?`<span class="sb-medio">A vencer</span>`:`<span class="sb-baixo">No prazo</span>`;
-
-    let classifHtml='';
-    if (cl && rc && cl!==rc) {
-      classifHtml=`<div class="classif-display"><span class="${badgeClassif(cl)}">${esc(cl)}</span><span style="color:#9ca3af">→</span><span class="${badgeClassif(rc)}">${esc(rc)}</span><span class="classif-nota">(alterado)</span></div>`;
-    } else {
-      const v=rc||cl;
-      classifHtml=v?`<div class="classif-display"><span class="${badgeClassif(v)}">${esc(v)}</span></div>`:`<div class="classif-display"><span class="sb-none">—</span></div>`;
-    }
-
-    let bodyHtml='';
-    if (modalTab==='geral') {
-      const pc=p.situacao==='Atrasado'?'prazo-r':p.situacao==='A vencer'?'prazo-a':'prazo-g';
-      bodyHtml=`
-        <div class="ssma-grid4">
-          <div><div class="ssma-field-label">Responsável</div><div class="ssma-field-val">${esc(p.responsavel||'—')}</div></div>
-          <div><div class="ssma-field-label">Usuário (abertura)</div><div class="ssma-field-val">${esc(p.usuario_criacao||'—')}</div></div>
-          <div><div class="ssma-field-label">Data de criação</div><div class="ssma-field-val">${esc(p.data_criacao||'—')}</div></div>
-          <div><div class="ssma-field-label">Status</div><div class="ssma-field-val">${esc(p.status||'—')}</div></div>
-        </div>
-        <div class="ssma-grid3">
-          <div><div class="ssma-field-label">Prazo</div><div class="${pc}">${esc(p.prazo||'—')}</div></div>
-          <div><div class="ssma-field-label">Risco</div><div style="margin-top:4px">${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco} · ${p.resultado}</span>`:`<span class="sb-none">—</span>`}</div></div>
-          <div><div class="ssma-field-label">Categoria</div><div class="ssma-field-val" style="font-size:11px">${esc(p.checklist_cat||'—')}</div></div>
-        </div>
-        <div class="ssma-grid2">
-          <div><div class="ssma-field-label">Classificação → Reclassificação</div>${classifHtml}</div>
-          <div>
-            <div class="ssma-field-label">Alterar reclassificação</div>
-            <select class="ssma-select" onchange="ssmaAlterarReclassif(this.value)">
-              <option value="">— selecionar —</option>
-              ${CLASSIF_OPTIONS.map(o=>`<option value="${o}" ${rc===o?'selected':''}>${o}</option>`).join('')}
-            </select>
-          </div>
-        </div>`;
-    } else if (modalTab==='aquisicoes') {
-      bodyHtml = renderAqs(p);
-    } else {
-      bodyHtml = renderSvs(p);
-    }
-
-    let ov = document.getElementById('ssma-modal-ov');
-    if (!ov) { ov=document.createElement('div'); ov.id='ssma-modal-ov'; ov.className='ssma-modal-overlay'; ov.onclick=e=>{if(e.target===ov)ssmaFecharModal();}; document.body.appendChild(ov); }
-    ov.innerHTML=`<div class="ssma-modal">
-      <div class="ssma-modal-head">
-        <div class="ssma-modal-code"># ${esc(p.codigo)} · ${esc(p.checklist_cat||'')} · ${esc(p.responsavel||'')}</div>
-        <div class="ssma-modal-title">${esc(p.descricao)}</div>
-        <div class="ssma-modal-meta">${situBadge} ${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco} · resultado ${p.resultado}</span>`:''}<button class="ssma-modal-close" onclick="ssmaFecharModal()">×</button></div>
-      </div>
-      <div class="ssma-modal-tabs">
-        <button class="ssma-modal-tab ${modalTab==='geral'?'active':''}" onclick="ssmaMudarTab('geral')">Geral</button>
-        <button class="ssma-modal-tab ${modalTab==='aquisicoes'?'active':''}" onclick="ssmaMudarTab('aquisicoes')">Aquisições</button>
-        <button class="ssma-modal-tab ${modalTab==='servicos'?'active':''}" onclick="ssmaMudarTab('servicos')">Serviços</button>
-      </div>
-      <div class="ssma-modal-body">${bodyHtml}</div>
-      <div class="ssma-modal-footer">
-        <div class="ssma-vt-block">
-          <div class="ssma-vt-main">${fmtBRL(vt.total)}</div>
-          <div class="ssma-vt-sub">Aq: ${fmtBRL(vt.aq)} + Sv: ${fmtBRL(vt.sv)}</div>
-        </div>
-      </div>
-    </div>`;
-    ov.style.display='flex';
-  }
-
-  /* Aquisições */
-  function renderAqs(p) {
-    const items=p._aquisicoes||[];
-    const sub=items.reduce((s,i)=>s+(parseFloat(i.qtd)||0)*(parseFloat(i.valor_unit)||0),0);
-    const modOpts=MODS.map(m=>`<option value="${esc(m.nome)}">${esc(m.nome)}</option>`).join('');
-
-    const rows=items.map((it,i)=>{
-      if (aqEditando===i) return `<tr class="erow">
-        <td><input class="ssma-ci" id="aq-cod" value="${esc(it.sem_cadastro?'':it.cod_item||'')}" ${it.sem_cadastro?'disabled':''} placeholder="Código" style="width:76px">
-          <div style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:#6b7280"><input type="checkbox" id="aq-sc" ${it.sem_cadastro?'checked':''} onchange="ssmaAqToggleSC()"> sem cadastro</div></td>
-        <td><input class="ssma-ci" id="aq-desc" value="${esc(it.descricao||'')}" placeholder="Descrição"></td>
-        <td><select class="ssma-cs" id="aq-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}" ${it.modalidade===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('')}</select></td>
-        <td><input class="ssma-ci" id="aq-qtd" value="${it.qtd||''}" style="width:46px;text-align:center" placeholder="0"></td>
-        <td><input class="ssma-ci" id="aq-vunit" value="${it.valor_unit||''}" style="width:78px;text-align:right" placeholder="0,00"></td>
-        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.qtd)||0)*(parseFloat(it.valor_unit)||0))}</td>
-        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaAqSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaAqCancelar()"><i class="ti ti-x"></i></button></td>
-      </tr>`;
-      return `<tr>
-        <td style="font-size:11px;color:#6b7280">${esc(it.sem_cadastro?'(s/cad.)':it.cod_item||'—')}</td>
-        <td>${esc(it.descricao||'—')}</td>
-        <td>${esc(it.modalidade||'—')}</td>
-        <td style="text-align:center">${it.qtd||'—'}</td>
-        <td style="text-align:right">${it.valor_unit?fmtBRL(parseFloat(it.valor_unit)):'—'}</td>
-        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.qtd)||0)*(parseFloat(it.valor_unit)||0))}</td>
-        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaAqEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaAqRemover(${i})"><i class="ti ti-trash"></i></button></td>
-      </tr>`;
-    }).join('');
-
-    const novaLinha = aqEditando===-1?`<tr class="erow">
-      <td><input class="ssma-ci" id="aq-cod" placeholder="Código" style="width:76px">
-        <div style="display:flex;align-items:center;gap:5px;margin-top:3px;font-size:10px;color:#6b7280"><input type="checkbox" id="aq-sc" onchange="ssmaAqToggleSC()"> sem cadastro</div></td>
-      <td><input class="ssma-ci" id="aq-desc" placeholder="Descrição"></td>
-      <td><select class="ssma-cs" id="aq-mod"><option value="">—</option>${modOpts}</select></td>
-      <td><input class="ssma-ci" id="aq-qtd" style="width:46px;text-align:center" placeholder="0"></td>
-      <td><input class="ssma-ci" id="aq-vunit" style="width:78px;text-align:right" placeholder="0,00"></td>
-      <td>—</td>
-      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaAqSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaAqCancelar()"><i class="ti ti-x"></i></button></td>
-    </tr>`:'';
-
-    return `<table class="ssma-itab"><thead><tr>
-      <th style="width:100px">Código</th><th>Descrição</th><th style="width:100px">Modalidade</th>
-      <th style="width:52px;text-align:center">Qtd</th><th style="width:88px;text-align:right">Vl. unit.</th>
-      <th style="width:80px;text-align:right">Total</th><th style="width:60px"></th>
-    </tr></thead><tbody>${rows}${novaLinha}</tbody></table>
-    ${aqEditando===null?`<button class="ssma-add-row" onclick="ssmaAqNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Adicionar item</button>`:''}
-    <div class="ssma-sub"><span>Subtotal aquisições</span>${fmtBRL(sub)}</div>`;
-  }
-
-  /* Serviços */
-  function renderSvs(p) {
-    const items=p._servicos||[];
-    const sub=items.reduce((s,i)=>{const m=MODS.find(m=>m.nome===i.modalidade);return s+(parseFloat(i.hh_prev)||0)*(m?parseFloat(m.valor_hh)||0:0);},0);
-
-    const rows=items.map((it,i)=>{
-      const m=MODS.find(m=>m.nome===it.modalidade); const taxa=m?parseFloat(m.valor_hh)||0:0;
-      if (svEditando===i) return `<tr class="erow">
-        <td><input class="ssma-ci" id="sv-os" value="${esc(it.os||'')}" placeholder="OS" style="width:70px"></td>
-        <td><input class="ssma-ci" id="sv-desc" value="${esc(it.descricao||'')}" placeholder="Descrição"></td>
-        <td><select class="ssma-cs" id="sv-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}" ${it.modalidade===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('')}</select></td>
-        <td><input class="ssma-ci" id="sv-hh" value="${it.hh_prev||''}" style="width:48px;text-align:center" placeholder="0"></td>
-        <td style="text-align:right;font-size:10px;color:#6b7280">${taxa?fmtBRL(taxa)+'/h':'—'}</td>
-        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.hh_prev)||0)*taxa)}</td>
-        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaSvSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaSvCancelar()"><i class="ti ti-x"></i></button></td>
-      </tr>`;
-      return `<tr>
-        <td style="font-size:11px;color:#6b7280">${esc(it.os||'—')}</td>
-        <td>${esc(it.descricao||'—')}</td>
-        <td>${esc(it.modalidade||'—')}</td>
-        <td style="text-align:center">${it.hh_prev||'—'}</td>
-        <td style="text-align:right;font-size:10px;color:#6b7280">${taxa?fmtBRL(taxa)+'/h':'—'}</td>
-        <td style="text-align:right;font-weight:600">${fmtBRL((parseFloat(it.hh_prev)||0)*taxa)}</td>
-        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaSvEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaSvRemover(${i})"><i class="ti ti-trash"></i></button></td>
-      </tr>`;
-    }).join('');
-
-    const novaLinha=svEditando===-1?`<tr class="erow">
-      <td><input class="ssma-ci" id="sv-os" placeholder="OS" style="width:70px"></td>
-      <td><input class="ssma-ci" id="sv-desc" placeholder="Descrição"></td>
-      <td><select class="ssma-cs" id="sv-mod"><option value="">—</option>${MODS.map(m=>`<option value="${esc(m.nome)}">${esc(m.nome)}</option>`).join('')}</select></td>
-      <td><input class="ssma-ci" id="sv-hh" style="width:48px;text-align:center" placeholder="0"></td>
-      <td>—</td><td>—</td>
-      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaSvSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaSvCancelar()"><i class="ti ti-x"></i></button></td>
-    </tr>`:'';
-
-    return `<table class="ssma-itab"><thead><tr>
-      <th style="width:78px">OS</th><th>Descrição</th><th style="width:110px">Modalidade</th>
-      <th style="width:58px;text-align:center">HH prev.</th><th style="width:74px;text-align:right">R$/h</th>
-      <th style="width:80px;text-align:right">Subtotal</th><th style="width:60px"></th>
-    </tr></thead><tbody>${rows}${novaLinha}</tbody></table>
-    ${svEditando===null?`<button class="ssma-add-row" onclick="ssmaSvNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Adicionar serviço</button>`:''}
-    <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
-      <div class="ssma-field-label">Modalidades</div>
-      <div class="ssma-mod-list">${MODS.map(m=>`<span class="ssma-mod-pill">${esc(m.nome)} · ${fmtBRL(m.valor_hh)}/h</span>`).join('')}
-        <button class="ssma-mod-link" onclick="ssmaFecharModal();ssmaAbrirHH()"><i class="ti ti-external-link" style="font-size:10px"></i> Gerenciar HH</button>
-      </div>
-    </div>
-    <div class="ssma-sub"><span>Subtotal serviços</span>${fmtBRL(sub)}</div>`;
-  }
-
-  window.ssmaFecharModal = function() { aqEditando=null; svEditando=null; const ov=document.getElementById('ssma-modal-ov'); if(ov) ov.style.display='none'; renderLista(); renderGraficos(); };
-  window.ssmaMudarTab    = function(tab) { modalTab=tab; renderModal(); };
-
-  window.ssmaAlterarReclassif = async function(val) {
-    const p=DB.find(d=>d.codigo===modalCodigo); if(!p) return;
-    p.reclassificacao=val;
-    await dbUpsert('ssma_manual',[{codigo:modalCodigo,reclassificacao:val,atualizado_em:new Date().toISOString()}],'codigo');
-    renderModal();
-  };
-
-  window.ssmaAqEditar   = i => { aqEditando=i; ssmaMudarTab('aquisicoes'); };
-  window.ssmaAqCancelar = ()=> { aqEditando=null; ssmaMudarTab('aquisicoes'); };
-  window.ssmaAqNovo     = ()=> { aqEditando=-1; ssmaMudarTab('aquisicoes'); };
-  window.ssmaAqToggleSC = ()=> { const cb=document.getElementById('aq-sc'); const cod=document.getElementById('aq-cod'); if(cod){cod.disabled=cb?.checked; if(cb?.checked) cod.value='';} };
-
-  window.ssmaAqSalvar = async function(i) {
-    const p=DB.find(d=>d.codigo===modalCodigo);
-    const dados={
-      sem_cadastro: document.getElementById('aq-sc')?.checked||false,
-      cod_item:     document.getElementById('aq-cod')?.value.trim()||'',
-      descricao:    document.getElementById('aq-desc')?.value.trim()||'',
-      modalidade:   document.getElementById('aq-mod')?.value||'',
-      qtd:          parseFloat(document.getElementById('aq-qtd')?.value)||0,
-      valor_unit:   parseFloat(String(document.getElementById('aq-vunit')?.value||'').replace(',','.'))||0,
-    };
-    if (i===-1) { const {data}=await getDB().from('ssma_aquisicoes').insert({codigo:modalCodigo,...dados}).select(); if(data) p._aquisicoes.push(data[0]); }
-    else { const item=p._aquisicoes[i]; if(item?.id) await getDB().from('ssma_aquisicoes').update(dados).eq('id',item.id); Object.assign(p._aquisicoes[i],dados); }
-    aqEditando=null; ssmaMudarTab('aquisicoes');
-  };
-  window.ssmaAqRemover = async function(i) {
-    if(!confirm('Remover este item?')) return;
-    const p=DB.find(d=>d.codigo===modalCodigo); const item=p._aquisicoes[i];
-    if(item?.id) await getDB().from('ssma_aquisicoes').delete().eq('id',item.id);
-    p._aquisicoes.splice(i,1); aqEditando=null; ssmaMudarTab('aquisicoes');
-  };
-
-  window.ssmaSvEditar   = i => { svEditando=i; ssmaMudarTab('servicos'); };
-  window.ssmaSvCancelar = ()=> { svEditando=null; ssmaMudarTab('servicos'); };
-  window.ssmaSvNovo     = ()=> { svEditando=-1; ssmaMudarTab('servicos'); };
-
-  window.ssmaSvSalvar = async function(i) {
-    const p=DB.find(d=>d.codigo===modalCodigo);
-    const dados={
-      os:         document.getElementById('sv-os')?.value.trim()||'',
-      descricao:  document.getElementById('sv-desc')?.value.trim()||'',
-      modalidade: document.getElementById('sv-mod')?.value||'',
-      hh_prev:    parseFloat(document.getElementById('sv-hh')?.value)||0,
-    };
-    if (i===-1) { const {data}=await getDB().from('ssma_servicos').insert({codigo:modalCodigo,...dados}).select(); if(data) p._servicos.push(data[0]); }
-    else { const item=p._servicos[i]; if(item?.id) await getDB().from('ssma_servicos').update(dados).eq('id',item.id); Object.assign(p._servicos[i],dados); }
-    svEditando=null; ssmaMudarTab('servicos');
-  };
-  window.ssmaSvRemover = async function(i) {
-    if(!confirm('Remover este serviço?')) return;
-    const p=DB.find(d=>d.codigo===modalCodigo); const item=p._servicos[i];
-    if(item?.id) await getDB().from('ssma_servicos').delete().eq('id',item.id);
-    p._servicos.splice(i,1); svEditando=null; ssmaMudarTab('servicos');
-  };
-
-  /* ══ CONFIGURAR HH ══════════════════════════════════════════ */
-  window.ssmaAbrirHH = function() {
-    let ov=document.getElementById('ssma-hh-ov');
-    if(!ov){ov=document.createElement('div');ov.id='ssma-hh-ov';ov.className='ssma-modal-overlay';ov.onclick=e=>{if(e.target===ov)ssmaFecharHH();};document.body.appendChild(ov);}
-    hhEditando=null; renderHH(ov); ov.style.display='flex';
-  };
-
-  function renderHH(ov) {
-    const rows=MODS.map((m,i)=>{
-      if(hhEditando===i) return `<tr class="erow">
-        <td><input class="ssma-hh-input" id="hh-nome" value="${esc(m.nome)}" placeholder="Modalidade"></td>
-        <td><input class="ssma-hh-input" id="hh-val" value="${m.valor_hh}" style="width:90px;text-align:right"></td>
-        <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaHHSalvar(${i})"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaHHCancelar()"><i class="ti ti-x"></i></button></td>
-      </tr>`;
-      return `<tr>
-        <td>${esc(m.nome)}</td><td style="text-align:right">${fmtBRL(m.valor_hh)}/h</td>
-        <td style="white-space:nowrap"><button class="btn-ic edit" onclick="ssmaHHEditar(${i})"><i class="ti ti-pencil"></i></button><button class="btn-ic del" onclick="ssmaHHRemover(${i})"><i class="ti ti-trash"></i></button></td>
-      </tr>`;
-    }).join('');
-    const novaLinha=hhEditando===-1?`<tr class="erow">
-      <td><input class="ssma-hh-input" id="hh-nome" placeholder="Nome da modalidade"></td>
-      <td><input class="ssma-hh-input" id="hh-val" style="width:90px;text-align:right" placeholder="0"></td>
-      <td style="white-space:nowrap"><button class="btn-ic save" onclick="ssmaHHSalvar(-1)"><i class="ti ti-check"></i></button><button class="btn-ic cancel" onclick="ssmaHHCancelar()"><i class="ti ti-x"></i></button></td>
-    </tr>`:'';
-    ov.innerHTML=`<div class="ssma-modal" style="max-width:420px">
-      <div class="ssma-modal-head">
-        <div class="ssma-modal-code">Configurações</div>
-        <div class="ssma-modal-title">Modalidades de Serviço — HH Terceiro</div>
-        <div class="ssma-modal-meta"><button class="ssma-modal-close" onclick="ssmaFecharHH()">×</button></div>
-      </div>
-      <div class="ssma-modal-body">
-        <table class="ssma-hh-table"><thead><tr><th>Modalidade</th><th style="text-align:right">R$/h</th><th style="width:60px"></th></tr></thead>
-        <tbody>${rows}${novaLinha}</tbody></table>
-        ${hhEditando===null?`<button class="ssma-add-row" onclick="ssmaHHNovo()"><i class="ti ti-plus" style="font-size:12px"></i> Nova modalidade</button>`:''}
-      </div>
-    </div>`;
-    ov.style.display='flex';
-  }
-
-  window.ssmaFecharHH  = ()=>{ const ov=document.getElementById('ssma-hh-ov'); if(ov) ov.style.display='none'; };
-  window.ssmaHHEditar  = i=>{ hhEditando=i; renderHH(document.getElementById('ssma-hh-ov')); };
-  window.ssmaHHCancelar= ()=>{ hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); };
-  window.ssmaHHNovo    = ()=>{ hhEditando=-1; renderHH(document.getElementById('ssma-hh-ov')); };
-  window.ssmaHHRemover = async function(i){
-    if(!confirm('Remover?')) return;
-    const m=MODS[i]; if(m.id) await getDB().from('ssma_modalidades').delete().eq('id',m.id);
-    MODS.splice(i,1); hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); popularDDs();
-  };
-  window.ssmaHHSalvar = async function(i){
-    const nome=document.getElementById('hh-nome')?.value.trim()||'';
-    const val=parseFloat(document.getElementById('hh-val')?.value)||0;
-    if(!nome){ showToastMod('Nome obrigatório','erro'); return; }
-    if(i===-1){ const {data}=await getDB().from('ssma_modalidades').insert({nome,valor_hh:val}).select(); if(data) MODS.push(data[0]); }
-    else { const m=MODS[i]; if(m.id) await getDB().from('ssma_modalidades').update({nome,valor_hh:val}).eq('id',m.id); MODS[i]={...m,nome,valor_hh:val}; }
-    hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); popularDDs(); showToastMod('Modalidade salva','ok');
-  };
-
-  /* ══ Importação ═════════════════════════════════════════════ */
-  window.ssmaImportar = ()=>{ document.getElementById('ssma-file')?.click(); };
-  window.ssmaOnFile   = function(e){ const f=e.target.files[0]; if(f){ e.target.value=''; importarXLSX(f); } };
-
-  function atualizarTimestamp(){
-    const el=document.getElementById('ssma-ts');
-    const ts=localStorage.getItem('man360_ssma_ultima_importacao');
-    if(el) el.textContent=ts?`Última importação: ${ts}`:'Nenhuma importação';
-  }
-  function showToastMod(msg,tipo){
-    if(window.showToast){ window.showToast(msg,tipo); return; }
-    const t=document.getElementById('toast'); if(!t) return;
-    t.className=tipo||'info';
-    document.getElementById('toast-icon').className='ti '+(tipo==='ok'?'ti-check':tipo==='erro'?'ti-alert-circle':'ti-info-circle');
-    document.getElementById('toast-msg').textContent=msg;
-    t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3500);
-  }
-
-  /* ══ Modal de resumo de tombamento ══════════════════════════ */
-  window.ssmaExibirResumoTombamento = function(qtd) {
-    const codigos = (window._ssma_tombados || []).slice(0, 20);
-    const extra   = (window._ssma_tombados || []).length > 20
-      ? `<div style="font-size:10px;color:#9ca3af;margin-top:4px">+${(window._ssma_tombados||[]).length - 20} mais…</div>` : '';
-
-    const html = `<div class="ssma-modal-overlay" id="ssma-tomb-ov"
-        onclick="if(event.target===this)document.getElementById('ssma-tomb-ov').remove()"
-        style="z-index:600">
-      <div class="ssma-modal" style="max-width:480px">
-        <div class="ssma-modal-head">
-          <div class="ssma-modal-code">Importação concluída</div>
-          <div class="ssma-modal-title" style="display:flex;align-items:center;gap:8px">
-            <i class="ti ti-check-circle" style="color:#16a34a;font-size:18px"></i>
-            ${qtd} plano${qtd>1?'s':''} tombado${qtd>1?'s':''} automaticamente
-          </div>
-          <div class="ssma-modal-meta" style="margin-top:6px">
-            <span style="font-size:11px;color:#6b7280">
-              Estes planos estavam ativos no banco mas não apareceram na nova planilha.
-              Foram marcados como <strong>Concluído (auto)</strong> com a data de hoje.
-              Acesse cada um para revisar se necessário.
-            </span>
-            <button class="ssma-modal-close" onclick="document.getElementById('ssma-tomb-ov').remove()">×</button>
-          </div>
-        </div>
-        <div class="ssma-modal-body" style="max-height:280px;overflow-y:auto">
-          <div style="display:flex;flex-direction:column;gap:4px">
-            ${codigos.map(cod => {
-              const p = DB.find(d => d.codigo === cod);
-              return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
-                <span class="sb-baixo">Concluído</span>
-                <span style="font-weight:600;font-size:11px;color:#374151">${esc(cod)}</span>
-                <span style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">
-                  ${esc(p?.descricao || '—')}
-                </span>
-                <button onclick="ssmaAbrirModal('${esc(cod)}');document.getElementById('ssma-tomb-ov').remove()"
-                  style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0">
-                  Ver
-                </button>
-              </div>`;
-            }).join('')}
-            ${extra}
-          </div>
-        </div>
-        <div class="ssma-modal-footer" style="justify-content:space-between;align-items:center">
-          <span style="font-size:10px;color:#9ca3af">
-            <i class="ti ti-info-circle"></i>
-            Os concluídos ficam ocultos por padrão. Use o toggle abaixo para exibi-los.
-          </span>
-          <button class="ssma-save-btn" onclick="document.getElementById('ssma-tomb-ov').remove()">Fechar</button>
-        </div>
-      </div>
-    </div>`;
-    document.body.insertAdjacentHTML('beforeend', html);
-  };
-
-  /* ── Toggle exibir/ocultar concluídos ── */
+  /* ══ Toggle concluídos ═════════════════════════════════════ */
   window.ssmaToggleConcluidos = function() {
     filtros.ocultarConcluidos = !filtros.ocultarConcluidos;
     const btn = document.getElementById('ssma-btn-concluidos');
     if (btn) {
       btn.classList.toggle('ativo', !filtros.ocultarConcluidos);
-      btn.title = filtros.ocultarConcluidos ? 'Exibir planos concluídos' : 'Ocultar planos concluídos';
       btn.querySelector('span').textContent = filtros.ocultarConcluidos ? 'Ver concluídos' : 'Ocultar concluídos';
     }
     renderLista();
   };
 
-  /* ══ Mapeamento Responsável → Setor ════════════════════════ */
-  window.ssmaAbrirMapaSetores = function() {
-    let ov = document.getElementById('ssma-rs-ov');
-    if(!ov){ov=document.createElement('div');ov.id='ssma-rs-ov';ov.className='ssma-modal-overlay';
-      ov.onclick=e=>{if(e.target===ov)ssmaFecharMapaSetores();};document.body.appendChild(ov);}
-    ssmaRenderMapaSetores(ov); ov.style.display='flex';
-  };
-  window.ssmaFecharMapaSetores = function() {
-    document.getElementById('ssma-rs-ov')?.remove();
-  };
-  window.ssmaRenderMapaSetores = function(ov) {
-    const responsaveis = [...new Set(DB.map(p=>p.responsavel).filter(Boolean))].sort();
-    const setores      = [...new Set(DB.map(p=>p.checklist_cat).filter(Boolean))].sort();
-    // Setores reais — tenta extrair do campo area/checklist ou permite digitar
-    const setoresOpts  = [...new Set([
-      'FABRICAÇÃO DE AÇÚCAR','FABRICAÇÃO DE ÁLCOOL','GERAÇÃO/DISTRIBUIÇÃO DE VAPOR',
-      'TRATAMENTO DE CALDO','RECEPÇÃO E EXTRAÇÃO','UTILIDADES','MANUTENÇÃO','SSMA',
-      'ADMINISTRATIVO','OUTROS',
-      ...Object.values(window._ssmaRespSetor||{}).filter(Boolean)
-    ])].sort();
-
-    const rows = responsaveis.map((resp,i) => {
-      const setorAtual = (window._ssmaRespSetor||{})[resp] || '';
-      return `<tr>
-        <td style="font-size:11px;padding:5px 7px;border-bottom:1px solid var(--border);color:#374151">${esc(resp)}</td>
-        <td style="padding:5px 7px;border-bottom:1px solid var(--border)">
-          <select class="ssma-select" style="height:28px;font-size:11px"
-            onchange="window._ssmaRespSetor['${esc(resp)}']=this.value">
-            <option value="">— sem setor —</option>
-            ${setoresOpts.map(s=>`<option value="${esc(s)}" ${setorAtual===s?'selected':''}>${esc(s)}</option>`).join('')}
-          </select>
-        </td>
-      </tr>`;
-    }).join('');
-
-    ov.innerHTML = `<div class="ssma-modal" style="max-width:500px">
-      <div class="ssma-modal-head">
-        <div class="ssma-modal-code">Configuração</div>
-        <div class="ssma-modal-title">Responsável → Setor</div>
-        <div class="ssma-modal-meta" style="margin-top:4px">
-          <span style="font-size:11px;color:#6b7280">Vincule cada responsável a um setor para filtrar os gráficos.</span>
-          <button class="ssma-modal-close" onclick="ssmaFecharMapaSetores()">×</button>
+  /* ══ Modal resumo tombamento ════════════════════════════════ */
+  window.ssmaExibirResumoTombamento = function(qtd) {
+    const codigos = (window._ssma_tombados||[]).slice(0,20);
+    const extra = (window._ssma_tombados||[]).length>20?`<div style="font-size:10px;color:#9ca3af;padding:4px 0">+${(window._ssma_tombados||[]).length-20} mais…</div>`:'';
+    const html=`<div class="ssma-modal-overlay" id="ssma-tomb-ov" onclick="if(event.target===this)document.getElementById('ssma-tomb-ov').remove()" style="z-index:600">
+      <div class="ssma-modal" style="max-width:480px">
+        <div class="ssma-modal-head">
+          <div class="ssma-modal-code">Importação concluída</div>
+          <div class="ssma-modal-title"><i class="ti ti-check-circle" style="color:#16a34a;font-size:18px"></i> ${qtd} plano${qtd>1?'s':''} tombado${qtd>1?'s':''} automaticamente</div>
+          <div class="ssma-modal-meta" style="margin-top:6px">
+            <span style="font-size:11px;color:#6b7280">Não apareceram na nova exportação. Marcados como <strong>Concluído (auto)</strong>.</span>
+            <button class="ssma-modal-close" onclick="document.getElementById('ssma-tomb-ov').remove()">×</button>
+          </div>
+        </div>
+        <div class="ssma-modal-body" style="max-height:260px;overflow-y:auto">
+          ${codigos.map(cod=>{const p=DB.find(d=>d.codigo===cod);return`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)"><span class="sb-baixo">Concluído</span><span style="font-weight:600;font-size:11px">${esc(cod)}</span><span style="font-size:11px;color:#6b7280;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p?.descricao||'—')}</span></div>`;}).join('')}
+          ${extra}
+        </div>
+        <div class="ssma-modal-footer" style="justify-content:flex-end">
+          <button class="ssma-save-btn" onclick="document.getElementById('ssma-tomb-ov').remove()">Fechar</button>
         </div>
       </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+  };
+
+  /* ══ Mapeamento Responsável → Setor ════════════════════════ */
+  window.ssmaAbrirMapaSetores = function() {
+    let ov=document.getElementById('ssma-rs-ov');
+    if(!ov){ov=document.createElement('div');ov.id='ssma-rs-ov';ov.className='ssma-modal-overlay';ov.onclick=e=>{if(e.target===ov)ssmaFecharMapaSetores();};document.body.appendChild(ov);}
+    ssmaRenderMapaSetores(ov);ov.style.display='flex';
+  };
+  window.ssmaFecharMapaSetores=function(){document.getElementById('ssma-rs-ov')?.remove();};
+  window.ssmaRenderMapaSetores=function(ov){
+    const responsaveis=[...new Set(DB.map(p=>p.responsavel).filter(Boolean))].sort();
+    const setoresOpts=[...new Set(['FABRICAÇÃO DE AÇÚCAR','FABRICAÇÃO DE ÁLCOOL','GERAÇÃO/DISTRIBUIÇÃO DE VAPOR','TRATAMENTO DE CALDO','RECEPÇÃO E EXTRAÇÃO','UTILIDADES','MANUTENÇÃO','SSMA','ADMINISTRATIVO','OUTROS',...Object.values(window._ssmaRespSetor||{}).filter(Boolean)])].sort();
+    const rows=responsaveis.map((resp)=>{
+      const sa=(window._ssmaRespSetor||{})[resp]||'';
+      return`<tr><td style="font-size:11px;padding:5px 7px;border-bottom:1px solid var(--border)">${esc(resp)}</td>
+        <td style="padding:5px 7px;border-bottom:1px solid var(--border)"><select class="ssma-select" style="height:28px;font-size:11px" onchange="window._ssmaRespSetor['${esc(resp)}']=this.value">
+          <option value="">— sem setor —</option>
+          ${setoresOpts.map(s=>`<option value="${esc(s)}" ${sa===s?'selected':''}>${esc(s)}</option>`).join('')}
+        </select></td></tr>`;
+    }).join('');
+    ov.innerHTML=`<div class="ssma-modal" style="max-width:500px">
+      <div class="ssma-modal-head"><div class="ssma-modal-code">Configuração</div><div class="ssma-modal-title">Responsável → Setor</div>
+        <div class="ssma-modal-meta"><span style="font-size:11px;color:#6b7280">Vincule responsáveis a setores para filtrar os gráficos.</span><button class="ssma-modal-close" onclick="ssmaFecharMapaSetores()">×</button></div></div>
       <div class="ssma-modal-body" style="max-height:360px;overflow-y:auto;padding:0">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr>
-            <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Responsável</th>
-            <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Setor</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
+        <table style="width:100%;border-collapse:collapse"><thead><tr>
+          <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Responsável</th>
+          <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Setor</th>
+        </tr></thead><tbody>${rows}</tbody></table>
       </div>
       <div class="ssma-modal-footer" style="justify-content:flex-end">
         <button class="ssma-cancel-btn" style="padding:6px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:12px;cursor:pointer" onclick="ssmaFecharMapaSetores()">Cancelar</button>
@@ -1468,20 +904,11 @@
     </div>`;
     ov.style.display='flex';
   };
-  window.ssmaSalvarMapaSetores = async function() {
-    const db = getDB();
-    const mapa = window._ssmaRespSetor || {};
-    const registros = Object.entries(mapa)
-      .filter(([,s])=>s)
-      .map(([responsavel,setor])=>({responsavel,setor}));
-    if (registros.length) {
-      // Limpa e recria
-      await db.from('ssma_responsavel_setor').delete().neq('responsavel','__NONE__');
-      await db.from('ssma_responsavel_setor').insert(registros);
-    }
-    ssmaFecharMapaSetores();
-    renderGraficos();
-    showToastMod('Mapeamento salvo','ok');
+  window.ssmaSalvarMapaSetores=async function(){
+    const db=getDB();
+    const registros=Object.entries(window._ssmaRespSetor||{}).filter(([,s])=>s).map(([responsavel,setor])=>({responsavel,setor}));
+    if(registros.length){await db.from('ssma_responsavel_setor').delete().neq('responsavel','__NONE__');await db.from('ssma_responsavel_setor').insert(registros);}
+    ssmaFecharMapaSetores();renderGraficos();showToastMod('Mapeamento salvo','ok');
   };
 
   /* ══ Registro ═══════════════════════════════════════════════ */
