@@ -957,12 +957,14 @@
     const qtD3=entriesByVT.map(e=>e[1].total);
 
     const todosSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    // Se não há mapeamento ainda, avisa o usuário com link para configurar
+    const semMapeamento = todosSetores.length === 0;
     const setDD=todosSetores.length?`
-      <div class="ssma-dd" id="graf-setor-dd" style="margin-bottom:10px">
+      <div class="ssma-dd" id="graf-setor-dd">
         <button class="ssma-dd-btn ${setoresSel.length?'ativo':''}" id="graf-setor-btn"
           onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
           <i class="ti ti-building" style="font-size:12px;color:#6b7280"></i>
-          ${setoresSel.length?setoresSel.join(', ').slice(0,30)+(setoresSel.join(', ').length>30?'…':''):'Todos os setores'}
+          ${setoresSel.length ? setoresSel.join(', ').slice(0,28)+(setoresSel.join(', ').length>28?'…':'') : 'Todos os setores'}
           ${setoresSel.length?`<span class="dd-badge">${setoresSel.length}</span>`:''}
           <i class="ti ti-chevron-down arr"></i>
         </button>
@@ -975,21 +977,45 @@
             <input type="checkbox" id="gschk-${i}" data-val="${esc(s)}" ${setoresSel.includes(s)?'checked':''}> ${esc(s)}
           </label>`).join('')}
         </div>
-      </div>`:'';
+      </div>`
+    : '';
 
-    el.innerHTML=`${setDD}
+    el.innerHTML=`
+      <!-- Linha 1: filtro de setor -->
+      <div class="ssma-grafico-card" style="margin-bottom:10px;padding:10px 14px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
+          ${semMapeamento
+            ? `<span style="font-size:11px;color:#9ca3af"><i class="ti ti-info-circle"></i> Configure o vínculo em <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button> para habilitar este filtro.</span>`
+            : setDD}
+        </div>
+      </div>
+      <!-- Linha 2: dois paretos lado a lado -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
+          <div class="ssma-grafico-head">
+            <div class="ssma-grafico-title">Valores por Classificação de Investimento
+              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
+            </div>
+          </div>
           <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
         </div>
         <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head"><div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
+          <div class="ssma-grafico-head">
+            <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento
+              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
+            </div>
+          </div>
           <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
         </div>
       </div>
+      <!-- Linha 3: gráfico dual largura total -->
       <div class="ssma-grafico-card" style="margin-bottom:14px">
-        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span></div></div>
+        <div class="ssma-grafico-head">
+          <div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento
+            <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas com valor)</span>
+          </div>
+        </div>
         <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
       </div>`;
 
