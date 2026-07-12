@@ -117,13 +117,18 @@
 
   /* ══ Banco de dados ═════════════════════════════════════════ */
   async function carregarTudo() {
-    const [rP,rM,rA,rS,rMods] = await Promise.all([
+    const [rP,rM,rA,rS,rMods,rRS] = await Promise.all([
       dbSelect('ssma_planos'),
       dbSelect('ssma_manual'),
       dbSelect('ssma_aquisicoes'),
       dbSelect('ssma_servicos'),
       dbSelect('ssma_modalidades', {order:{col:'nome',asc:true}}),
+      dbSelect('ssma_responsavel_setor'),
     ]);
+    // Mapa responsavel -> setor para uso nos gráficos
+    window._ssmaRespSetor = {};
+    (rRS.data||[]).forEach(x => { window._ssmaRespSetor[x.responsavel] = x.setor; });
+    if (!window._ssmaGrafSetores) window._ssmaGrafSetores = [];
     MODS = rMods.data || [];
     const mm={}, am={}, sm={};
     (rM.data||[]).forEach(x => mm[x.codigo]=x);
@@ -479,6 +484,7 @@
       <button class="topbar-btn" id="ssma-btn-concluidos" onclick="ssmaToggleConcluidos()" title="Exibir planos concluídos">
         <i class="ti ti-circle-check"></i><span>Ver concluídos</span>
       </button>
+      <button class="topbar-btn" onclick="ssmaAbrirMapaSetores()"><i class="ti ti-map-pin"></i><span>Resp. → Setor</span></button>
       <button class="topbar-btn" onclick="ssmaAbrirHH()"><i class="ti ti-settings"></i><span>Configurar HH</span></button>
     </div>
   </div>
@@ -664,17 +670,29 @@
     const el = document.getElementById('ssma-graficos'); if(!el) return;
 
     const hoje = new Date(); hoje.setHours(0,0,0,0);
+
+    // Exclui concluídos e cancelados
     const atrasados = DB.filter(p => {
+      const st = (p.status||'').toLowerCase();
+      if (st.includes('conclu') || st.includes('cancel')) return false;
       if (!p.prazo) return false;
       const pts = p.prazo.split('/'); if(pts.length!==3) return false;
       const d = new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
       return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Agrupa por reclassificacao > classificacao > 'PENDENTE CLASSIF'
-    // Estrutura: { key: { Alto:0, Médio:0, Baixo:0, total:0 } }
+    // Aplica filtro de setor dos gráficos
+    const setoresSel = window._ssmaGrafSetores || [];
+    const dadosGraf  = setoresSel.length
+      ? atrasados.filter(p => {
+          const setor = (window._ssmaRespSetor||{})[p.responsavel] || '';
+          return setoresSel.includes(setor);
+        })
+      : atrasados;
+
+    // Agrupa: reclassificacao > classificacao > 'PENDENTE CLASSIF'
     const grupos = {};
-    atrasados.forEach(p => {
+    dadosGraf.forEach(p => {
       const raw = p.reclassificacao || p.classificacao || 'PENDENTE CLASSIF';
       const key = raw === 'Não classificado' ? 'PENDENTE CLASSIF' : raw;
       if (!grupos[key]) grupos[key] = { Alto:0, Médio:0, Baixo:0, total:0, vt:0 };
@@ -685,262 +703,340 @@
       grupos[key].vt += calcValorTotal(p).total;
     });
 
-    console.log('[SSMA] atrasados:', atrasados.length, 'grupos:', grupos);
+    // Entradas ordenadas por valor (para gráfico 1 e 3)
+    const entriesByVT = Object.entries(grupos)
+      .filter(([,g]) => g.vt > 0)
+      .sort((a,b) => b[1].vt - a[1].vt);
 
-    // Ordena decrescente por total
-    const entries = Object.entries(grupos).sort((a,b)=>b[1].total-a[1].total);
-    const labels  = entries.map(e=>e[0]);
-    const totais  = entries.map(e=>e[1].total);
-    const total   = totais.reduce((a,b)=>a+b,0);
-    const cumPct  = totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/total*100);
-    const vtVals  = entries.map(e=>e[1].vt);
-    const vtTotal = vtVals.reduce((a,b)=>a+b,0);
-    const vtCumPct= vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
+    // Entradas ordenadas por quantidade (para gráfico 2)
+    const entriesByQt = Object.entries(grupos)
+      .filter(([,g]) => g.total > 0)
+      .sort((a,b) => b[1].total - a[1].total);
+
+    // Dados gráfico 1 — valores
+    const labelsVT  = entriesByVT.map(e=>e[0]);
+    const vtVals    = entriesByVT.map(e=>e[1].vt);
+    const vtTotal   = vtVals.reduce((a,b)=>a+b,0);
+    const vtCumPct  = vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
+
+    // Dados gráfico 2 — quantidade
+    const labelsQT  = entriesByQt.map(e=>e[0]);
+    const totais    = entriesByQt.map(e=>e[1].total);
+    const qtTotal   = totais.reduce((a,b)=>a+b,0);
+    const cumPct    = totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
+
+    // Dados gráfico 3 — dual (só classif com valor)
+    const labelsD3  = entriesByVT.map(e=>e[0]);
+    const vtD3      = entriesByVT.map(e=>e[1].vt);
+    const qtD3      = entriesByVT.map(e=>e[1].total);
+
+    // Setor dropdown HTML
+    const todosSetores = [...new Set(
+      Object.values(window._ssmaRespSetor||{}).filter(Boolean)
+    )].sort();
+    const setDropdown = todosSetores.length ? `
+      <div class="ssma-dd" id="graf-setor-dd" style="margin-bottom:10px">
+        <button class="ssma-dd-btn ${setoresSel.length?'ativo':''}"
+          id="graf-setor-btn" onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
+          <i class="ti ti-building ico" style="font-size:12px;color:#6b7280"></i>
+          ${setoresSel.length ? setoresSel.join(', ').slice(0,30)+(setoresSel.join(', ').length>30?'…':'') : 'Todos os setores'}
+          ${setoresSel.length?`<span class="dd-badge">${setoresSel.length}</span>`:''}
+          <i class="ti ti-chevron-down arr"></i>
+        </button>
+        <div class="ssma-dd-panel" id="graf-setor-panel">
+          <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
+            <button onclick="ssmaGrafSetorAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
+            <button onclick="ssmaGrafSetorNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Limpar</button>
+          </div>
+          ${todosSetores.map((s,i)=>`<label class="ssma-dd-item" onclick="ssmaGrafToggleSetor('${esc(s)}',event)">
+            <input type="checkbox" id="gschk-${i}" data-val="${esc(s)}" ${setoresSel.includes(s)?'checked':''}> ${esc(s)}
+          </label>`).join('')}
+        </div>
+      </div>` : '';
 
     el.innerHTML = `
-      <div class="ssma-grafico-card">
-        <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
+      ${setDropdown}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <div class="ssma-grafico-card">
+          <div class="ssma-grafico-head">
+            <div class="ssma-grafico-title">Valores por Classificação de Investimento
+              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
+          </div>
+          <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
         </div>
-        <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
+        <div class="ssma-grafico-card">
+          <div class="ssma-grafico-head">
+            <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento
+              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
+          </div>
+          <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
+        </div>
       </div>
-      <div class="ssma-grafico-card">
+      <div class="ssma-grafico-card" style="margin-bottom:14px">
         <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div>
+          <div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento
+            <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas classif. com valor)</span></div>
         </div>
-        <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
+        <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
       </div>`;
 
-    // Gráfico de Valores
+    // ── Gráfico 1: Valores ──
     if (vtTotal === 0) {
       const cv = document.getElementById('graf-vt');
       if (cv) {
-        cv.width = cv.parentElement?.offsetWidth||500; cv.height=220;
-        if (window.__ch_grafvt) { window.__ch_grafvt.destroy(); window.__ch_grafvt=null; }
+        cv.width=cv.parentElement?.offsetWidth||500; cv.height=220;
+        if(window.__ch_grafvt){window.__ch_grafvt.destroy();window.__ch_grafvt=null;}
         const ctx=cv.getContext('2d');
         ctx.clearRect(0,0,cv.width,cv.height);
-        ctx.fillStyle='#6b7280'; ctx.font='12px sans-serif';
+        ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif';
         ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText('Nenhum valor registrado nos planos atrasados', cv.width/2, cv.height/2);
+        ctx.fillText('Nenhum valor registrado nos planos atrasados',cv.width/2,cv.height/2);
       }
     } else {
-      desenharParetoSimples('graf-vt','__ch_grafvt', labels, vtVals, vtCumPct, v=>fmtBRL(v), 'Valor (R$)');
+      desenharParetoSimples('graf-vt','__ch_grafvt', labelsVT, vtVals, vtCumPct, v=>fmtBRL(v), 'Valor (R$)');
     }
 
-    // Gráfico de Quantidade — barras empilhadas por risco
-    desenharParetoEmpilhado('graf-qt','__ch_grafqt', labels, entries, totais, cumPct);
+    // ── Gráfico 2: Quantidade (excluindo zeros) ──
+    if (!labelsQT.length) {
+      const cv=document.getElementById('graf-qt');
+      if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;
+        if(window.__ch_grafqt){window.__ch_grafqt.destroy();window.__ch_grafqt=null;}
+        const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+        ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText('Sem planos atrasados',cv.width/2,cv.height/2);}
+    } else {
+      desenharParetoEmpilhado('graf-qt','__ch_grafqt', labelsQT, entriesByQt, totais, cumPct);
+    }
+
+    // ── Gráfico 3: Dual valor × quantidade ──
+    if (!labelsD3.length) {
+      const cv=document.getElementById('graf-dual');
+      if(cv){cv.width=cv.parentElement?.offsetWidth||900;cv.height=260;
+        if(window.__ch_grafdual){window.__ch_grafdual.destroy();window.__ch_grafdual=null;}
+        const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);
+        ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+        ctx.fillText('Sem dados com valor para exibir',cv.width/2,cv.height/2);}
+    } else {
+      desenharDual('graf-dual','__ch_grafdual', labelsD3, vtD3, qtD3);
+    }
   }
 
+  /* ── Funções de filtro de setor dos gráficos ── */
+  window.ssmaGrafToggleSetorDD = function(e) {
+    e?.stopPropagation();
+    const p=document.getElementById('graf-setor-panel');
+    const b=document.getElementById('graf-setor-btn');
+    const open=p?.classList.contains('show');
+    document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));
+    if(!open){p?.classList.add('show');b?.classList.add('open');}
+  };
+  window.ssmaGrafToggleSetor = function(val,e) {
+    e?.stopPropagation();
+    const arr=window._ssmaGrafSetores||[];
+    const idx=arr.indexOf(val);
+    if(idx>=0)arr.splice(idx,1);else arr.push(val);
+    window._ssmaGrafSetores=arr;
+    renderGraficos();
+  };
+  window.ssmaGrafSetorAll = function(e) {
+    e?.stopPropagation();
+    window._ssmaGrafSetores=[];
+    renderGraficos();
+  };
+  window.ssmaGrafSetorNone = function(e) {
+    e?.stopPropagation();
+    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
+    window._ssmaGrafSetores=[...todos];
+    renderGraficos();
+  };
 
-  /* Pareto simples — para valores */
+  /* Pareto simples — valores */
   function desenharParetoSimples(canvasId, chartKey, labels, vals, cumPct, fmtTick, yLabel) {
-    const canvas = document.getElementById(canvasId); if(!canvas) return;
-    canvas.width  = canvas.parentElement?.offsetWidth || 500;
-    canvas.height = 220;
-    const ctx = canvas.getContext('2d');
-    if (!vals.length) {
-      ctx.fillStyle='#4b5563'; ctx.font='12px sans-serif';
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('Sem dados', canvas.width/2, canvas.height/2); return;
+    const canvas=document.getElementById(canvasId); if(!canvas) return;
+    canvas.width=canvas.parentElement?.offsetWidth||500; canvas.height=220;
+    const ctx=canvas.getContext('2d');
+    if(!vals.length){
+      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
     }
-    const maxVal = Math.max(...vals);
-    if (window[chartKey]) { window[chartKey].destroy(); window[chartKey]=null; }
-    window[chartKey] = new Chart(ctx, {
-      data: {
+    const maxVal=Math.max(...vals);
+    if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
+    window[chartKey]=new Chart(ctx,{
+      data:{
         labels,
-        datasets: [
+        datasets:[
           { type:'bar', label:yLabel, data:vals,
             backgroundColor:'#F8C100', borderColor:'#d4a000', borderWidth:1,
-            yAxisID:'y', order:2 },
+            yAxisID:'y', order:2,
+            datalabels:{
+              display:true, color:'#374151', font:{size:8,weight:'700'},
+              anchor:'end', align:'end', offset:1, clamp:true,
+              formatter:v=>fmtTick(v),
+            }},
           { type:'line', label:'% Acumulado', data:cumPct,
             borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.07)',
-            borderWidth:2, pointRadius:2, pointBackgroundColor:'#C8102E',
+            borderWidth:2, pointRadius:3, pointBackgroundColor:'#C8102E',
             fill:false, tension:.3, yAxisID:'y2', order:1,
-            datalabels:{ display:true, color:'#C8102E', font:{size:8,weight:'bold'},
-              formatter:v=>v.toFixed(0)+'%', anchor:'top', align:'top', offset:2 } }
+            datalabels:{
+              display:true, color:'#C8102E', font:{size:8,weight:'700'},
+              anchor:'top', align:'top', offset:4,
+              formatter:v=>v.toFixed(0)+'%',
+            }}
         ]
       },
       options:{
         responsive:false, maintainAspectRatio:false,
-        interaction:{ mode:'index', intersect:false },
+        interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{ display:true, position:'top', labels:{ font:{size:10}, color:'#374151', boxWidth:10 } },
-          tooltip:{ callbacks:{ label(c){ return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`; } } },
-          datalabels:{
-            display(ctx){ return ctx.dataset.type==='bar'; },
-            color:'#374151', font:{size:8,weight:'600'},
-            anchor:'end', align:'end', offset:2,
-            formatter:v=>fmtTick(v),
-            clamp:true,
-          }
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},
+          datalabels:{},
         },
         scales:{
-          x:{ ticks:{ font:{size:10}, color:'#4b5563', maxRotation:30 }, grid:{ display:false } },
-          y:{ type:'linear', position:'left', min:0, suggestedMax:maxVal*1.25,
-              ticks:{ font:{size:9}, color:'#4b5563', callback:v=>fmtTick(v), precision:0 },
-              grid:{ color:'#e5e7eb' },
-              title:{ display:true, text:yLabel, font:{size:9}, color:'#4b5563' } },
-          y2:{ type:'linear', position:'right', min:0, max:105,
-               ticks:{ font:{size:9}, color:'#C8102E', callback:v=>v+'%', precision:0 },
-               grid:{ display:false },
-               title:{ display:true, text:'% Acumulado', font:{size:9}, color:'#C8102E' } }
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,
+            ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},
+            grid:{color:'#e5e7eb'},
+            title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:108,
+            ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},
+            grid:{display:false},
+            title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
         }
       }
     });
   }
 
-  /* Pareto empilhado por risco — para quantidade */
+  /* Pareto empilhado por risco — quantidade */
   function desenharParetoEmpilhado(canvasId, chartKey, labels, entries, totais, cumPct) {
-    const canvas = document.getElementById(canvasId); if(!canvas) return;
-    canvas.width  = canvas.parentElement?.offsetWidth || 500;
-    canvas.height = 220;
-    const ctx = canvas.getContext('2d');
-    if (!entries.length) {
-      ctx.fillStyle='#4b5563'; ctx.font='12px sans-serif';
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('Sem dados', canvas.width/2, canvas.height/2); return;
+    const canvas=document.getElementById(canvasId); if(!canvas) return;
+    canvas.width=canvas.parentElement?.offsetWidth||500; canvas.height=220;
+    const ctx=canvas.getContext('2d');
+    if(!entries.length){
+      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
     }
-    const maxVal = Math.max(...totais);
-    if (window[chartKey]) { window[chartKey].destroy(); window[chartKey]=null; }
-
-    // Stacks: Alto (base) → Médio → Baixo → Sem risco
-    const altoData  = entries.map(e=>e[1].Alto||0);
-    const medioData = entries.map(e=>e[1].Médio||0);
-    const baixoData = entries.map(e=>e[1].Baixo||0);
-
-    window[chartKey] = new Chart(ctx, {
-      data: {
+    const maxVal=Math.max(...totais);
+    if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
+    const altoData =entries.map(e=>e[1].Alto||0);
+    const medioData=entries.map(e=>e[1].Médio||0);
+    const baixoData=entries.map(e=>e[1].Baixo||0);
+    window[chartKey]=new Chart(ctx,{
+      data:{
         labels,
-        datasets: [
-          { type:'bar', label:'Alto',  data:altoData,
-            backgroundColor:'#dc2626', borderColor:'#b91c1c', borderWidth:0,
-            stack:'risco', yAxisID:'y', order:2 },
-          { type:'bar', label:'Médio', data:medioData,
-            backgroundColor:'#f59e0b', borderColor:'#d97706', borderWidth:0,
-            stack:'risco', yAxisID:'y', order:2 },
-          { type:'bar', label:'Baixo', data:baixoData,
-            backgroundColor:'#16a34a', borderColor:'#15803d', borderWidth:0,
-            stack:'risco', yAxisID:'y', order:2 },
-          { type:'line', label:'% Acumulado', data:cumPct,
-            borderColor:'#1d4ed8', backgroundColor:'rgba(29,78,216,.07)',
-            borderWidth:2, pointRadius:2, pointBackgroundColor:'#1d4ed8',
-            fill:false, tension:.3, yAxisID:'y2', order:1 }
+        datasets:[
+          {type:'bar',label:'Alto', data:altoData, backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
+            datalabels:{display:false}},
+          {type:'bar',label:'Médio',data:medioData,backgroundColor:'#f59e0b',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
+            datalabels:{display:false}},
+          {type:'bar',label:'Baixo',data:baixoData,backgroundColor:'#16a34a',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
+            datalabels:{
+              display:true, color:'#1f2937', font:{size:8,weight:'700'},
+              anchor:'end', align:'end', offset:2, clamp:true,
+              formatter:(v,ctx2)=>totais[ctx2.dataIndex]>0?String(totais[ctx2.dataIndex]):'',
+            }},
+          {type:'line',label:'% Acumulado',data:cumPct,
+            borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',
+            borderWidth:2,pointRadius:3,pointBackgroundColor:'#1d4ed8',
+            fill:false,tension:.3,yAxisID:'y2',order:1,
+            datalabels:{
+              display:true, color:'#1d4ed8', font:{size:8,weight:'700'},
+              anchor:'top', align:'top', offset:4,
+              formatter:v=>v.toFixed(0)+'%',
+            }}
+        ]
+      },
+      options:{
+        responsive:false,maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:true,position:'top',
+            labels:{font:{size:10},color:'#374151',boxWidth:10,
+              filter(item){return item.text!=='% Acumulado';}}},
+          tooltip:{callbacks:{
+            label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},
+            footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}
+          }},
+          datalabels:{},
+        },
+        scales:{
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,stacked:true,
+            ticks:{font:{size:9},color:'#4b5563',precision:0},
+            grid:{color:'#e5e7eb'},
+            title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:108,
+            ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},
+            grid:{display:false},
+            title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
+        }
+      }
+    });
+  }
+
+  /* Gráfico dual — Valor × Quantidade por classificação */
+  function desenharDual(canvasId, chartKey, labels, vtVals, qtVals) {
+    const canvas=document.getElementById(canvasId); if(!canvas) return;
+    canvas.width=canvas.parentElement?.offsetWidth||900; canvas.height=260;
+    const ctx=canvas.getContext('2d');
+    if(!labels.length){
+      ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;
+    }
+    const maxVT=Math.max(...vtVals);
+    const maxQT=Math.max(...qtVals);
+    if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
+    window[chartKey]=new Chart(ctx,{
+      data:{
+        labels,
+        datasets:[
+          { type:'bar', label:'Valor (R$)', data:vtVals,
+            backgroundColor:'rgba(248,193,0,0.85)', borderColor:'#d4a000', borderWidth:1,
+            yAxisID:'yVT', order:1,
+            datalabels:{
+              display:true, color:'#92400e', font:{size:8,weight:'700'},
+              anchor:'end', align:'end', offset:2, clamp:true,
+              formatter:v=>fmtBRL(v),
+            }},
+          { type:'bar', label:'Qtd. Planos', data:qtVals,
+            backgroundColor:'rgba(29,78,216,0.75)', borderColor:'#1e3a8a', borderWidth:1,
+            yAxisID:'yQT', order:1,
+            datalabels:{
+              display:true, color:'#1e3a8a', font:{size:8,weight:'700'},
+              anchor:'end', align:'end', offset:2, clamp:true,
+              formatter:v=>String(v),
+            }}
         ]
       },
       options:{
         responsive:false, maintainAspectRatio:false,
-        interaction:{ mode:'index', intersect:false },
+        interaction:{mode:'index',intersect:false},
         plugins:{
-          legend:{ display:true, position:'top',
-            labels:{ font:{size:10}, color:'#374151', boxWidth:10,
-              filter(item){ return item.text !== '% Acumulado'; } } },
-          tooltip:{
-            callbacks:{
-              label(c){
-                if (c.dataset.type==='line') return `Acumulado: ${c.raw.toFixed(1)}%`;
-                return `${c.dataset.label}: ${c.raw}`;
-              },
-              footer(items){
-                const total = items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);
-                return `Total: ${total}`;
-              }
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{callbacks:{
+            label(c){
+              if(c.dataset.yAxisID==='yVT') return`Valor: ${fmtBRL(c.raw)}`;
+              return`Qtd.: ${c.raw} planos`;
             }
-          },
-          datalabels:{
-            display(ctx){
-              // Mostra label só no topo da barra (último stack com valor)
-              if (ctx.dataset.type==='line') return false;
-              if (ctx.dataset.label!=='Baixo') return false;
-              return ctx.chart.data.datasets
-                .filter(d=>d.stack==='risco')
-                .every(d=>d.data[ctx.dataIndex]!==undefined);
-            },
-            color:'#1f2937', font:{size:8,weight:'700'},
-            anchor:'end', align:'end', offset:2,
-            formatter:(v,ctx)=>{
-              const i=ctx.dataIndex;
-              return totais[i]>0?String(totais[i]):'';
-            },
-            clamp:true,
-          }
+          }},
+          datalabels:{},
         },
         scales:{
-          x:{ ticks:{ font:{size:10}, color:'#4b5563', maxRotation:30 }, grid:{ display:false } },
-          y:{ type:'linear', position:'left', min:0, suggestedMax:maxVal*1.3,
-              stacked:true,
-              ticks:{ font:{size:9}, color:'#4b5563', precision:0 },
-              grid:{ color:'#e5e7eb' },
-              title:{ display:true, text:'Planos', font:{size:9}, color:'#4b5563' } },
-          y2:{ type:'linear', position:'right', min:0, max:105,
-               ticks:{ font:{size:9}, color:'#1d4ed8', callback:v=>v+'%', precision:0 },
-               grid:{ display:false },
-               title:{ display:true, text:'% Acumulado', font:{size:9}, color:'#1d4ed8' } }
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
+          yVT:{type:'linear',position:'left',min:0,suggestedMax:maxVT*1.3,
+            ticks:{font:{size:9},color:'#92400e',callback:v=>fmtBRL(v)},
+            grid:{color:'#e5e7eb'},
+            title:{display:true,text:'Valor (R$)',font:{size:9},color:'#92400e'}},
+          yQT:{type:'linear',position:'right',min:0,suggestedMax:maxQT*1.3,
+            ticks:{font:{size:9},color:'#1d4ed8',precision:0},
+            grid:{display:false},
+            title:{display:true,text:'Qtd. Planos',font:{size:9},color:'#1d4ed8'}}
         }
       }
     });
   }
 
 
-  /* ══ LISTA ══════════════════════════════════════════════════ */
-  function renderLista() {
-    const dados = dadosFiltrados();
-    const tbody = document.getElementById('ssma-tbody');
-    const tfoot = document.getElementById('ssma-tfoot');
-    if (!tbody) return;
-
-    const at=dados.filter(p=>p.situacao==='Atrasado').length;
-    const av=dados.filter(p=>p.situacao==='A vencer').length;
-    const np=dados.filter(p=>p.situacao==='No prazo').length;
-
-    tbody.innerHTML = dados.map(p => {
-      const vt = calcValorTotal(p);
-      const rc = p.reclassificacao||'';
-      const trat = temTratativa(p);
-      let dotCls = 'trat-gray';
-      if (trat) dotCls='trat-green';
-      else if (p.situacao==='Atrasado'||p.situacao==='A vencer') dotCls='trat-red';
-      const dot = `<span class="trat-dot ${dotCls}" style="margin-right:5px;vertical-align:middle"></span>`;
-      const pc = p.situacao==='Atrasado'?'prazo-r':p.situacao==='A vencer'?'prazo-a':'prazo-g';
-      return `<tr onclick="ssmaAbrirModal('${esc(p.codigo)}')">
-        <td style="font-size:11px;color:#374151;font-weight:600">${dot}${esc(p.codigo)}</td>
-        <td class="desc-td"><div class="ssma-desc">${esc(p.descricao)}</div></td>
-        <td class="${pc}">${esc(p.prazo||'—')}</td>
-        <td style="font-size:11px;color:#374151">${esc(p.responsavel||'—')}</td>
-        <td style="text-align:right;font-size:12px;font-weight:${vt.total>0?600:400};color:${vt.total>0?'#111':'#9ca3af'}">${vt.total>0?fmtBRL(vt.total):'—'}</td>
-        <td>${p.risco?`<span class="${RISCO_CLASS(p.resultado)}">${p.risco}</span>`:`<span class="sb-none">—</span>`}</td>
-        <td>${p.classificacao?`<span class="${badgeClassif(p.classificacao)}">${esc(p.classificacao)}</span>`:`<span class="sb-none">—</span>`}</td>
-        <td>${rc?`<span class="${badgeClassif(rc)}">${esc(rc)}</span>`:`<span class="sb-none">—</span>`}</td>
-      </tr>`;
-    }).join('');
-
-    const concluidos = DB.filter(p=>(p.status||'').toLowerCase().includes('conclu')).length;
-    const totalBase  = filtros.ocultarConcluidos ? DB.length - concluidos : DB.length;
-    if (tfoot) tfoot.innerHTML=`Exibindo <span>${dados.length}</span> de <span>${totalBase}</span> planos
-      ${concluidos>0 ? `&nbsp;·&nbsp;<span style="color:#9ca3af">${concluidos} concluídos ${filtros.ocultarConcluidos?'(ocultos)':''}</span>` : ''}
-      &nbsp;·&nbsp;<span style="color:#dc2626">${at} atrasados</span>
-      &nbsp;·&nbsp;<span style="color:#d97706">${av} a vencer</span>
-      &nbsp;·&nbsp;<span style="color:#16a34a">${np} no prazo</span>`;
-
-    renderChips();
-  }
-
-  function renderChips() {
-    const el = document.getElementById('ssma-chips'); if(!el) return;
-    const labels={responsavel:'Responsável',status:'Status',situacao:'Situação',checklist:'Checklist',risco:'Risco',reclassificacao:'Reclassificação',composicao:'Composição',modalidadeSv:'Modalidade'};
-    let html='';
-    ['responsavel','status','situacao','checklist','risco','reclassificacao','composicao','modalidadeSv'].forEach(n=>{
-      (filtros[n]||[]).forEach(v=>{
-        html+=`<span class="ssma-chip">${labels[n]}: ${esc(v)} <button onclick="ssmaRemoverChip('${n}','${esc(v)}')">×</button></span>`;
-      });
-    });
-    if (filtros.valorMin!==null||filtros.valorMax!==null) {
-      html+=`<span class="ssma-chip">Valor: ${filtros.valorMin!==null?fmtBRL(filtros.valorMin):'∞'} – ${filtros.valorMax!==null?fmtBRL(filtros.valorMax):'∞'} <button onclick="ssmaRemoverChip('valor','')">×</button></span>`;
-    }
-    if (filtros.busca) html+=`<span class="ssma-chip">Busca: "${esc(filtros.busca)}" <button onclick="ssmaRemoverChip('busca','')">×</button></span>`;
-    el.innerHTML=html;
-  }
-
-  /* ══ MODAL ══════════════════════════════════════════════════ */
   window.ssmaAbrirModal = function(codigo) { modalCodigo=codigo; modalTab='geral'; aqEditando=null; svEditando=null; renderModal(); };
 
   function renderModal() {
@@ -1310,6 +1406,82 @@
       btn.querySelector('span').textContent = filtros.ocultarConcluidos ? 'Ver concluídos' : 'Ocultar concluídos';
     }
     renderLista();
+  };
+
+  /* ══ Mapeamento Responsável → Setor ════════════════════════ */
+  window.ssmaAbrirMapaSetores = function() {
+    let ov = document.getElementById('ssma-rs-ov');
+    if(!ov){ov=document.createElement('div');ov.id='ssma-rs-ov';ov.className='ssma-modal-overlay';
+      ov.onclick=e=>{if(e.target===ov)ssmaFecharMapaSetores();};document.body.appendChild(ov);}
+    ssmaRenderMapaSetores(ov); ov.style.display='flex';
+  };
+  window.ssmaFecharMapaSetores = function() {
+    document.getElementById('ssma-rs-ov')?.remove();
+  };
+  window.ssmaRenderMapaSetores = function(ov) {
+    const responsaveis = [...new Set(DB.map(p=>p.responsavel).filter(Boolean))].sort();
+    const setores      = [...new Set(DB.map(p=>p.checklist_cat).filter(Boolean))].sort();
+    // Setores reais — tenta extrair do campo area/checklist ou permite digitar
+    const setoresOpts  = [...new Set([
+      'FABRICAÇÃO DE AÇÚCAR','FABRICAÇÃO DE ÁLCOOL','GERAÇÃO/DISTRIBUIÇÃO DE VAPOR',
+      'TRATAMENTO DE CALDO','RECEPÇÃO E EXTRAÇÃO','UTILIDADES','MANUTENÇÃO','SSMA',
+      'ADMINISTRATIVO','OUTROS',
+      ...Object.values(window._ssmaRespSetor||{}).filter(Boolean)
+    ])].sort();
+
+    const rows = responsaveis.map((resp,i) => {
+      const setorAtual = (window._ssmaRespSetor||{})[resp] || '';
+      return `<tr>
+        <td style="font-size:11px;padding:5px 7px;border-bottom:1px solid var(--border);color:#374151">${esc(resp)}</td>
+        <td style="padding:5px 7px;border-bottom:1px solid var(--border)">
+          <select class="ssma-select" style="height:28px;font-size:11px"
+            onchange="window._ssmaRespSetor['${esc(resp)}']=this.value">
+            <option value="">— sem setor —</option>
+            ${setoresOpts.map(s=>`<option value="${esc(s)}" ${setorAtual===s?'selected':''}>${esc(s)}</option>`).join('')}
+          </select>
+        </td>
+      </tr>`;
+    }).join('');
+
+    ov.innerHTML = `<div class="ssma-modal" style="max-width:500px">
+      <div class="ssma-modal-head">
+        <div class="ssma-modal-code">Configuração</div>
+        <div class="ssma-modal-title">Responsável → Setor</div>
+        <div class="ssma-modal-meta" style="margin-top:4px">
+          <span style="font-size:11px;color:#6b7280">Vincule cada responsável a um setor para filtrar os gráficos.</span>
+          <button class="ssma-modal-close" onclick="ssmaFecharMapaSetores()">×</button>
+        </div>
+      </div>
+      <div class="ssma-modal-body" style="max-height:360px;overflow-y:auto;padding:0">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Responsável</th>
+            <th style="padding:7px;background:var(--bg);border-bottom:1px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7280;text-align:left">Setor</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="ssma-modal-footer" style="justify-content:flex-end">
+        <button class="ssma-cancel-btn" style="padding:6px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font-family:var(--font);font-size:12px;cursor:pointer" onclick="ssmaFecharMapaSetores()">Cancelar</button>
+        <button class="ssma-save-btn" onclick="ssmaSalvarMapaSetores()">Salvar</button>
+      </div>
+    </div>`;
+    ov.style.display='flex';
+  };
+  window.ssmaSalvarMapaSetores = async function() {
+    const db = getDB();
+    const mapa = window._ssmaRespSetor || {};
+    const registros = Object.entries(mapa)
+      .filter(([,s])=>s)
+      .map(([responsavel,setor])=>({responsavel,setor}));
+    if (registros.length) {
+      // Limpa e recria
+      await db.from('ssma_responsavel_setor').delete().neq('responsavel','__NONE__');
+      await db.from('ssma_responsavel_setor').insert(registros);
+    }
+    ssmaFecharMapaSetores();
+    renderGraficos();
+    showToastMod('Mapeamento salvo','ok');
   };
 
   /* ══ Registro ═══════════════════════════════════════════════ */
