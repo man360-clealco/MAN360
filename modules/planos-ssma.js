@@ -93,7 +93,8 @@
   let filtros = {
     busca:'', responsavel:[], status:[], situacao:[], checklist:[],
     risco:[], reclassificacao:[], composicao:[], modalidadeSv:[],
-    valorMin:null, valorMax:null
+    valorMin:null, valorMax:null,
+    ocultarConcluidos: true,  // padrão: não exibe concluídos automaticamente
   };
   let modalCodigo = null;
   let modalTab    = 'geral';
@@ -192,7 +193,37 @@
     showToastMod(`Salvando ${registros.length} planos…`,'info');
     const {count,error} = await dbUpsert('ssma_planos', registros, 'codigo');
     if (error) { showToastMod('Erro: '+error.message,'erro'); return; }
-    await finalizarImportacao(count,'Planilha 1');
+
+    // ── Tombamento automático: planos que sumiram da planilha foram concluídos ──
+    const codigosImportados = new Set(registros.map(r => r.codigo));
+    const db = getDB();
+    // Busca todos os planos que ainda estão "abertos" no banco
+    const { data: ativos } = await db.from('ssma_planos')
+      .select('codigo')
+      .not('status', 'ilike', '%conclu%')
+      .not('status', 'ilike', '%cancel%');
+
+    const tombados = (ativos||[]).filter(p => !codigosImportados.has(p.codigo));
+
+    if (tombados.length > 0) {
+      const dataHoje = new Date().toISOString().slice(0,10);
+      const codsTombar = tombados.map(p => p.codigo);
+      await db.from('ssma_planos')
+        .update({
+          status:         'Concluído (auto)',
+          situacao:       'Concluído',
+          data_conclusao: dataHoje,
+          atualizado_em:  new Date().toISOString(),
+        })
+        .in('codigo', codsTombar);
+
+      // Guarda para exibir no resumo pós-importação
+      window._ssma_tombados = tombados.map(p => p.codigo);
+    } else {
+      window._ssma_tombados = [];
+    }
+
+    await finalizarImportacao(count, 'Planilha 1', tombados.length);
   }
 
   async function processarP2(rows) {
@@ -213,7 +244,7 @@
     await finalizarImportacao(n,'Planilha 2');
   }
 
-  async function finalizarImportacao(count, label) {
+  async function finalizarImportacao(count, label, qtdTombados) {
     localStorage.setItem('man360_ssma_ultima_importacao', new Date().toLocaleString('pt-BR'));
     await carregarTudo();
     popularDDs();
@@ -221,11 +252,20 @@
     renderLista();
     atualizarTimestamp();
     showToastMod(`${label} importada — ${count} registros`,'ok');
+    // Exibe modal de resumo se houve tombamentos
+    if (qtdTombados > 0) {
+      setTimeout(() => ssmaExibirResumoTombamento(qtdTombados), 600);
+    }
   }
 
   /* ══ Filtros ════════════════════════════════════════════════ */
   function dadosFiltrados() {
     let dados = DB.filter(p => {
+      // Oculta concluídos por padrão (a menos que o usuário desative)
+      if (filtros.ocultarConcluidos) {
+        const st = (p.status||'').toLowerCase();
+        if (st.includes('conclu') || st.includes('cancel')) return false;
+      }
       const vt = calcValorTotal(p).total;
       if (filtros.busca) {
         const b = filtros.busca.toLowerCase();
@@ -436,6 +476,9 @@
     <div class="ssma-topbar-right">
       <span class="ssma-last-import" id="ssma-ts">—</span>
       <button class="topbar-btn" onclick="ssmaImportar()"><i class="ti ti-upload"></i><span>Importar planilha</span></button>
+      <button class="topbar-btn" id="ssma-btn-concluidos" onclick="ssmaToggleConcluidos()" title="Exibir planos concluídos">
+        <i class="ti ti-circle-check"></i><span>Ver concluídos</span>
+      </button>
       <button class="topbar-btn" onclick="ssmaAbrirHH()"><i class="ti ti-settings"></i><span>Configurar HH</span></button>
     </div>
   </div>
@@ -870,10 +913,13 @@
       </tr>`;
     }).join('');
 
-    if (tfoot) tfoot.innerHTML=`Exibindo <span>${dados.length}</span> de <span>${DB.length}</span> planos &nbsp;·&nbsp;
-      <span style="color:#dc2626">${at} atrasados</span> &nbsp;·&nbsp;
-      <span style="color:#d97706">${av} a vencer</span> &nbsp;·&nbsp;
-      <span style="color:#16a34a">${np} no prazo</span>`;
+    const concluidos = DB.filter(p=>(p.status||'').toLowerCase().includes('conclu')).length;
+    const totalBase  = filtros.ocultarConcluidos ? DB.length - concluidos : DB.length;
+    if (tfoot) tfoot.innerHTML=`Exibindo <span>${dados.length}</span> de <span>${totalBase}</span> planos
+      ${concluidos>0 ? `&nbsp;·&nbsp;<span style="color:#9ca3af">${concluidos} concluídos ${filtros.ocultarConcluidos?'(ocultos)':''}</span>` : ''}
+      &nbsp;·&nbsp;<span style="color:#dc2626">${at} atrasados</span>
+      &nbsp;·&nbsp;<span style="color:#d97706">${av} a vencer</span>
+      &nbsp;·&nbsp;<span style="color:#16a34a">${np} no prazo</span>`;
 
     renderChips();
   }
@@ -1197,6 +1243,74 @@
     document.getElementById('toast-msg').textContent=msg;
     t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),3500);
   }
+
+  /* ══ Modal de resumo de tombamento ══════════════════════════ */
+  window.ssmaExibirResumoTombamento = function(qtd) {
+    const codigos = (window._ssma_tombados || []).slice(0, 20);
+    const extra   = (window._ssma_tombados || []).length > 20
+      ? `<div style="font-size:10px;color:#9ca3af;margin-top:4px">+${(window._ssma_tombados||[]).length - 20} mais…</div>` : '';
+
+    const html = `<div class="ssma-modal-overlay" id="ssma-tomb-ov"
+        onclick="if(event.target===this)document.getElementById('ssma-tomb-ov').remove()"
+        style="z-index:600">
+      <div class="ssma-modal" style="max-width:480px">
+        <div class="ssma-modal-head">
+          <div class="ssma-modal-code">Importação concluída</div>
+          <div class="ssma-modal-title" style="display:flex;align-items:center;gap:8px">
+            <i class="ti ti-check-circle" style="color:#16a34a;font-size:18px"></i>
+            ${qtd} plano${qtd>1?'s':''} tombado${qtd>1?'s':''} automaticamente
+          </div>
+          <div class="ssma-modal-meta" style="margin-top:6px">
+            <span style="font-size:11px;color:#6b7280">
+              Estes planos estavam ativos no banco mas não apareceram na nova planilha.
+              Foram marcados como <strong>Concluído (auto)</strong> com a data de hoje.
+              Acesse cada um para revisar se necessário.
+            </span>
+            <button class="ssma-modal-close" onclick="document.getElementById('ssma-tomb-ov').remove()">×</button>
+          </div>
+        </div>
+        <div class="ssma-modal-body" style="max-height:280px;overflow-y:auto">
+          <div style="display:flex;flex-direction:column;gap:4px">
+            ${codigos.map(cod => {
+              const p = DB.find(d => d.codigo === cod);
+              return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+                <span class="sb-baixo">Concluído</span>
+                <span style="font-weight:600;font-size:11px;color:#374151">${esc(cod)}</span>
+                <span style="font-size:11px;color:#6b7280;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">
+                  ${esc(p?.descricao || '—')}
+                </span>
+                <button onclick="ssmaAbrirModal('${esc(cod)}');document.getElementById('ssma-tomb-ov').remove()"
+                  style="background:none;border:1px solid var(--border);border-radius:4px;padding:2px 7px;font-size:10px;cursor:pointer;flex-shrink:0">
+                  Ver
+                </button>
+              </div>`;
+            }).join('')}
+            ${extra}
+          </div>
+        </div>
+        <div class="ssma-modal-footer" style="justify-content:space-between;align-items:center">
+          <span style="font-size:10px;color:#9ca3af">
+            <i class="ti ti-info-circle"></i>
+            Os concluídos ficam ocultos por padrão. Use o toggle abaixo para exibi-los.
+          </span>
+          <button class="ssma-save-btn" onclick="document.getElementById('ssma-tomb-ov').remove()">Fechar</button>
+        </div>
+      </div>
+    </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+  };
+
+  /* ── Toggle exibir/ocultar concluídos ── */
+  window.ssmaToggleConcluidos = function() {
+    filtros.ocultarConcluidos = !filtros.ocultarConcluidos;
+    const btn = document.getElementById('ssma-btn-concluidos');
+    if (btn) {
+      btn.classList.toggle('ativo', !filtros.ocultarConcluidos);
+      btn.title = filtros.ocultarConcluidos ? 'Exibir planos concluídos' : 'Ocultar planos concluídos';
+      btn.querySelector('span').textContent = filtros.ocultarConcluidos ? 'Ver concluídos' : 'Ocultar concluídos';
+    }
+    renderLista();
+  };
 
   /* ══ Registro ═══════════════════════════════════════════════ */
   window.Modulos = window.Modulos || {};
