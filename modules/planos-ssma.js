@@ -972,6 +972,7 @@
           <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
             <button onclick="ssmaGrafSetorAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
             <button onclick="ssmaGrafSetorNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Limpar</button>
+            <button onclick="ssmaGrafAplicar(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:700;border-radius:var(--radius-sm);border:1px solid var(--dark1);background:var(--dark1);color:var(--yellow);cursor:pointer">Aplicar</button>
           </div>
           ${todosSetores.map((s,i)=>`<label class="ssma-dd-item" onclick="ssmaGrafToggleSetor('${esc(s)}',event)">
             <input type="checkbox" id="gschk-${i}" data-val="${esc(s)}" ${setoresSel.includes(s)?'checked':''}> ${esc(s)}
@@ -1028,9 +1029,50 @@
   }
 
   window.ssmaGrafToggleSetorDD=function(e){e?.stopPropagation();const p=document.getElementById('graf-setor-panel');const b=document.getElementById('graf-setor-btn');const open=p?.classList.contains('show');document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));if(!open){p?.classList.add('show');b?.classList.add('open');}};
-  window.ssmaGrafToggleSetor=function(val,e){e?.stopPropagation();const arr=window._ssmaGrafSetores||[];const i=arr.indexOf(val);if(i>=0)arr.splice(i,1);else arr.push(val);window._ssmaGrafSetores=arr;renderGraficos();};
-  window.ssmaGrafSetorAll=function(e){e?.stopPropagation();window._ssmaGrafSetores=[];renderGraficos();};
-  window.ssmaGrafSetorNone=function(e){e?.stopPropagation();window._ssmaGrafSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];renderGraficos();};
+  window.ssmaGrafToggleSetor=function(val,e){
+    e?.stopPropagation();
+    const arr=window._ssmaGrafSetores||[];
+    const i=arr.indexOf(val);
+    if(i>=0) arr.splice(i,1); else arr.push(val);
+    window._ssmaGrafSetores=arr;
+    // Atualiza visual do checkbox sem re-renderizar
+    const idx2=arr.indexOf(val); // -1 se foi removido
+    const cbs=document.querySelectorAll('#graf-setor-panel input[type=checkbox]');
+    cbs.forEach(cb=>{ if(cb.dataset.val===val) cb.checked=(i<0); });
+    // Atualiza label do botão
+    const btn=document.getElementById('graf-setor-btn');
+    if(btn){
+      const sp=btn.querySelector('span')||btn.childNodes[2];
+      const txt=arr.length ? arr.join(', ').slice(0,28)+(arr.join(', ').length>28?'…':'') : 'Todos os setores';
+      // Atualiza o texto do nó de texto do botão
+      btn.childNodes.forEach(n=>{ if(n.nodeType===3&&n.textContent.trim()) n.textContent=' '+txt+' '; });
+      btn.classList.toggle('ativo', arr.length>0);
+      let badge=btn.querySelector('.dd-badge');
+      if(arr.length>0){ if(!badge){badge=document.createElement('span');badge.className='dd-badge';btn.insertBefore(badge,btn.lastElementChild);} badge.textContent=arr.length; }
+      else if(badge) badge.remove();
+    }
+  };
+  window.ssmaGrafSetorAll=function(e){
+    e?.stopPropagation();
+    window._ssmaGrafSetores=[];
+    document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=false);
+    const btn=document.getElementById('graf-setor-btn');
+    if(btn){ btn.classList.remove('ativo'); const badge=btn.querySelector('.dd-badge'); if(badge) badge.remove(); }
+  };
+  window.ssmaGrafSetorNone=function(e){
+    e?.stopPropagation();
+    window._ssmaGrafSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
+    // Marca todos como selecionados
+    document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=true);
+  };
+  window.ssmaGrafAplicar=function(e){
+    e?.stopPropagation();
+    // Fecha o painel
+    document.getElementById('graf-setor-panel')?.classList.remove('show');
+    document.getElementById('graf-setor-btn')?.classList.remove('open');
+    // Re-renderiza gráficos com os setores selecionados
+    renderGraficos();
+  };
 
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
     const canvas=document.getElementById(canvasId);if(!canvas)return;
