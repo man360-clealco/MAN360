@@ -497,7 +497,25 @@
   </div>
 
   <div class="ssma-chips" id="ssma-chips"></div>
-  <div class="ssma-graficos" id="ssma-graficos"></div>
+  <!-- Filtro de setor dos gráficos — separado para não ser destruído no re-render -->
+  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px"></div>
+  <!-- Container dos gráficos -->
+  <div id="ssma-graficos-area">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div class="ssma-grafico-card" id="graf-card-vt">
+        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valores por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
+        <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
+      </div>
+      <div class="ssma-grafico-card" id="graf-card-qt">
+        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
+        <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
+      </div>
+    </div>
+    <div class="ssma-grafico-card" style="margin-bottom:14px" id="graf-card-dual">
+      <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas com valor)</span></div></div>
+      <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
+    </div>
+  </div>
 
   <div class="ssma-legenda">
     <span style="font-weight:600;color:#374151">Tratativa:</span>
@@ -917,8 +935,9 @@
   }
 
   function renderGraficos() {
-    const el = document.getElementById('ssma-graficos'); if(!el) return;
     const hoje = new Date(); hoje.setHours(0,0,0,0);
+
+    // Exclui concluídos e cancelados
     const atrasados = DB.filter(p => {
       const st=(p.status||'').toLowerCase();
       if(st.includes('conclu')||st.includes('cancel')) return false;
@@ -927,11 +946,17 @@
       const d=new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
       return !isNaN(d)&&(d-hoje)/86400000<0;
     });
+
+    // Aplica filtro de setor
     const setoresSel = window._ssmaGrafSetores||[];
     const dadosGraf  = setoresSel.length
-      ? atrasados.filter(p=>(window._ssmaRespSetor||{})[p.responsavel]&&setoresSel.includes((window._ssmaRespSetor||{})[p.responsavel]))
+      ? atrasados.filter(p=>{
+          const s=(window._ssmaRespSetor||{})[p.responsavel];
+          return s&&setoresSel.includes(s);
+        })
       : atrasados;
 
+    // Agrupa: reclassificacao > classificacao > PENDENTE CLASSIF
     const grupos={};
     dadosGraf.forEach(p=>{
       const raw=p.reclassificacao||p.classificacao||'PENDENTE CLASSIF';
@@ -939,138 +964,134 @@
       if(!grupos[key]) grupos[key]={Alto:0,Médio:0,Baixo:0,total:0,vt:0};
       const risco=p.risco||'Sem risco';
       if(grupos[key][risco]!==undefined) grupos[key][risco]++; else grupos[key][risco]=1;
-      grupos[key].total++; grupos[key].vt+=calcValorTotal(p).total;
+      grupos[key].total++;
+      grupos[key].vt+=calcValorTotal(p).total;
     });
 
     const entriesByVT=Object.entries(grupos).filter(([,g])=>g.vt>0).sort((a,b)=>b[1].vt-a[1].vt);
     const entriesByQt=Object.entries(grupos).filter(([,g])=>g.total>0).sort((a,b)=>b[1].total-a[1].total);
+
     const labelsVT=entriesByVT.map(e=>e[0]);
     const vtVals=entriesByVT.map(e=>e[1].vt);
     const vtTotal=vtVals.reduce((a,b)=>a+b,0);
     const vtCumPct=vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
+
     const labelsQT=entriesByQt.map(e=>e[0]);
     const totais=entriesByQt.map(e=>e[1].total);
     const qtTotal=totais.reduce((a,b)=>a+b,0);
     const cumPct=totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
+
     const labelsD3=entriesByVT.map(e=>e[0]);
     const vtD3=entriesByVT.map(e=>e[1].vt);
     const qtD3=entriesByVT.map(e=>e[1].total);
 
-    const todosSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
-    // Se não há mapeamento ainda, avisa o usuário com link para configurar
-    const semMapeamento = todosSetores.length === 0;
-    const setDD=todosSetores.length?`
-      <div class="ssma-dd" id="graf-setor-dd">
-        <button class="ssma-dd-btn ${setoresSel.length?'ativo':''}" id="graf-setor-btn"
-          onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
-          <i class="ti ti-building" style="font-size:12px;color:#6b7280"></i>
-          ${setoresSel.length ? setoresSel.join(', ').slice(0,28)+(setoresSel.join(', ').length>28?'…':'') : 'Todos os setores'}
-          ${setoresSel.length?`<span class="dd-badge">${setoresSel.length}</span>`:''}
-          <i class="ti ti-chevron-down arr"></i>
-        </button>
-        <div class="ssma-dd-panel" id="graf-setor-panel">
-          <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
-            <button onclick="ssmaGrafSetorAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
-            <button onclick="ssmaGrafSetorNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Limpar</button>
-            <button onclick="ssmaGrafAplicar(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:700;border-radius:var(--radius-sm);border:1px solid var(--dark1);background:var(--dark1);color:var(--yellow);cursor:pointer">Aplicar</button>
-          </div>
-          ${todosSetores.map((s,i)=>`<label class="ssma-dd-item" onclick="ssmaGrafToggleSetor('${esc(s)}',event)">
-            <input type="checkbox" id="gschk-${i}" data-val="${esc(s)}" ${setoresSel.includes(s)?'checked':''}> ${esc(s)}
-          </label>`).join('')}
-        </div>
-      </div>`
-    : '';
+    // Renderiza filtro de setor (div separado — não é destruído)
+    _renderGrafFiltro();
 
-    el.innerHTML=`
-      <!-- Linha 1: filtro de setor -->
-      <div class="ssma-grafico-card" style="margin-bottom:10px;padding:10px 14px">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
-          ${semMapeamento
-            ? `<span style="font-size:11px;color:#9ca3af"><i class="ti ti-info-circle"></i> Configure o vínculo em <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button> para habilitar este filtro.</span>`
-            : setDD}
-        </div>
-      </div>
-      <!-- Linha 2: dois paretos lado a lado -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-        <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head">
-            <div class="ssma-grafico-title">Valores por Classificação de Investimento
-              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
-            </div>
-          </div>
-          <div class="ssma-canvas-wrap"><canvas id="graf-vt"></canvas></div>
-        </div>
-        <div class="ssma-grafico-card">
-          <div class="ssma-grafico-head">
-            <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento
-              <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
-            </div>
-          </div>
-          <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
-        </div>
-      </div>
-      <!-- Linha 3: gráfico dual largura total -->
-      <div class="ssma-grafico-card" style="margin-bottom:14px">
-        <div class="ssma-grafico-head">
-          <div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento
-            <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas com valor)</span>
-          </div>
-        </div>
-        <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
-      </div>`;
-
-    if(vtTotal===0){const cv=document.getElementById('graf-vt');if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;if(window.__ch_grafvt){window.__ch_grafvt.destroy();window.__ch_grafvt=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Nenhum valor registrado',cv.width/2,cv.height/2);}}
-    else{desenharParetoSimples('graf-vt','__ch_grafvt',labelsVT,vtVals,vtCumPct,v=>fmtBRL(v),'Valor (R$)');}
-    if(!labelsQT.length){const cv=document.getElementById('graf-qt');if(cv){cv.width=cv.parentElement?.offsetWidth||500;cv.height=220;if(window.__ch_grafqt){window.__ch_grafqt.destroy();window.__ch_grafqt=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem planos atrasados',cv.width/2,cv.height/2);}}
-    else{desenharParetoEmpilhado('graf-qt','__ch_grafqt',labelsQT,entriesByQt,totais,cumPct);}
-    if(!labelsD3.length){const cv=document.getElementById('graf-dual');if(cv){cv.width=cv.parentElement?.offsetWidth||900;cv.height=260;if(window.__ch_grafdual){window.__ch_grafdual.destroy();window.__ch_grafdual=null;}const ctx=cv.getContext('2d');ctx.clearRect(0,0,cv.width,cv.height);ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados com valor',cv.width/2,cv.height/2);}}
-    else{desenharDual('graf-dual','__ch_grafdual',labelsD3,vtD3,qtD3);}
+    // Desenha os 3 gráficos
+    if(vtTotal===0){
+      _grafMensagem('graf-vt','__ch_grafvt',500,220,'Nenhum valor registrado');
+    } else {
+      desenharParetoSimples('graf-vt','__ch_grafvt',labelsVT,vtVals,vtCumPct,v=>fmtBRL(v),'Valor (R$)');
+    }
+    if(!labelsQT.length){
+      _grafMensagem('graf-qt','__ch_grafqt',500,220,'Sem planos atrasados');
+    } else {
+      desenharParetoEmpilhado('graf-qt','__ch_grafqt',labelsQT,entriesByQt,totais,cumPct);
+    }
+    if(!labelsD3.length){
+      _grafMensagem('graf-dual','__ch_grafdual',900,260,'Sem dados com valor');
+    } else {
+      desenharDual('graf-dual','__ch_grafdual',labelsD3,vtD3,qtD3);
+    }
   }
 
+  function _grafMensagem(id, key, w, h, msg) {
+    const cv=document.getElementById(id); if(!cv) return;
+    cv.width=cv.parentElement?.offsetWidth||w; cv.height=h;
+    if(window[key]){window[key].destroy();window[key]=null;}
+    const ctx=cv.getContext('2d');
+    ctx.clearRect(0,0,cv.width,cv.height);
+    ctx.fillStyle='#9ca3af'; ctx.font='12px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(msg,cv.width/2,cv.height/2);
+  }
+
+  function _renderGrafFiltro() {
+    const wrap = document.getElementById('ssma-graf-filtro-wrap');
+    if(!wrap) return;
+    const todosSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    if(!todosSetores.length) {
+      wrap.innerHTML=`<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
+        <span style="font-size:11px;color:#9ca3af;margin-left:8px">
+          <i class="ti ti-info-circle"></i> Configure em
+          <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button>
+        </span>
+      </div>`;
+      return;
+    }
+    const sel=window._ssmaGrafSetores||[];
+    wrap.innerHTML=`<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
+        <div class="ssma-dd" id="graf-setor-dd">
+          <button class="ssma-dd-btn ${sel.length?'ativo':''}" id="graf-setor-btn" onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
+            <i class="ti ti-building" style="font-size:12px;color:#6b7280"></i>
+            ${sel.length?sel.join(', ').slice(0,32)+(sel.join(', ').length>32?'…':''):'Todos os setores'}
+            ${sel.length?`<span class="dd-badge">${sel.length}</span>`:''}
+            <i class="ti ti-chevron-down arr"></i>
+          </button>
+          <div class="ssma-dd-panel" id="graf-setor-panel">
+            <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
+              <button onclick="ssmaGrafSetorAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
+              <button onclick="ssmaGrafSetorNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Limpar</button>
+              <button onclick="ssmaGrafAplicar(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:700;border-radius:var(--radius-sm);border:1px solid var(--dark1);background:var(--dark1);color:var(--yellow);cursor:pointer">Aplicar ↵</button>
+            </div>
+            ${todosSetores.map((s,i)=>`<label class="ssma-dd-item" onclick="ssmaGrafToggleSetor('${esc(s)}',${i},event)">
+              <input type="checkbox" id="gschk-${i}" ${sel.includes(s)?'checked':''}> ${esc(s)}
+            </label>`).join('')}
+          </div>
+        </div>
+        ${sel.length?`<span style="font-size:10px;color:#6b7280">${dadosGraf ? '' : ''}</span>`:''}
+      </div>
+    </div>`;
+  }
+
+
   window.ssmaGrafToggleSetorDD=function(e){e?.stopPropagation();const p=document.getElementById('graf-setor-panel');const b=document.getElementById('graf-setor-btn');const open=p?.classList.contains('show');document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));if(!open){p?.classList.add('show');b?.classList.add('open');}};
-  window.ssmaGrafToggleSetor=function(val,e){
+  window.ssmaGrafToggleSetor=function(val,idx2,e){
     e?.stopPropagation();
     const arr=window._ssmaGrafSetores||[];
     const i=arr.indexOf(val);
     if(i>=0) arr.splice(i,1); else arr.push(val);
     window._ssmaGrafSetores=arr;
-    // Atualiza visual do checkbox sem re-renderizar
-    const idx2=arr.indexOf(val); // -1 se foi removido
-    const cbs=document.querySelectorAll('#graf-setor-panel input[type=checkbox]');
-    cbs.forEach(cb=>{ if(cb.dataset.val===val) cb.checked=(i<0); });
-    // Atualiza label do botão
-    const btn=document.getElementById('graf-setor-btn');
-    if(btn){
-      const sp=btn.querySelector('span')||btn.childNodes[2];
-      const txt=arr.length ? arr.join(', ').slice(0,28)+(arr.join(', ').length>28?'…':'') : 'Todos os setores';
-      // Atualiza o texto do nó de texto do botão
-      btn.childNodes.forEach(n=>{ if(n.nodeType===3&&n.textContent.trim()) n.textContent=' '+txt+' '; });
-      btn.classList.toggle('ativo', arr.length>0);
-      let badge=btn.querySelector('.dd-badge');
-      if(arr.length>0){ if(!badge){badge=document.createElement('span');badge.className='dd-badge';btn.insertBefore(badge,btn.lastElementChild);} badge.textContent=arr.length; }
-      else if(badge) badge.remove();
-    }
+    // Atualiza só o checkbox clicado
+    const cb=document.getElementById('gschk-'+idx2);
+    if(cb) cb.checked=(i<0);
   };
   window.ssmaGrafSetorAll=function(e){
     e?.stopPropagation();
     window._ssmaGrafSetores=[];
     document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=false);
-    const btn=document.getElementById('graf-setor-btn');
-    if(btn){ btn.classList.remove('ativo'); const badge=btn.querySelector('.dd-badge'); if(badge) badge.remove(); }
   };
   window.ssmaGrafSetorNone=function(e){
     e?.stopPropagation();
-    window._ssmaGrafSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
-    // Marca todos como selecionados
+    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
+    window._ssmaGrafSetores=[...todos];
     document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=true);
   };
   window.ssmaGrafAplicar=function(e){
     e?.stopPropagation();
+    // Lê os checkboxes marcados
+    const cbs=document.querySelectorAll('#graf-setor-panel input[type=checkbox]');
+    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    const marcados=[...cbs].map((cb,i)=>cb.checked?todos[i]:null).filter(Boolean);
+    window._ssmaGrafSetores=marcados;
     // Fecha o painel
     document.getElementById('graf-setor-panel')?.classList.remove('show');
     document.getElementById('graf-setor-btn')?.classList.remove('open');
-    // Re-renderiza gráficos com os setores selecionados
+    // Re-renderiza
     renderGraficos();
   };
 
