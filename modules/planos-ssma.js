@@ -510,9 +510,7 @@
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
           </div>
         </div>
-        <div style="height:280px;position:relative">
-          <canvas id="graf-vt" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
-        </div>
+        <canvas id="graf-vt"></canvas>
       </div>
 
       <div class="ssma-grafico-card" id="graf-card-qt">
@@ -521,9 +519,7 @@
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
           </div>
         </div>
-        <div style="height:280px;position:relative">
-          <canvas id="graf-qt" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
-        </div>
+        <canvas id="graf-qt"></canvas>
       </div>
 
       <div class="ssma-grafico-card" id="graf-card-dual">
@@ -532,9 +528,7 @@
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span>
           </div>
         </div>
-        <div style="height:280px;position:relative">
-          <canvas id="graf-dual" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
-        </div>
+        <canvas id="graf-dual"></canvas>
       </div>
 
       <div class="ssma-grafico-card" id="graf-card-tabela">
@@ -543,7 +537,7 @@
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span>
           </div>
         </div>
-        <div id="graf-tabela-wrap" style="overflow:auto;max-height:280px"></div>
+        <div id="graf-tabela-wrap" style="overflow:auto;max-height:300px"></div>
       </div>
 
     </div>
@@ -1241,8 +1235,8 @@
 
   function _grafMensagem(id, key, w, h, msg) {
     const cv=document.getElementById(id); if(!cv) return;
-    cv.width  = cv.parentElement?.offsetWidth  || 500;
-    cv.height = cv.parentElement?.offsetHeight || 280;
+    cv.width  = cv.parentElement?.clientWidth || 500;
+    cv.height = 280;
     if(window[key]){window[key].destroy();window[key]=null;}
     const ctx=cv.getContext('2d');
     ctx.clearRect(0,0,cv.width,cv.height);
@@ -1260,8 +1254,10 @@
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;
-    canvas.height=canvas.parentElement?.offsetHeight||280;
+    // card width real — canvas é filho direto do card
+    const _cardW = canvas.parentElement?.clientWidth || 500;
+    canvas.width  = _cardW;
+    canvas.height = 280;
     const ctx=canvas.getContext('2d');
     if(!vals.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...vals);
@@ -1328,8 +1324,10 @@
   function desenharParetoEmpilhado(canvasId,chartKey,labels,entries,totais,cumPct){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;
-    canvas.height=canvas.parentElement?.offsetHeight||280;
+    // card width real — canvas é filho direto do card
+    const _cardW = canvas.parentElement?.clientWidth || 500;
+    canvas.width  = _cardW;
+    canvas.height = 280;
     const ctx=canvas.getContext('2d');
     if(!entries.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...totais);
@@ -1397,8 +1395,10 @@
   function desenharDual(canvasId,chartKey,labels,vtVals,qtVals){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;
-    canvas.height=canvas.parentElement?.offsetHeight||280;
+    // card width real — canvas é filho direto do card
+    const _cardW = canvas.parentElement?.clientWidth || 500;
+    canvas.width  = _cardW;
+    canvas.height = 280;
     const ctx=canvas.getContext('2d');
     if(!labels.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVT=Math.max(...vtVals), maxQT=Math.max(...qtVals);
