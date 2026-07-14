@@ -500,30 +500,7 @@
 
   <div class="ssma-chips" id="ssma-chips"></div>
   <!-- Filtro de setor dos gráficos — separado para não ser destruído no re-render -->
-  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px;display:none">
-    <div class="ssma-grafico-card" style="padding:10px 14px">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">
-          Filtrar gráficos por setor:
-        </span>
-        <select id="graf-setor-select" multiple
-          style="min-width:200px;max-width:400px;height:80px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;padding:4px;background:var(--bg);color:#374151;accent-color:var(--yellow)"
-          onchange="grafSetorAplicar()">
-        </select>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button onclick="grafSetorTodos()" style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">
-            Todos
-          </button>
-          <button onclick="grafSetorNenhum()" style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">
-            Nenhum
-          </button>
-        </div>
-        <span style="font-size:10px;color:#9ca3af;max-width:160px;line-height:1.4">
-          Segure Ctrl para selecionar múltiplos setores
-        </span>
-      </div>
-    </div>
-  </div>
+  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px"></div>
   <!-- Container dos gráficos -->
   <div id="ssma-graficos-area">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
@@ -535,10 +512,14 @@
         <div class="ssma-grafico-head"><div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span></div></div>
         <div class="ssma-canvas-wrap"><canvas id="graf-qt"></canvas></div>
       </div>
-    </div>
-    <div class="ssma-grafico-card" style="margin-bottom:14px" id="graf-card-dual">
-      <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · apenas com valor)</span></div></div>
-      <div class="ssma-canvas-wrap" style="height:260px"><canvas id="graf-dual"></canvas></div>
+      <div class="ssma-grafico-card" id="graf-card-dual">
+        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span></div></div>
+        <div class="ssma-canvas-wrap" style="height:240px"><canvas id="graf-dual"></canvas></div>
+      </div>
+      <div class="ssma-grafico-card" id="graf-card-tabela">
+        <div class="ssma-grafico-head"><div class="ssma-grafico-title">Valor por Setor e Classificação <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span></div></div>
+        <div id="graf-tabela-wrap" style="overflow-x:auto;max-height:260px;overflow-y:auto"></div>
+      </div>
     </div>
   </div>
 
@@ -962,76 +943,335 @@
   function renderGraficos() {
     const hoje = new Date(); hoje.setHours(0,0,0,0);
 
-    // Exclui concluídos e cancelados
+    // Base: atrasados excluindo concluídos e cancelados
     const atrasados = DB.filter(p => {
-      const st=(p.status||'').toLowerCase();
-      if(st.includes('conclu')||st.includes('cancel')) return false;
-      if(!p.prazo) return false;
-      const pts=p.prazo.split('/'); if(pts.length!==3) return false;
-      const d=new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
-      return !isNaN(d)&&(d-hoje)/86400000<0;
+      const st = (p.status||'').toLowerCase();
+      if (st.includes('conclu') || st.includes('cancel')) return false;
+      if (!p.prazo) return false;
+      const pts = p.prazo.split('/'); if (pts.length!==3) return false;
+      const d = new Date(`${pts[2]}-${pts[1]}-${pts[0]}T12:00:00`);
+      return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Aplica filtro de setor
-    // Lê seleção atual do select nativo
-    const selectEl = document.getElementById('graf-setor-select');
-    const setoresSel = selectEl
-      ? [...selectEl.selectedOptions].map(o=>o.value)
-      : (window._ssmaGrafSetores||[]);
-    const dadosGraf  = setoresSel.length
-      ? atrasados.filter(p=>{
-          const s=(window._ssmaRespSetor||{})[p.responsavel];
-          return s&&setoresSel.includes(s);
+    // Filtro de setor
+    const setoresSel = window._ssmaGrafSetores || [];
+
+    // Aviso se nenhum setor selecionado (quando há mapeamento)
+    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    const temMapeamento = todosSetores.length > 0;
+    const nenhumSelecionado = temMapeamento && setoresSel.length === 0;
+
+    const dadosGraf = (temMapeamento && setoresSel.length > 0)
+      ? atrasados.filter(p => {
+          const s = (window._ssmaRespSetor||{})[p.responsavel];
+          return s && setoresSel.includes(s);
         })
-      : atrasados;
+      : (nenhumSelecionado ? [] : atrasados);
 
-    // Agrupa: reclassificacao > classificacao > PENDENTE CLASSIF
-    const grupos={};
-    dadosGraf.forEach(p=>{
-      const raw=p.reclassificacao||p.classificacao||'PENDENTE CLASSIF';
-      const key=raw==='Não classificado'?'PENDENTE CLASSIF':raw;
-      if(!grupos[key]) grupos[key]={Alto:0,Médio:0,Baixo:0,total:0,vt:0};
-      const risco=p.risco||'Sem risco';
-      if(grupos[key][risco]!==undefined) grupos[key][risco]++; else grupos[key][risco]=1;
+    // Agrupa por classificação efetiva (rec > classif), excluindo pendentes e sem classif
+    const grupos = {};
+    dadosGraf.forEach(p => {
+      const rec = (p.reclassificacao||'').trim();
+      const cl  = (p.classificacao||'').trim();
+      const key = rec || cl;
+      if (!key) return; // sem classificação — não entra
+      if (key === 'PENDENTE CLASSIF' || key === 'Não classificado') return;
+      if (!grupos[key]) grupos[key] = {Alto:0,Médio:0,Baixo:0,total:0,vt:0};
+      const risco = p.risco||'Sem risco';
+      if (grupos[key][risco]!==undefined) grupos[key][risco]++; else grupos[key][risco]=1;
       grupos[key].total++;
-      grupos[key].vt+=calcValorTotal(p).total;
+      grupos[key].vt += calcValorTotal(p).total;
     });
 
-    const entriesByVT=Object.entries(grupos).filter(([,g])=>g.vt>0).sort((a,b)=>b[1].vt-a[1].vt);
-    const entriesByQt=Object.entries(grupos).filter(([,g])=>g.total>0).sort((a,b)=>b[1].total-a[1].total);
+    // Ordena por valor decrescente (gráficos 1 e 3) e por quantidade (gráfico 2)
+    const entriesByVT = Object.entries(grupos).filter(([,g])=>g.vt>0).sort((a,b)=>b[1].vt-a[1].vt);
+    const entriesByQt = Object.entries(grupos).filter(([,g])=>g.total>0).sort((a,b)=>b[1].total-a[1].total);
 
-    const labelsVT=entriesByVT.map(e=>e[0]);
-    const vtVals=entriesByVT.map(e=>e[1].vt);
-    const vtTotal=vtVals.reduce((a,b)=>a+b,0);
-    const vtCumPct=vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
+    const labelsVT  = entriesByVT.map(e=>e[0]);
+    const vtVals    = entriesByVT.map(e=>e[1].vt);
+    const vtTotal   = vtVals.reduce((a,b)=>a+b,0);
+    const vtCumPct  = vtVals.map((v,i)=>vtVals.slice(0,i+1).reduce((a,b)=>a+b,0)/(vtTotal||1)*100);
 
-    const labelsQT=entriesByQt.map(e=>e[0]);
-    const totais=entriesByQt.map(e=>e[1].total);
-    const qtTotal=totais.reduce((a,b)=>a+b,0);
-    const cumPct=totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
+    const labelsQT  = entriesByQt.map(e=>e[0]);
+    const totais    = entriesByQt.map(e=>e[1].total);
+    const qtTotal   = totais.reduce((a,b)=>a+b,0);
+    const cumPct    = totais.map((v,i)=>totais.slice(0,i+1).reduce((a,b)=>a+b,0)/(qtTotal||1)*100);
 
-    const labelsD3=entriesByVT.map(e=>e[0]);
-    const vtD3=entriesByVT.map(e=>e[1].vt);
-    const qtD3=entriesByVT.map(e=>e[1].total);
+    const labelsD3  = entriesByVT.map(e=>e[0]);
+    const vtD3      = entriesByVT.map(e=>e[1].vt);
+    const qtD3      = entriesByVT.map(e=>e[1].total);
 
+    // Renderiza filtro de setor
+    _renderGrafFiltro(todosSetores, setoresSel);
 
-    // Desenha os 3 gráficos
-    if(vtTotal===0){
-      _grafMensagem('graf-vt','__ch_grafvt',500,220,'Nenhum valor registrado');
-    } else {
-      desenharParetoSimples('graf-vt','__ch_grafvt',labelsVT,vtVals,vtCumPct,v=>fmtBRL(v),'Valor (R$)');
+    // Mensagem se nenhum setor selecionado
+    if (nenhumSelecionado) {
+      ['graf-vt','graf-qt','graf-dual'].forEach(id=>{
+        _grafMensagem(id, '__ch_'+id.replace('-',''), 500, 220, 'Selecione pelo menos um setor para exibir');
+      });
+      document.getElementById('graf-tabela-wrap').innerHTML =
+        '<div style="padding:32px;text-align:center;color:#9ca3af;font-size:12px">Selecione pelo menos um setor para exibir</div>';
+      return;
     }
-    if(!labelsQT.length){
-      _grafMensagem('graf-qt','__ch_grafqt',500,220,'Sem planos atrasados');
-    } else {
-      desenharParetoEmpilhado('graf-qt','__ch_grafqt',labelsQT,entriesByQt,totais,cumPct);
-    }
-    if(!labelsD3.length){
-      _grafMensagem('graf-dual','__ch_grafdual',900,260,'Sem dados com valor');
-    } else {
-      desenharDual('graf-dual','__ch_grafdual',labelsD3,vtD3,qtD3);
-    }
+
+    // Gráfico 1: Valores
+    if (vtTotal===0) _grafMensagem('graf-vt','__ch_grafvt',500,220,'Nenhum valor registrado');
+    else desenharParetoSimples('graf-vt','__ch_grafvt',labelsVT,vtVals,vtCumPct,v=>fmtBRL(v),'Valor (R$)');
+
+    // Gráfico 2: Quantidade
+    if (!labelsQT.length) _grafMensagem('graf-qt','__ch_grafqt',500,220,'Sem planos atrasados com classificação');
+    else desenharParetoEmpilhado('graf-qt','__ch_grafqt',labelsQT,entriesByQt,totais,cumPct);
+
+    // Gráfico 3: Dual
+    if (!labelsD3.length) _grafMensagem('graf-dual','__ch_grafdual',500,240,'Sem dados com valor');
+    else desenharDual('graf-dual','__ch_grafdual',labelsD3,vtD3,qtD3);
+
+    // Gráfico 4: Tabela
+    _renderTabelaSetores(dadosGraf, setoresSel, todosSetores);
   }
+
+
+  function _renderGrafFiltro(todosSetores, sel) {
+    const wrap = document.getElementById('ssma-graf-filtro-wrap');
+    if (!wrap) return;
+
+    if (!todosSetores.length) {
+      wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px;display:flex;align-items:center;gap:8px">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
+        <span style="font-size:11px;color:#9ca3af"><i class="ti ti-info-circle"></i> Configure em
+          <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button>
+          para habilitar este filtro.</span>
+      </div>`;
+      return;
+    }
+
+    const nenhum = sel.length === 0;
+    const labelTxt = nenhum ? 'Nenhum setor' :
+      sel.length === todosSetores.length ? 'Todos os setores' :
+      sel.length <= 2 ? sel.join(', ') :
+      sel[0]+' +' + (sel.length-1);
+
+    // Só re-renderiza se mudou (evita fechar o painel aberto)
+    const existing = document.getElementById('graf-setor-dd');
+    if (existing) {
+      // Só atualiza o label e badge sem destruir o painel
+      const btn = document.getElementById('graf-setor-btn');
+      if (btn) {
+        btn.className = 'ssma-dd-btn' + (nenhum?'':sel.length<todosSetores.length?' ativo':'');
+        // Atualiza texto (3º nó de texto)
+        const textNode = [...btn.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());
+        if (textNode) textNode.textContent = ' '+labelTxt+' ';
+        // Badge
+        let badge = btn.querySelector('.dd-badge');
+        if (!nenhum && sel.length < todosSetores.length) {
+          if (!badge) { badge=document.createElement('span'); badge.className='dd-badge'; btn.appendChild(badge); }
+          badge.textContent = sel.length;
+        } else if (badge) badge.remove();
+      }
+      // Atualiza checkboxes
+      todosSetores.forEach((s,i) => {
+        const cb = document.getElementById('gfchk-'+i);
+        if (cb) cb.checked = sel.includes(s);
+      });
+      return;
+    }
+
+    // Primeira renderização
+    wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
+        <div class="ssma-dd" id="graf-setor-dd">
+          <button class="ssma-dd-btn ${nenhum?'alert-btn':sel.length<todosSetores.length?'ativo':''}"
+            id="graf-setor-btn"
+            onclick="gfToggleDD(event)"
+            style="${nenhum?'border-color:#dc2626;background:#fff1f2;':''}"
+          >
+            <i class="ti ti-building" style="font-size:13px;color:#6b7280"></i>
+            ${esc(labelTxt)}
+            ${!nenhum&&sel.length>0&&sel.length<todosSetores.length?`<span class="dd-badge">${sel.length}</span>`:''}
+            ${nenhum?`<i class="ti ti-alert-triangle" style="font-size:12px;color:#dc2626"></i>`:''}
+            <i class="ti ti-chevron-down arr"></i>
+          </button>
+          <div class="ssma-dd-panel" id="graf-setor-panel">
+            <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
+              <button onclick="gfSelectAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
+              <button onclick="gfSelectNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Nenhum</button>
+            </div>
+            ${todosSetores.map((s,i)=>`
+              <label class="ssma-dd-item" onclick="gfToggleItem(${i},event)">
+                <input type="checkbox" id="gfchk-${i}" style="accent-color:var(--yellow);pointer-events:none" ${sel.includes(s)?'checked':''}> ${esc(s)}
+              </label>`).join('')}
+          </div>
+        </div>
+        ${nenhum?`<span style="font-size:11px;color:#dc2626;font-weight:600"><i class="ti ti-alert-triangle"></i> Selecione pelo menos um setor para exibir os gráficos</span>`:''}
+      </div>
+    </div>`;
+  }
+
+  // Funções do dropdown de setor — simples, sem re-render
+  window.gfToggleDD = function(e) {
+    e.stopPropagation();
+    const panel = document.getElementById('graf-setor-panel');
+    const btn   = document.getElementById('graf-setor-btn');
+    if (!panel) return;
+    const open = panel.classList.contains('show');
+    // Fecha outros dropdowns
+    document.querySelectorAll('.ssma-dd-panel.show').forEach(p=>p.classList.remove('show'));
+    document.querySelectorAll('.ssma-dd-btn.open').forEach(b=>b.classList.remove('open'));
+    if (!open) { panel.classList.add('show'); btn?.classList.add('open'); }
+  };
+
+  window.gfToggleItem = function(idx2, e) {
+    e.stopPropagation();
+    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    const s = todosSetores[idx2];
+    const arr = window._ssmaGrafSetores || [];
+    const pos = arr.indexOf(s);
+    if (pos>=0) arr.splice(pos,1); else arr.push(s);
+    window._ssmaGrafSetores = arr;
+    // Atualiza só o checkbox sem fechar painel
+    const cb = document.getElementById('gfchk-'+idx2);
+    if (cb) cb.checked = pos<0;
+    // Aplica imediatamente
+    renderGraficos();
+  };
+
+  window.gfSelectAll = function(e) {
+    e.stopPropagation();
+    window._ssmaGrafSetores = [];
+    document.querySelectorAll('[id^="gfchk-"]').forEach(cb=>cb.checked=false);
+    renderGraficos();
+  };
+
+  window.gfSelectNone = function(e) {
+    e.stopPropagation();
+    window._ssmaGrafSetores = [];
+    document.querySelectorAll('[id^="gfchk-"]').forEach(cb=>cb.checked=false);
+    // Fecha painel
+    document.getElementById('graf-setor-panel')?.classList.remove('show');
+    document.getElementById('graf-setor-btn')?.classList.remove('open');
+    renderGraficos();
+  };
+
+  function _renderTabelaSetores(dadosGraf, setoresSel, todosSetores) {
+    const wrap = document.getElementById('graf-tabela-wrap');
+    if (!wrap) return;
+
+    // Determina setores a mostrar
+    const setoresMostrar = (setoresSel.length > 0 && setoresSel.length < todosSetores.length)
+      ? setoresSel
+      : todosSetores;
+
+    if (!setoresMostrar.length) {
+      wrap.innerHTML='<div style="padding:20px;text-align:center;color:#9ca3af;font-size:11px">Configure o mapeamento Resp. → Setor</div>';
+      return;
+    }
+
+    // Acumula valores por setor e classificação
+    // Estrutura: { setor: { CAPEX: val, OPEX: val, ... } }
+    const tabDados = {};
+    setoresMostrar.forEach(s => tabDados[s] = {});
+
+    dadosGraf.forEach(p => {
+      const setor = (window._ssmaRespSetor||{})[p.responsavel];
+      if (!setor || !setoresMostrar.includes(setor)) return;
+      const rec = (p.reclassificacao||'').trim();
+      const cl  = (p.classificacao||'').trim();
+      const classif = rec || cl;
+      if (!classif || classif==='PENDENTE CLASSIF' || classif==='Não classificado') return;
+      const vt = calcValorTotal(p).total;
+      if (!tabDados[setor][classif]) tabDados[setor][classif] = 0;
+      tabDados[setor][classif] += vt;
+    });
+
+    // Classificações com valor (colunas)
+    const classifs = [...new Set(
+      Object.values(tabDados).flatMap(d=>Object.keys(d))
+    )].sort();
+
+    if (!classifs.length) {
+      wrap.innerHTML='<div style="padding:20px;text-align:center;color:#9ca3af;font-size:11px">Sem valores registrados para os setores selecionados</div>';
+      return;
+    }
+
+    // Totais por coluna e total geral
+    const totCols = {};
+    classifs.forEach(cl=>{ totCols[cl]=0; });
+    let totGeral = 0;
+    setoresMostrar.forEach(s=>{
+      classifs.forEach(cl=>{
+        const v = tabDados[s][cl]||0;
+        totCols[cl]+=v; totGeral+=v;
+      });
+    });
+
+    // Estado de ordenação da tabela
+    if (!window._tabSort) window._tabSort = { col:'setor', dir:1 };
+
+    // Ordena setores
+    let linhas = setoresMostrar.map(s=>{
+      const total = classifs.reduce((sum,cl)=>sum+(tabDados[s][cl]||0),0);
+      return { setor:s, vals:classifs.map(cl=>tabDados[s][cl]||0), total };
+    });
+    const ts = window._tabSort;
+    linhas.sort((a,b)=>{
+      let va,vb;
+      if (ts.col==='setor') { va=a.setor; vb=b.setor; }
+      else if (ts.col==='total') { va=a.total; vb=b.total; }
+      else { const i=classifs.indexOf(ts.col); va=a.vals[i]||0; vb=b.vals[i]||0; }
+      if (va<vb) return -ts.dir; if (va>vb) return ts.dir; return 0;
+    });
+
+    function thSort(col,lbl) {
+      const at = ts.col===col;
+      const ico = at?(ts.dir===1?'↑':'↓'):'⇅';
+      return `<th onclick="tabSort('${esc(col)}')" style="padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:${at?'var(--yellow-dk)':'#4b5563'};cursor:pointer;white-space:nowrap;background:var(--bg);text-align:right">${esc(lbl)} <span style="font-size:9px">${ico}</span></th>`;
+    }
+
+    const rows = linhas.map(l=>{
+      const pct = totGeral>0?(l.total/totGeral*100).toFixed(1):'0.0';
+      return `<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;font-weight:600;color:#374151;white-space:nowrap">${esc(l.setor)}</td>
+        ${l.vals.map(v=>`<td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;text-align:right;color:${v>0?'#111':'#9ca3af'}">${v>0?fmtBRL(v):'—'}</td>`).join('')}
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;text-align:right;font-weight:600">${fmtBRL(l.total)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;text-align:right;color:#6b7280">${pct}%</td>
+      </tr>`;
+    }).join('');
+
+    const totRow = `<tr style="background:var(--bg);font-weight:700">
+      <td style="padding:6px 8px;font-size:11px;font-weight:700;color:#111;border-top:2px solid var(--border)">TOTAL</td>
+      ${classifs.map(cl=>`<td style="padding:6px 8px;font-size:11px;text-align:right;border-top:2px solid var(--border)">${fmtBRL(totCols[cl])}</td>`).join('')}
+      <td style="padding:6px 8px;font-size:11px;text-align:right;border-top:2px solid var(--border)">${fmtBRL(totGeral)}</td>
+      <td style="padding:6px 8px;font-size:11px;text-align:right;border-top:2px solid var(--border);color:#6b7280">100%</td>
+    </tr>`;
+
+    const pctRow = `<tr style="background:#fffbeb">
+      <td style="padding:4px 8px;font-size:10px;color:#6b7280;font-weight:600">% DO TOTAL</td>
+      ${classifs.map(cl=>`<td style="padding:4px 8px;font-size:10px;text-align:right;color:#6b7280">${totGeral>0?(totCols[cl]/totGeral*100).toFixed(1)+'%':'—'}</td>`).join('')}
+      <td style="padding:4px 8px;font-size:10px;text-align:right;color:#6b7280">100%</td>
+      <td style="padding:4px 8px"></td>
+    </tr>`;
+
+    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th onclick="tabSort('setor')" style="padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:${ts.col==='setor'?'var(--yellow-dk)':'#4b5563'};cursor:pointer;text-align:left;background:var(--bg);white-space:nowrap">
+          Setor <span style="font-size:9px">${ts.col==='setor'?(ts.dir===1?'↑':'↓'):'⇅'}</span>
+        </th>
+        ${classifs.map(cl=>thSort(cl,cl)).join('')}
+        ${thSort('total','Total')}
+        <th style="padding:6px 8px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;text-transform:uppercase;color:#4b5563;background:var(--bg);text-align:right">% Total</th>
+      </tr></thead>
+      <tbody>${rows}${totRow}${pctRow}</tbody>
+    </table>`;
+  }
+
+  window.tabSort = function(col) {
+    if (!window._tabSort) window._tabSort={col:'setor',dir:1};
+    if (window._tabSort.col===col) window._tabSort.dir*=-1;
+    else { window._tabSort.col=col; window._tabSort.dir=-1; } // começa decrescente (maior primeiro)
+    renderGraficos();
+  };
+
 
   function _grafMensagem(id, key, w, h, msg) {
     const cv=document.getElementById(id); if(!cv) return;
@@ -1047,32 +1287,43 @@
 
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=220;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=240;
     const ctx=canvas.getContext('2d');
     if(!vals.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...vals);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
     window[chartKey]=new Chart(ctx,{
       data:{labels,datasets:[
-        {type:'bar',label:yLabel,data:vals,backgroundColor:'#F8C100',borderColor:'#d4a000',borderWidth:1,yAxisID:'y',order:2,
-          datalabels:{display:true,color:'#374151',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:1,clamp:true,formatter:v=>fmtTick(v)}},
-        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#C8102E',backgroundColor:'rgba(200,16,46,.07)',borderWidth:2,pointRadius:3,pointBackgroundColor:'#C8102E',fill:false,tension:.3,yAxisID:'y2',order:1,
-          datalabels:{display:true,color:'#C8102E',font:{size:8,weight:'700'},anchor:'top',align:'top',offset:4,formatter:v=>v.toFixed(0)+'%'}}
+        {type:'bar',label:yLabel,data:vals,backgroundColor:'rgba(248,193,0,0.85)',borderColor:'#d4a000',borderWidth:1,yAxisID:'y',order:2,
+          datalabels:{display:true,color:'#1a1a1a',font:{size:9,weight:'700'},anchor:'end',align:'top',offset:2,clamp:true,
+            formatter:v=>fmtTick(v),
+            backgroundColor:'rgba(255,255,255,0.75)',borderRadius:3,padding:{top:1,bottom:1,left:3,right:3}}},
+        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#C8102E',backgroundColor:'rgba(200,16,46,.07)',
+          borderWidth:2,pointRadius:4,pointBackgroundColor:'#C8102E',fill:false,tension:.3,yAxisID:'y2',order:1,
+          datalabels:{display:true,color:'#fff',backgroundColor:'#C8102E',borderRadius:3,font:{size:8,weight:'700'},
+            anchor:'center',align:'center',padding:{top:1,bottom:1,left:3,right:3},
+            formatter:v=>v.toFixed(0)+'%'}}
       ]},
-      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      options:{responsive:false,maintainAspectRatio:false,layout:{padding:{top:24}},
+        interaction:{mode:'index',intersect:false},
         plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
-          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},datalabels:{}},
+          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},
+          datalabels:{}},
         scales:{
-          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},grid:{color:'#e5e7eb'},title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:108,ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:35},grid:{display:false}},
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.45,
+            ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},
+            grid:{color:'#e5e7eb'},title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:110,
+            ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},
+            grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
         }}
     });
   }
 
   function desenharParetoEmpilhado(canvasId,chartKey,labels,entries,totais,cumPct){
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=220;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=240;
     const ctx=canvas.getContext('2d');
     if(!entries.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...totais);
@@ -1082,20 +1333,31 @@
     const baixoData=entries.map(e=>e[1].Baixo||0);
     window[chartKey]=new Chart(ctx,{
       data:{labels,datasets:[
-        {type:'bar',label:'Alto',data:altoData,backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
+        {type:'bar',label:'Alto', data:altoData, backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
         {type:'bar',label:'Médio',data:medioData,backgroundColor:'#f59e0b',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
         {type:'bar',label:'Baixo',data:baixoData,backgroundColor:'#16a34a',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
-          datalabels:{display:true,color:'#1f2937',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:(v,c2)=>totais[c2.dataIndex]>0?String(totais[c2.dataIndex]):''}},
-        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',borderWidth:2,pointRadius:3,pointBackgroundColor:'#1d4ed8',fill:false,tension:.3,yAxisID:'y2',order:1,
-          datalabels:{display:true,color:'#1d4ed8',font:{size:8,weight:'700'},anchor:'top',align:'top',offset:4,formatter:v=>v.toFixed(0)+'%'}}
+          datalabels:{display:true,color:'#1a1a1a',font:{size:9,weight:'700'},anchor:'end',align:'top',offset:2,clamp:true,
+            backgroundColor:'rgba(255,255,255,0.75)',borderRadius:3,padding:{top:1,bottom:1,left:3,right:3},
+            formatter:(v,c2)=>totais[c2.dataIndex]>0?String(totais[c2.dataIndex]):''}},
+        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',
+          borderWidth:2,pointRadius:4,pointBackgroundColor:'#1d4ed8',fill:false,tension:.3,yAxisID:'y2',order:1,
+          datalabels:{display:true,color:'#fff',backgroundColor:'#1d4ed8',borderRadius:3,font:{size:8,weight:'700'},
+            anchor:'center',align:'center',padding:{top:1,bottom:1,left:3,right:3},
+            formatter:v=>v.toFixed(0)+'%'}}
       ]},
-      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      options:{responsive:false,maintainAspectRatio:false,layout:{padding:{top:24}},
+        interaction:{mode:'index',intersect:false},
         plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10,filter(item){return item.text!=='% Acumulado';}}},
-          tooltip:{callbacks:{label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}}},datalabels:{}},
+          tooltip:{callbacks:{label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}}},
+          datalabels:{}},
         scales:{
-          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.3,stacked:true,ticks:{font:{size:9},color:'#4b5563',precision:0},grid:{color:'#e5e7eb'},title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:108,ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:35},grid:{display:false}},
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.45,stacked:true,
+            ticks:{font:{size:9},color:'#4b5563',precision:0},grid:{color:'#e5e7eb'},
+            title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:110,
+            ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},grid:{display:false},
+            title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
         }}
     });
   }
@@ -1127,39 +1389,13 @@
 
 
   /* ══ Filtro de setor — select nativo ══════════════════════ */
-  window.grafSetorInicializar = function() {
-    const sel = document.getElementById('graf-setor-select');
-    const wrap = document.getElementById('ssma-graf-filtro-wrap');
-    if (!sel || !wrap) return;
-    const todosSetores = [...new Set(
-      Object.values(window._ssmaRespSetor||{}).filter(Boolean)
-    )].sort();
-    if (!todosSetores.length) { wrap.style.display='none'; return; }
-    // Popula as opções
-    sel.innerHTML = todosSetores
-      .map(s=>`<option value="${s.replace(/"/g,'&quot;')}">${s}</option>`)
-      .join('');
-    // Mostra o wrapper
-    wrap.style.display='block';
-  };
 
-  window.grafSetorAplicar = function() {
-    renderGraficos();
-  };
 
-  window.grafSetorTodos = function() {
-    const sel = document.getElementById('graf-setor-select');
-    if (!sel) return;
-    [...sel.options].forEach(o => o.selected = false);
-    renderGraficos();
-  };
 
-  window.grafSetorNenhum = function() {
-    const sel = document.getElementById('graf-setor-select');
-    if (!sel) return;
-    [...sel.options].forEach(o => o.selected = true);
-    renderGraficos();
-  };
+
+
+
+
 
   /* ══ Toggle concluídos ═════════════════════════════════════ */
   window.ssmaToggleConcluidos = function() {
@@ -1207,7 +1443,7 @@
   window.ssmaFecharMapaSetores=function(){document.getElementById('ssma-rs-ov')?.remove();};
   window.ssmaRenderMapaSetores=function(ov){
     const responsaveis=[...new Set(DB.map(p=>p.responsavel).filter(Boolean))].sort();
-    const setoresOpts=[...new Set(['FABRICAÇÃO DE AÇÚCAR','FABRICAÇÃO DE ÁLCOOL','GERAÇÃO/DISTRIBUIÇÃO DE VAPOR','TRATAMENTO DE CALDO','RECEPÇÃO E EXTRAÇÃO','UTILIDADES','MANUTENÇÃO','SSMA','ADMINISTRATIVO','OUTROS',...Object.values(window._ssmaRespSetor||{}).filter(Boolean)])].sort();
+    const setoresOpts=[...new Set(['FABRICAÇÃO DE AÇÚCAR','FABRICAÇÃO DE ÁLCOOL','GERAÇÃO/DISTRIBUIÇÃO DE VAPOR','TRATAMENTO DE CALDO','RECEPÇÃO E EXTRAÇÃO','UTILIDADES','MANUTENÇÃO','MANUTENÇÃO ELÉTRICA','MANUTENÇÃO INDUSTRIAL','SSMA','ADMINISTRATIVO','OUTROS',...Object.values(window._ssmaRespSetor||{}).filter(Boolean)])].sort();
     const rows=responsaveis.map((resp)=>{
       const sa=(window._ssmaRespSetor||{})[resp]||'';
       return`<tr><td style="font-size:11px;padding:5px 7px;border-bottom:1px solid var(--border)">${esc(resp)}</td>
