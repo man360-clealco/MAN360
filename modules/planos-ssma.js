@@ -1017,83 +1017,6 @@
     ctx.fillText(msg,cv.width/2,cv.height/2);
   }
 
-  function _renderGrafFiltro() {
-    const wrap = document.getElementById('ssma-graf-filtro-wrap');
-    if(!wrap) return;
-    const todosSetores=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
-    if(!todosSetores.length) {
-      wrap.innerHTML=`<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
-        <span style="font-size:11px;color:#9ca3af;margin-left:8px">
-          <i class="ti ti-info-circle"></i> Configure em
-          <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button>
-        </span>
-      </div>`;
-      return;
-    }
-    const sel=window._ssmaGrafSetores||[];
-    wrap.innerHTML=`<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
-        <div class="ssma-dd" id="graf-setor-dd">
-          <button class="ssma-dd-btn ${sel.length?'ativo':''}" id="graf-setor-btn" onclick="ssmaGrafToggleSetorDD(event)" style="font-size:11px">
-            <i class="ti ti-building" style="font-size:12px;color:#6b7280"></i>
-            ${sel.length?sel.join(', ').slice(0,32)+(sel.join(', ').length>32?'…':''):'Todos os setores'}
-            ${sel.length?`<span class="dd-badge">${sel.length}</span>`:''}
-            <i class="ti ti-chevron-down arr"></i>
-          </button>
-          <div class="ssma-dd-panel" id="graf-setor-panel">
-            <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
-              <button onclick="ssmaGrafSetorAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
-              <button onclick="ssmaGrafSetorNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Limpar</button>
-              <button onclick="ssmaGrafAplicar(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:700;border-radius:var(--radius-sm);border:1px solid var(--dark1);background:var(--dark1);color:var(--yellow);cursor:pointer">Aplicar ↵</button>
-            </div>
-            ${todosSetores.map((s,i)=>`<label class="ssma-dd-item" onclick="ssmaGrafToggleSetor('${esc(s)}',${i},event)">
-              <input type="checkbox" id="gschk-${i}" ${sel.includes(s)?'checked':''}> ${esc(s)}
-            </label>`).join('')}
-          </div>
-        </div>
-        ${sel.length?`<span style="font-size:10px;color:#6b7280">${dadosGraf ? '' : ''}</span>`:''}
-      </div>
-    </div>`;
-  }
-
-
-  window.ssmaGrafToggleSetorDD=function(e){e?.stopPropagation();const p=document.getElementById('graf-setor-panel');const b=document.getElementById('graf-setor-btn');const open=p?.classList.contains('show');document.querySelectorAll('.ssma-dd-panel.show').forEach(x=>x.classList.remove('show'));if(!open){p?.classList.add('show');b?.classList.add('open');}};
-  window.ssmaGrafToggleSetor=function(val,idx2,e){
-    e?.stopPropagation();
-    const arr=window._ssmaGrafSetores||[];
-    const i=arr.indexOf(val);
-    if(i>=0) arr.splice(i,1); else arr.push(val);
-    window._ssmaGrafSetores=arr;
-    // Atualiza só o checkbox clicado
-    const cb=document.getElementById('gschk-'+idx2);
-    if(cb) cb.checked=(i<0);
-  };
-  window.ssmaGrafSetorAll=function(e){
-    e?.stopPropagation();
-    window._ssmaGrafSetores=[];
-    document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=false);
-  };
-  window.ssmaGrafSetorNone=function(e){
-    e?.stopPropagation();
-    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))];
-    window._ssmaGrafSetores=[...todos];
-    document.querySelectorAll('#graf-setor-panel input[type=checkbox]').forEach(cb=>cb.checked=true);
-  };
-  window.ssmaGrafAplicar=function(e){
-    e?.stopPropagation();
-    // Lê os checkboxes marcados
-    const cbs=document.querySelectorAll('#graf-setor-panel input[type=checkbox]');
-    const todos=[...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
-    const marcados=[...cbs].map((cb,i)=>cb.checked?todos[i]:null).filter(Boolean);
-    window._ssmaGrafSetores=marcados;
-    // Fecha o painel
-    document.getElementById('graf-setor-panel')?.classList.remove('show');
-    document.getElementById('graf-setor-btn')?.classList.remove('open');
-    // Re-renderiza
-    renderGraficos();
-  };
 
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
     const canvas=document.getElementById(canvasId);if(!canvas)return;
@@ -1175,6 +1098,126 @@
     });
   }
 
+
+  /* ══ Filtro de setor dos gráficos ════════════════════════ */
+  function _renderGrafFiltro() {
+    const wrap = document.getElementById('ssma-graf-filtro-wrap');
+    if (!wrap) return;
+    const todosSetores = [...new Set(
+      Object.values(window._ssmaRespSetor||{}).filter(Boolean)
+    )].sort();
+
+    if (!todosSetores.length) {
+      wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0;display:flex;align-items:center;gap:8px">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
+        <span style="font-size:11px;color:#9ca3af">
+          <i class="ti ti-info-circle"></i> Configure em
+          <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button>
+          para habilitar este filtro.
+        </span>
+      </div>`;
+      return;
+    }
+
+    const sel = window._ssmaGrafSetores || [];
+    const labelTxt = sel.length === 0
+      ? 'Todos os setores'
+      : sel.length === todosSetores.length
+        ? 'Todos os setores'
+        : sel.join(', ').length > 35
+          ? sel.join(', ').slice(0,35)+'…'
+          : sel.join(', ');
+
+    wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px;margin-bottom:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">
+          Filtrar gráficos por setor:
+        </span>
+        <div style="position:relative" id="graf-setor-wrap">
+          <button id="graf-setor-btn"
+            onclick="document.getElementById('graf-setor-panel').classList.toggle('show');this.classList.toggle('open')"
+            style="height:30px;padding:0 10px;border:1px solid ${sel.length&&sel.length<todosSetores.length?'var(--yellow)':'var(--border)'};border-radius:var(--radius-sm);background:${sel.length&&sel.length<todosSetores.length?'#fffbeb':'var(--bg)'};font-family:var(--font);font-size:11px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;color:#374151;white-space:nowrap">
+            <i class="ti ti-building" style="font-size:13px;color:#6b7280"></i>
+            ${esc(labelTxt)}
+            ${sel.length&&sel.length<todosSetores.length?`<span style="background:var(--yellow);color:var(--dark1);border-radius:10px;font-size:9px;font-weight:700;padding:1px 5px">${sel.length}</span>`:''}
+            <i class="ti ti-chevron-down" style="font-size:10px;margin-left:2px"></i>
+          </button>
+          <div id="graf-setor-panel" style="position:absolute;top:calc(100% + 4px);left:0;min-width:220px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-md);z-index:400;display:none">
+            <div style="display:flex;gap:6px;padding:7px 8px;border-bottom:1px solid var(--border)">
+              <button onclick="grafSetorMarcarTodos()" style="flex:1;height:24px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">
+                Selecionar todos
+              </button>
+              <button onclick="grafSetorLimpar()" style="flex:1;height:24px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">
+                Limpar
+              </button>
+            </div>
+            ${todosSetores.map((s,i) => `
+              <label style="display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:11px;font-weight:500;color:#374151;cursor:pointer;user-select:none" onclick="grafSetorToggle(${i});event.preventDefault()">
+                <input type="checkbox" id="gschk-${i}" style="accent-color:var(--yellow);pointer-events:none" ${sel.includes(s)?'checked':''}>
+                ${esc(s)}
+              </label>`).join('')}
+            <div style="padding:7px 8px;border-top:1px solid var(--border)">
+              <button onclick="grafSetorAplicar()" style="width:100%;height:28px;font-size:11px;font-family:var(--font);font-weight:700;border-radius:var(--radius-sm);border:none;background:var(--dark1);color:var(--yellow);cursor:pointer">
+                ↵ Aplicar filtro
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    // Fecha ao clicar fora
+    setTimeout(() => {
+      const handler = e => {
+        const wrap2 = document.getElementById('graf-setor-wrap');
+        if (wrap2 && !wrap2.contains(e.target)) {
+          document.getElementById('graf-setor-panel')?.classList.remove('show');
+          document.removeEventListener('click', handler);
+        }
+      };
+      document.addEventListener('click', handler);
+    }, 10);
+  }
+
+  // _ssmaGrafSetoresDraft: seleção temporária enquanto o painel está aberto
+  window._ssmaGrafSetoresDraft = null;
+
+  window.grafSetorToggle = function(idx2) {
+    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    // Inicializa draft na primeira interação
+    if (window._ssmaGrafSetoresDraft === null) {
+      window._ssmaGrafSetoresDraft = [...(window._ssmaGrafSetores||[])];
+    }
+    const s = todosSetores[idx2];
+    const draft = window._ssmaGrafSetoresDraft;
+    const pos = draft.indexOf(s);
+    if (pos >= 0) draft.splice(pos, 1); else draft.push(s);
+    // Atualiza só o checkbox
+    const cb = document.getElementById('gschk-' + idx2);
+    if (cb) cb.checked = draft.includes(s);
+  };
+
+  window.grafSetorMarcarTodos = function() {
+    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    window._ssmaGrafSetoresDraft = [];  // vazio = todos
+    document.querySelectorAll('[id^="gschk-"]').forEach(cb => cb.checked = false);
+  };
+
+  window.grafSetorLimpar = function() {
+    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
+    window._ssmaGrafSetoresDraft = [...todosSetores];
+    document.querySelectorAll('[id^="gschk-"]').forEach((cb, i) => cb.checked = true);
+  };
+
+  window.grafSetorAplicar = function() {
+    // Se draft foi inicializado, aplica; senão mantém o atual
+    if (window._ssmaGrafSetoresDraft !== null) {
+      window._ssmaGrafSetores = [...window._ssmaGrafSetoresDraft];
+      window._ssmaGrafSetoresDraft = null;
+    }
+    document.getElementById('graf-setor-panel')?.classList.remove('show');
+    renderGraficos();
+  };
 
   /* ══ Toggle concluídos ═════════════════════════════════════ */
   window.ssmaToggleConcluidos = function() {
