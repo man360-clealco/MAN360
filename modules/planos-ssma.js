@@ -128,8 +128,6 @@
     window._ssmaRespSetor = {};
     (rRS.data||[]).forEach(x => { window._ssmaRespSetor[x.responsavel] = x.setor; });
     if (!window._ssmaGrafSetores) window._ssmaGrafSetores = [];
-    // Inicializa o select de setores
-    grafSetorInicializar();
     MODS = rMods.data || [];
     const mm={}, am={}, sm={};
     (rM.data||[]).forEach(x => mm[x.codigo]=x);
