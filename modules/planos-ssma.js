@@ -1552,6 +1552,77 @@
     hhEditando=null; renderHH(ov); ov.style.display='flex';
   };
   window.ssmaAbrirModal = function(codigo) { modalCodigo=codigo; modalTab='geral'; aqEditando=null; svEditando=null; renderModal(); };
+  window.ssmaAlterarReclassif = async function(val) {
+    const p=DB.find(d=>d.codigo===modalCodigo); if(!p) return;
+    p.reclassificacao=val;
+    await dbUpsert('ssma_manual',[{codigo:modalCodigo,reclassificacao:val,atualizado_em:new Date().toISOString()}],'codigo');
+    renderModal();
+  };
+  window.ssmaAqCancelar = ()=> { aqEditando=null; ssmaMudarTab('aquisicoes'); };
+  window.ssmaAqRemover = async function(i) {
+    if(!confirm('Remover este item?')) return;
+    const p=DB.find(d=>d.codigo===modalCodigo); const item=p._aquisicoes[i];
+    if(item?.id) await getDB().from('ssma_aquisicoes').delete().eq('id',item.id);
+    p._aquisicoes.splice(i,1); aqEditando=null; ssmaMudarTab('aquisicoes');
+  };
+  window.ssmaAqSalvar = async function(i) {
+    const p=DB.find(d=>d.codigo===modalCodigo);
+    const dados={
+      sem_cadastro: document.getElementById('aq-sc')?.checked||false,
+      cod_item:     document.getElementById('aq-cod')?.value.trim()||'',
+      descricao:    document.getElementById('aq-desc')?.value.trim()||'',
+      modalidade:   document.getElementById('aq-mod')?.value||'',
+      qtd:          parseFloat(document.getElementById('aq-qtd')?.value)||0,
+      valor_unit:   parseFloat(String(document.getElementById('aq-vunit')?.value||'').replace(',','.'))||0,
+    };
+    if (i===-1) { const {data}=await getDB().from('ssma_aquisicoes').insert({codigo:modalCodigo,...dados}).select(); if(data) p._aquisicoes.push(data[0]); }
+    else { const item=p._aquisicoes[i]; if(item?.id) await getDB().from('ssma_aquisicoes').update(dados).eq('id',item.id); Object.assign(p._aquisicoes[i],dados); }
+    aqEditando=null; ssmaMudarTab('aquisicoes');
+  };
+  window.ssmaAqToggleSC = ()=> { const cb=document.getElementById('aq-sc'); const cod=document.getElementById('aq-cod'); if(cod){cod.disabled=cb?.checked; if(cb?.checked) cod.value='';} };
+  window.ssmaFecharModal = function() { aqEditando=null; svEditando=null; const ov=document.getElementById('ssma-modal-ov'); if(ov) ov.style.display='none'; renderLista(); renderGraficos(); };
+  window.ssmaHHCancelar= ()=>{ hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); };
+  window.ssmaHHRemover = async function(i){
+    if(!confirm('Remover?')) return;
+    const m=MODS[i]; if(m.id) await getDB().from('ssma_modalidades').delete().eq('id',m.id);
+    MODS.splice(i,1); hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); popularDDs();
+  };
+  window.ssmaHHSalvar = async function(i){
+    const nome=document.getElementById('hh-nome')?.value.trim()||'';
+    const val=parseFloat(document.getElementById('hh-val')?.value)||0;
+    if(!nome){ showToastMod('Nome obrigatório','erro'); return; }
+    if(i===-1){ const {data}=await getDB().from('ssma_modalidades').insert({nome,valor_hh:val}).select(); if(data) MODS.push(data[0]); }
+    else { const m=MODS[i]; if(m.id) await getDB().from('ssma_modalidades').update({nome,valor_hh:val}).eq('id',m.id); MODS[i]={...m,nome,valor_hh:val}; }
+    hhEditando=null; renderHH(document.getElementById('ssma-hh-ov')); popularDDs(); showToastMod('Modalidade salva','ok');
+  };
+  window.ssmaSvCancelar = ()=> { svEditando=null; ssmaMudarTab('servicos'); };
+  window.ssmaSvRemover = async function(i) {
+    if(!confirm('Remover este serviço?')) return;
+    const p=DB.find(d=>d.codigo===modalCodigo); const item=p._servicos[i];
+    if(item?.id) await getDB().from('ssma_servicos').delete().eq('id',item.id);
+    p._servicos.splice(i,1); svEditando=null; ssmaMudarTab('servicos');
+  };
+  window.ssmaSvSalvar = async function(i) {
+    const p=DB.find(d=>d.codigo===modalCodigo);
+    const dados={
+      os:         document.getElementById('sv-os')?.value.trim()||'',
+      descricao:  document.getElementById('sv-desc')?.value.trim()||'',
+      modalidade: document.getElementById('sv-mod')?.value||'',
+      hh_prev:    parseFloat(document.getElementById('sv-hh')?.value)||0,
+    };
+    if (i===-1) { const {data}=await getDB().from('ssma_servicos').insert({codigo:modalCodigo,...dados}).select(); if(data) p._servicos.push(data[0]); }
+    else { const item=p._servicos[i]; if(item?.id) await getDB().from('ssma_servicos').update(dados).eq('id',item.id); Object.assign(p._servicos[i],dados); }
+    svEditando=null; ssmaMudarTab('servicos');
+  };
+  window.ssmaAqEditar   = i => { aqEditando=i; ssmaMudarTab('aquisicoes'); };
+  window.ssmaAqNovo     = ()=> { aqEditando=-1; ssmaMudarTab('aquisicoes'); };
+  window.ssmaFecharHH  = ()=>{ const ov=document.getElementById('ssma-hh-ov'); if(ov) ov.style.display='none'; };
+  window.ssmaHHEditar  = i=>{ hhEditando=i; renderHH(document.getElementById('ssma-hh-ov')); };
+  window.ssmaHHNovo    = ()=>{ hhEditando=-1; renderHH(document.getElementById('ssma-hh-ov')); };
+  window.ssmaMudarTab    = function(tab) { modalTab=tab; renderModal(); };
+  window.ssmaOnFile   = function(e){ const f=e.target.files[0]; if(f){ e.target.value=''; importarXLSX(f); } };
+  window.ssmaSvEditar   = i => { svEditando=i; ssmaMudarTab('servicos'); };
+  window.ssmaSvNovo     = ()=> { svEditando=-1; ssmaMudarTab('servicos'); };
   window.Modulos = window.Modulos || {};
   window.Modulos['planos-ssma'] = { async init(container){ await render(container); } };
 })();
