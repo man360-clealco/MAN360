@@ -504,46 +504,46 @@
   <div id="ssma-graficos-area">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
 
-      <div class="ssma-grafico-card" id="graf-card-vt" style="display:flex;flex-direction:column;min-height:320px">
-        <div class="ssma-grafico-head" style="flex-shrink:0">
+      <div class="ssma-grafico-card" id="graf-card-vt">
+        <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Valores por Classificação de Investimento
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
           </div>
         </div>
-        <div style="flex:1;position:relative;min-height:260px">
-          <canvas id="graf-vt" style="position:absolute;inset:0"></canvas>
+        <div style="height:280px;position:relative">
+          <canvas id="graf-vt" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
         </div>
       </div>
 
-      <div class="ssma-grafico-card" id="graf-card-qt" style="display:flex;flex-direction:column;min-height:320px">
-        <div class="ssma-grafico-head" style="flex-shrink:0">
+      <div class="ssma-grafico-card" id="graf-card-qt">
+        <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Planos de Ação por Classificação de Investimento
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados)</span>
           </div>
         </div>
-        <div style="flex:1;position:relative;min-height:260px">
-          <canvas id="graf-qt" style="position:absolute;inset:0"></canvas>
+        <div style="height:280px;position:relative">
+          <canvas id="graf-qt" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
         </div>
       </div>
 
-      <div class="ssma-grafico-card" id="graf-card-dual" style="display:flex;flex-direction:column;min-height:320px">
-        <div class="ssma-grafico-head" style="flex-shrink:0">
+      <div class="ssma-grafico-card" id="graf-card-dual">
+        <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Valor × Quantidade por Classificação de Investimento
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span>
           </div>
         </div>
-        <div style="flex:1;position:relative;min-height:260px">
-          <canvas id="graf-dual" style="position:absolute;inset:0"></canvas>
+        <div style="height:280px;position:relative">
+          <canvas id="graf-dual" style="position:absolute;top:0;left:0;width:100%;height:100%"></canvas>
         </div>
       </div>
 
-      <div class="ssma-grafico-card" id="graf-card-tabela" style="display:flex;flex-direction:column;min-height:320px">
-        <div class="ssma-grafico-head" style="flex-shrink:0">
+      <div class="ssma-grafico-card" id="graf-card-tabela">
+        <div class="ssma-grafico-head">
           <div class="ssma-grafico-title">Valor por Setor e Classificação
             <span style="font-weight:400;font-size:9px;color:#6b7280">(atrasados · com valor)</span>
           </div>
         </div>
-        <div id="graf-tabela-wrap" style="flex:1;overflow:auto"></div>
+        <div id="graf-tabela-wrap" style="overflow:auto;max-height:280px"></div>
       </div>
 
     </div>
@@ -1241,8 +1241,8 @@
 
   function _grafMensagem(id, key, w, h, msg) {
     const cv=document.getElementById(id); if(!cv) return;
-    cv.width=cv.parentElement?.offsetWidth||w||500;
-    cv.height=cv.parentElement?.offsetHeight||h||260;
+    cv.width  = cv.parentElement?.offsetWidth  || 500;
+    cv.height = cv.parentElement?.offsetHeight || 280;
     if(window[key]){window[key].destroy();window[key]=null;}
     const ctx=cv.getContext('2d');
     ctx.clearRect(0,0,cv.width,cv.height);
@@ -1260,7 +1260,8 @@
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    const cw=canvas.parentElement?.offsetWidth||500;const ch=canvas.parentElement?.offsetHeight||260;canvas.width=cw;canvas.height=ch;
+    canvas.width=canvas.parentElement?.offsetWidth||500;
+    canvas.height=canvas.parentElement?.offsetHeight||280;
     const ctx=canvas.getContext('2d');
     if(!vals.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...vals);
@@ -1327,7 +1328,8 @@
   function desenharParetoEmpilhado(canvasId,chartKey,labels,entries,totais,cumPct){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    const cw=canvas.parentElement?.offsetWidth||500;const ch=canvas.parentElement?.offsetHeight||260;canvas.width=cw;canvas.height=ch;
+    canvas.width=canvas.parentElement?.offsetWidth||500;
+    canvas.height=canvas.parentElement?.offsetHeight||280;
     const ctx=canvas.getContext('2d');
     if(!entries.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...totais);
@@ -1395,7 +1397,8 @@
   function desenharDual(canvasId,chartKey,labels,vtVals,qtVals){
     _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    const cw=canvas.parentElement?.offsetWidth||500;const ch=canvas.parentElement?.offsetHeight||260;canvas.width=cw;canvas.height=ch;
+    canvas.width=canvas.parentElement?.offsetWidth||500;
+    canvas.height=canvas.parentElement?.offsetHeight||280;
     const ctx=canvas.getContext('2d');
     if(!labels.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVT=Math.max(...vtVals), maxQT=Math.max(...qtVals);
