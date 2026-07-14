@@ -1545,6 +1545,13 @@
   };
 
   /* ══ Registro ═══════════════════════════════════════════════ */
+  window.ssmaImportar = ()=>{ document.getElementById('ssma-file')?.click(); };
+  window.ssmaAbrirHH = function() {
+    let ov=document.getElementById('ssma-hh-ov');
+    if(!ov){ov=document.createElement('div');ov.id='ssma-hh-ov';ov.className='ssma-modal-overlay';ov.onclick=e=>{if(e.target===ov)ssmaFecharHH();};document.body.appendChild(ov);}
+    hhEditando=null; renderHH(ov); ov.style.display='flex';
+  };
+  window.ssmaAbrirModal = function(codigo) { modalCodigo=codigo; modalTab='geral'; aqEditando=null; svEditando=null; renderModal(); };
   window.Modulos = window.Modulos || {};
   window.Modulos['planos-ssma'] = { async init(container){ await render(container); } };
 })();
