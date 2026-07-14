@@ -128,6 +128,14 @@
     window._ssmaRespSetor = {};
     (rRS.data||[]).forEach(x => { window._ssmaRespSetor[x.responsavel] = x.setor; });
     if (!window._ssmaGrafSetores) window._ssmaGrafSetores = [];
+    // Popula o select de setores
+    const _sel = document.getElementById('graf-setor-select');
+    const _wrap = document.getElementById('ssma-graf-filtro-wrap');
+    const _setores = [...new Set(Object.values(window._ssmaRespSetor).filter(Boolean))].sort();
+    if (_sel && _setores.length) {
+      _sel.innerHTML = _setores.map(s=>`<option value="${s.replace(/"/g,'&quot;')}">${s}</option>`).join('');
+      if (_wrap) _wrap.style.display = 'block';
+    }
     MODS = rMods.data || [];
     const mm={}, am={}, sm={};
     (rM.data||[]).forEach(x => mm[x.codigo]=x);
@@ -498,7 +506,28 @@
 
   <div class="ssma-chips" id="ssma-chips"></div>
   <!-- Filtro de setor dos gráficos — separado para não ser destruído no re-render -->
-  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px"></div>
+  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px;display:none">
+    <div class="ssma-grafico-card" style="padding:10px 14px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
+        <select id="graf-setor-select" multiple
+          style="min-width:220px;max-width:420px;height:90px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;padding:4px;background:var(--bg);color:#374151"
+          onchange="window._ssmaGrafSetores=[...this.selectedOptions].map(o=>o.value);renderGraficos()">
+        </select>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button onclick="var s=document.getElementById('graf-setor-select');[...s.options].forEach(o=>o.selected=false);window._ssmaGrafSetores=[];renderGraficos()"
+            style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">
+            Todos
+          </button>
+          <button onclick="var s=document.getElementById('graf-setor-select');[...s.options].forEach(o=>o.selected=true);window._ssmaGrafSetores=[...s.options].map(o=>o.value);renderGraficos()"
+            style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">
+            Nenhum
+          </button>
+        </div>
+        <span style="font-size:10px;color:#9ca3af;line-height:1.5">Ctrl+clique para<br>múltiplos setores</span>
+      </div>
+    </div>
+  </div>
   <!-- Container dos gráficos -->
   <div id="ssma-graficos-area">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
@@ -951,13 +980,16 @@
       return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Filtro de setor
-    const setoresSel = window._ssmaGrafSetores || [];
+    // Filtro de setor — lê do select nativo (fonte de verdade)
+    const _selEl = document.getElementById('graf-setor-select');
+    const setoresSel = _selEl && _selEl.selectedOptions.length > 0
+      ? [..._selEl.selectedOptions].map(o => o.value)
+      : (window._ssmaGrafSetores || []);
 
     // Aviso se nenhum setor selecionado (quando há mapeamento)
     const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
     const temMapeamento = todosSetores.length > 0;
-    const nenhumSelecionado = temMapeamento && setoresSel.length === 0;
+    const nenhumSelecionado = false; // select múltiplo: vazio = todos
 
     const dadosGraf = (temMapeamento && setoresSel.length > 0)
       ? atrasados.filter(p => {
@@ -999,8 +1031,6 @@
     const vtD3      = entriesByVT.map(e=>e[1].vt);
     const qtD3      = entriesByVT.map(e=>e[1].total);
 
-    // Renderiza filtro de setor
-    _renderGrafFiltro(todosSetores, setoresSel);
 
     // Mensagem se nenhum setor selecionado
     if (nenhumSelecionado) {
@@ -1029,127 +1059,15 @@
   }
 
 
-  function _renderGrafFiltro(todosSetores, sel) {
-    const wrap = document.getElementById('ssma-graf-filtro-wrap');
-    if (!wrap) return;
-
-    if (!todosSetores.length) {
-      wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px;display:flex;align-items:center;gap:8px">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280">Filtrar gráficos por setor:</span>
-        <span style="font-size:11px;color:#9ca3af"><i class="ti ti-info-circle"></i> Configure em
-          <button onclick="ssmaAbrirMapaSetores()" style="background:none;border:none;cursor:pointer;color:var(--yellow-dk);font-weight:600;font-family:var(--font);font-size:11px;padding:0">Resp. → Setor</button>
-          para habilitar este filtro.</span>
-      </div>`;
-      return;
-    }
-
-    const nenhum = sel.length === 0;
-    const labelTxt = nenhum ? 'Nenhum setor' :
-      sel.length === todosSetores.length ? 'Todos os setores' :
-      sel.length <= 2 ? sel.join(', ') :
-      sel[0]+' +' + (sel.length-1);
-
-    // Só re-renderiza se mudou (evita fechar o painel aberto)
-    const existing = document.getElementById('graf-setor-dd');
-    if (existing) {
-      // Só atualiza o label e badge sem destruir o painel
-      const btn = document.getElementById('graf-setor-btn');
-      if (btn) {
-        btn.className = 'ssma-dd-btn' + (nenhum?'':sel.length<todosSetores.length?' ativo':'');
-        // Atualiza texto (3º nó de texto)
-        const textNode = [...btn.childNodes].find(n=>n.nodeType===3&&n.textContent.trim());
-        if (textNode) textNode.textContent = ' '+labelTxt+' ';
-        // Badge
-        let badge = btn.querySelector('.dd-badge');
-        if (!nenhum && sel.length < todosSetores.length) {
-          if (!badge) { badge=document.createElement('span'); badge.className='dd-badge'; btn.appendChild(badge); }
-          badge.textContent = sel.length;
-        } else if (badge) badge.remove();
-      }
-      // Atualiza checkboxes
-      todosSetores.forEach((s,i) => {
-        const cb = document.getElementById('gfchk-'+i);
-        if (cb) cb.checked = sel.includes(s);
-      });
-      return;
-    }
-
-    // Primeira renderização
-    wrap.innerHTML = `<div class="ssma-grafico-card" style="padding:10px 14px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
-        <div class="ssma-dd" id="graf-setor-dd">
-          <button class="ssma-dd-btn ${nenhum?'alert-btn':sel.length<todosSetores.length?'ativo':''}"
-            id="graf-setor-btn"
-            onclick="gfToggleDD(event)"
-            style="${nenhum?'border-color:#dc2626;background:#fff1f2;':''}"
-          >
-            <i class="ti ti-building" style="font-size:13px;color:#6b7280"></i>
-            ${esc(labelTxt)}
-            ${!nenhum&&sel.length>0&&sel.length<todosSetores.length?`<span class="dd-badge">${sel.length}</span>`:''}
-            ${nenhum?`<i class="ti ti-alert-triangle" style="font-size:12px;color:#dc2626"></i>`:''}
-            <i class="ti ti-chevron-down arr"></i>
-          </button>
-          <div class="ssma-dd-panel" id="graf-setor-panel">
-            <div style="display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid var(--border)">
-              <button onclick="gfSelectAll(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">Todos</button>
-              <button onclick="gfSelectNone(event)" style="flex:1;height:22px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">Nenhum</button>
-            </div>
-            ${todosSetores.map((s,i)=>`
-              <label class="ssma-dd-item" onclick="gfToggleItem(${i},event)">
-                <input type="checkbox" id="gfchk-${i}" style="accent-color:var(--yellow);pointer-events:none" ${sel.includes(s)?'checked':''}> ${esc(s)}
-              </label>`).join('')}
-          </div>
-        </div>
-        ${nenhum?`<span style="font-size:11px;color:#dc2626;font-weight:600"><i class="ti ti-alert-triangle"></i> Selecione pelo menos um setor para exibir os gráficos</span>`:''}
-      </div>
-    </div>`;
-  }
 
   // Funções do dropdown de setor — simples, sem re-render
-  window.gfToggleDD = function(e) {
-    e.stopPropagation();
-    const panel = document.getElementById('graf-setor-panel');
-    const btn   = document.getElementById('graf-setor-btn');
-    if (!panel) return;
-    const open = panel.classList.contains('show');
-    // Fecha outros dropdowns
-    document.querySelectorAll('.ssma-dd-panel.show').forEach(p=>p.classList.remove('show'));
-    document.querySelectorAll('.ssma-dd-btn.open').forEach(b=>b.classList.remove('open'));
-    if (!open) { panel.classList.add('show'); btn?.classList.add('open'); }
-  };
 
-  window.gfToggleItem = function(idx2, e) {
-    e.stopPropagation();
-    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
-    const s = todosSetores[idx2];
-    const arr = window._ssmaGrafSetores || [];
-    const pos = arr.indexOf(s);
-    if (pos>=0) arr.splice(pos,1); else arr.push(s);
-    window._ssmaGrafSetores = arr;
-    // Atualiza só o checkbox sem fechar painel
-    const cb = document.getElementById('gfchk-'+idx2);
-    if (cb) cb.checked = pos<0;
-    // Aplica imediatamente
-    renderGraficos();
-  };
 
-  window.gfSelectAll = function(e) {
-    e.stopPropagation();
-    window._ssmaGrafSetores = [];
-    document.querySelectorAll('[id^="gfchk-"]').forEach(cb=>cb.checked=false);
-    renderGraficos();
-  };
 
-  window.gfSelectNone = function(e) {
-    e.stopPropagation();
-    window._ssmaGrafSetores = [];
-    document.querySelectorAll('[id^="gfchk-"]').forEach(cb=>cb.checked=false);
-    // Fecha painel
-    document.getElementById('graf-setor-panel')?.classList.remove('show');
-    document.getElementById('graf-setor-btn')?.classList.remove('open');
-    renderGraficos();
-  };
+
+
+
+
 
   function _renderTabelaSetores(dadosGraf, setoresSel, todosSetores) {
     const wrap = document.getElementById('graf-tabela-wrap');
