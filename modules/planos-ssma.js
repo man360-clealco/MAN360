@@ -980,11 +980,11 @@
       return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Filtro de setor — lê do select nativo (fonte de verdade)
+    // Filtro de setor — lê do select nativo
     const _selEl = document.getElementById('graf-setor-select');
     const setoresSel = _selEl && _selEl.selectedOptions.length > 0
       ? [..._selEl.selectedOptions].map(o => o.value)
-      : (window._ssmaGrafSetores || []);
+      : [];  // vazio = sem filtro = mostra todos
 
     // Aviso se nenhum setor selecionado (quando há mapeamento)
     const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
@@ -1201,107 +1201,206 @@
   }
 
 
+  function _regDatalabels() {
+    if (window._dlReg) return;
+    try { if(window.ChartDataLabels) { Chart.register(ChartDataLabels); window._dlReg=true; } } catch(e){}
+  }
+
   function desenharParetoSimples(canvasId,chartKey,labels,vals,cumPct,fmtTick,yLabel){
+    _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=240;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=260;
     const ctx=canvas.getContext('2d');
     if(!vals.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...vals);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
     window[chartKey]=new Chart(ctx,{
       data:{labels,datasets:[
-        {type:'bar',label:yLabel,data:vals,backgroundColor:'rgba(248,193,0,0.85)',borderColor:'#d4a000',borderWidth:1,yAxisID:'y',order:2,
-          datalabels:{display:true,color:'#1a1a1a',font:{size:9,weight:'700'},anchor:'end',align:'top',offset:2,clamp:true,
-            formatter:v=>fmtTick(v),
-            backgroundColor:'rgba(255,255,255,0.75)',borderRadius:3,padding:{top:1,bottom:1,left:3,right:3}}},
-        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#C8102E',backgroundColor:'rgba(200,16,46,.07)',
-          borderWidth:2,pointRadius:4,pointBackgroundColor:'#C8102E',fill:false,tension:.3,yAxisID:'y2',order:1,
-          datalabels:{display:true,color:'#fff',backgroundColor:'#C8102E',borderRadius:3,font:{size:8,weight:'700'},
-            anchor:'center',align:'center',padding:{top:1,bottom:1,left:3,right:3},
-            formatter:v=>v.toFixed(0)+'%'}}
+        { type:'bar', label:yLabel, data:vals,
+          backgroundColor:'rgba(248,193,0,0.88)', borderColor:'#c49000', borderWidth:1,
+          yAxisID:'y', order:2,
+          datalabels:{
+            display:true,
+            anchor:'end', align:'end', offset:2, clamp:true,
+            color:'#1a1a1a', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.82)',
+            borderRadius:3, padding:{top:1,bottom:1,left:3,right:3},
+            formatter: v => fmtTick(v)
+          }
+        },
+        { type:'line', label:'% Acumulado', data:cumPct,
+          borderColor:'#C8102E', backgroundColor:'rgba(200,16,46,.1)',
+          borderWidth:2, pointRadius:5, pointBackgroundColor:'#C8102E',
+          fill:false, tension:.3, yAxisID:'y2', order:1,
+          datalabels:{
+            display:true,
+            anchor:'center', align:'top', offset:6,
+            color:'#C8102E', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.85)',
+            borderRadius:3, padding:{top:1,bottom:1,left:3,right:3},
+            formatter: v => v.toFixed(0)+'%'
+          }
+        }
       ]},
-      options:{responsive:false,maintainAspectRatio:false,layout:{padding:{top:24}},
+      plugins:[window.ChartDataLabels].filter(Boolean),
+      options:{
+        responsive:false, maintainAspectRatio:false,
+        layout:{padding:{top:30, right:10}},
         interaction:{mode:'index',intersect:false},
-        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
-          tooltip:{callbacks:{label(c){return c.dataset.type==='line'?`Acumulado: ${c.raw.toFixed(1)}%`:`${yLabel}: ${fmtTick(c.raw)}`;}}},
-          datalabels:{}},
+        plugins:{
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{enabled:true, callbacks:{
+            label(ctx){
+              return ctx.dataset.type==='line'
+                ? ' Acumulado: '+ctx.raw.toFixed(1)+'%'
+                : ' '+yLabel+': '+fmtTick(ctx.raw);
+            }
+          }},
+          datalabels:{}
+        },
         scales:{
           x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:35},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.45,
-            ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),precision:0},
-            grid:{color:'#e5e7eb'},title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:110,
-            ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',precision:0},
-            grid:{display:false},title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
-        }}
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.5,
+            ticks:{font:{size:9},color:'#4b5563',callback:v=>fmtTick(v),maxTicksLimit:6},
+            grid:{color:'#e5e7eb'},
+            title:{display:true,text:yLabel,font:{size:9},color:'#4b5563'}},
+          y2:{type:'linear',position:'right',min:0,max:115,
+            ticks:{font:{size:9},color:'#C8102E',callback:v=>v+'%',maxTicksLimit:6},
+            grid:{display:false},
+            title:{display:true,text:'% Acumulado',font:{size:9},color:'#C8102E'}}
+        }
+      }
     });
   }
 
   function desenharParetoEmpilhado(canvasId,chartKey,labels,entries,totais,cumPct){
+    _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=240;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=260;
     const ctx=canvas.getContext('2d');
     if(!entries.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
     const maxVal=Math.max(...totais);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
-    const altoData=entries.map(e=>e[1].Alto||0);
+    const altoData =entries.map(e=>e[1].Alto||0);
     const medioData=entries.map(e=>e[1].Médio||0);
     const baixoData=entries.map(e=>e[1].Baixo||0);
     window[chartKey]=new Chart(ctx,{
       data:{labels,datasets:[
-        {type:'bar',label:'Alto', data:altoData, backgroundColor:'#dc2626',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
-        {type:'bar',label:'Médio',data:medioData,backgroundColor:'#f59e0b',borderWidth:0,stack:'risco',yAxisID:'y',order:2,datalabels:{display:false}},
-        {type:'bar',label:'Baixo',data:baixoData,backgroundColor:'#16a34a',borderWidth:0,stack:'risco',yAxisID:'y',order:2,
-          datalabels:{display:true,color:'#1a1a1a',font:{size:9,weight:'700'},anchor:'end',align:'top',offset:2,clamp:true,
-            backgroundColor:'rgba(255,255,255,0.75)',borderRadius:3,padding:{top:1,bottom:1,left:3,right:3},
-            formatter:(v,c2)=>totais[c2.dataIndex]>0?String(totais[c2.dataIndex]):''}},
-        {type:'line',label:'% Acumulado',data:cumPct,borderColor:'#1d4ed8',backgroundColor:'rgba(29,78,216,.07)',
-          borderWidth:2,pointRadius:4,pointBackgroundColor:'#1d4ed8',fill:false,tension:.3,yAxisID:'y2',order:1,
-          datalabels:{display:true,color:'#fff',backgroundColor:'#1d4ed8',borderRadius:3,font:{size:8,weight:'700'},
-            anchor:'center',align:'center',padding:{top:1,bottom:1,left:3,right:3},
-            formatter:v=>v.toFixed(0)+'%'}}
+        { type:'bar', label:'Alto',  data:altoData,  backgroundColor:'#dc2626', borderWidth:0, stack:'risco', yAxisID:'y', order:2, datalabels:{display:false} },
+        { type:'bar', label:'Médio', data:medioData, backgroundColor:'#f59e0b', borderWidth:0, stack:'risco', yAxisID:'y', order:2, datalabels:{display:false} },
+        { type:'bar', label:'Baixo', data:baixoData, backgroundColor:'#16a34a', borderWidth:0, stack:'risco', yAxisID:'y', order:2,
+          datalabels:{
+            display:true, anchor:'end', align:'end', offset:2, clamp:true,
+            color:'#1a1a1a', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.82)', borderRadius:3,
+            padding:{top:1,bottom:1,left:3,right:3},
+            formatter:(v,ctx2) => totais[ctx2.dataIndex]>0 ? String(totais[ctx2.dataIndex]) : ''
+          }
+        },
+        { type:'line', label:'% Acumulado', data:cumPct,
+          borderColor:'#1d4ed8', backgroundColor:'rgba(29,78,216,.1)',
+          borderWidth:2, pointRadius:5, pointBackgroundColor:'#1d4ed8',
+          fill:false, tension:.3, yAxisID:'y2', order:1,
+          datalabels:{
+            display:true, anchor:'center', align:'top', offset:6,
+            color:'#1d4ed8', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.85)', borderRadius:3,
+            padding:{top:1,bottom:1,left:3,right:3},
+            formatter: v => v.toFixed(0)+'%'
+          }
+        }
       ]},
-      options:{responsive:false,maintainAspectRatio:false,layout:{padding:{top:24}},
+      plugins:[window.ChartDataLabels].filter(Boolean),
+      options:{
+        responsive:false, maintainAspectRatio:false,
+        layout:{padding:{top:30, right:10}},
         interaction:{mode:'index',intersect:false},
-        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10,filter(item){return item.text!=='% Acumulado';}}},
-          tooltip:{callbacks:{label(c){if(c.dataset.type==='line')return`Acumulado: ${c.raw.toFixed(1)}%`;return`${c.dataset.label}: ${c.raw}`;},footer(items){const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0);return`Total: ${t}`;}}},
-          datalabels:{}},
+        plugins:{
+          legend:{display:true, position:'top',
+            labels:{font:{size:10},color:'#374151',boxWidth:10,
+              filter(item){ return item.text!=='% Acumulado'; }}},
+          tooltip:{enabled:true, callbacks:{
+            label(ctx){ if(ctx.dataset.type==='line') return ' Acumulado: '+ctx.raw.toFixed(1)+'%'; return ' '+ctx.dataset.label+': '+ctx.raw; },
+            footer(items){ const t=items.filter(i=>i.dataset.type==='bar').reduce((s,i)=>s+i.raw,0); return t>0?'Total: '+t:''; }
+          }},
+          datalabels:{}
+        },
         scales:{
           x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:35},grid:{display:false}},
-          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.45,stacked:true,
-            ticks:{font:{size:9},color:'#4b5563',precision:0},grid:{color:'#e5e7eb'},
+          y:{type:'linear',position:'left',min:0,suggestedMax:maxVal*1.5,stacked:true,
+            ticks:{font:{size:9},color:'#4b5563',maxTicksLimit:6},
+            grid:{color:'#e5e7eb'},
             title:{display:true,text:'Planos',font:{size:9},color:'#4b5563'}},
-          y2:{type:'linear',position:'right',min:0,max:110,
-            ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',precision:0},grid:{display:false},
+          y2:{type:'linear',position:'right',min:0,max:115,
+            ticks:{font:{size:9},color:'#1d4ed8',callback:v=>v+'%',maxTicksLimit:6},
+            grid:{display:false},
             title:{display:true,text:'% Acumulado',font:{size:9},color:'#1d4ed8'}}
-        }}
+        }
+      }
     });
   }
 
+
   function desenharDual(canvasId,chartKey,labels,vtVals,qtVals){
+    _regDatalabels();
     const canvas=document.getElementById(canvasId);if(!canvas)return;
-    canvas.width=canvas.parentElement?.offsetWidth||900;canvas.height=260;
+    canvas.width=canvas.parentElement?.offsetWidth||500;canvas.height=260;
     const ctx=canvas.getContext('2d');
     if(!labels.length){ctx.fillStyle='#9ca3af';ctx.font='12px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Sem dados',canvas.width/2,canvas.height/2);return;}
-    const maxVT=Math.max(...vtVals);const maxQT=Math.max(...qtVals);
+    const maxVT=Math.max(...vtVals), maxQT=Math.max(...qtVals);
     if(window[chartKey]){window[chartKey].destroy();window[chartKey]=null;}
     window[chartKey]=new Chart(ctx,{
       data:{labels,datasets:[
-        {type:'bar',label:'Valor (R$)',data:vtVals,backgroundColor:'rgba(248,193,0,0.85)',borderColor:'#d4a000',borderWidth:1,yAxisID:'yVT',order:1,
-          datalabels:{display:true,color:'#92400e',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:v=>fmtBRL(v)}},
-        {type:'bar',label:'Qtd. Planos',data:qtVals,backgroundColor:'rgba(29,78,216,0.75)',borderColor:'#1e3a8a',borderWidth:1,yAxisID:'yQT',order:1,
-          datalabels:{display:true,color:'#1e3a8a',font:{size:8,weight:'700'},anchor:'end',align:'end',offset:2,clamp:true,formatter:v=>String(v)}}
+        { type:'bar', label:'Valor (R$)', data:vtVals,
+          backgroundColor:'rgba(248,193,0,0.88)', borderColor:'#c49000', borderWidth:1,
+          yAxisID:'yVT', order:1,
+          datalabels:{
+            display:true, anchor:'end', align:'end', offset:2, clamp:true,
+            color:'#92400e', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.82)', borderRadius:3,
+            padding:{top:1,bottom:1,left:3,right:3},
+            formatter: v => fmtBRL(v)
+          }
+        },
+        { type:'bar', label:'Qtd. Planos', data:qtVals,
+          backgroundColor:'rgba(29,78,216,0.8)', borderColor:'#1e3a8a', borderWidth:1,
+          yAxisID:'yQT', order:1,
+          datalabels:{
+            display:true, anchor:'end', align:'end', offset:2, clamp:true,
+            color:'#1e3a8a', font:{size:9,weight:'700'},
+            backgroundColor:'rgba(255,255,255,0.82)', borderRadius:3,
+            padding:{top:1,bottom:1,left:3,right:3},
+            formatter: v => String(v)
+          }
+        }
       ]},
-      options:{responsive:false,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-        plugins:{legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
-          tooltip:{callbacks:{label(c){return c.dataset.yAxisID==='yVT'?`Valor: ${fmtBRL(c.raw)}`:`Qtd.: ${c.raw} planos`;}}},datalabels:{}},
+      plugins:[window.ChartDataLabels].filter(Boolean),
+      options:{
+        responsive:false, maintainAspectRatio:false,
+        layout:{padding:{top:30, right:10}},
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:true,position:'top',labels:{font:{size:10},color:'#374151',boxWidth:10}},
+          tooltip:{enabled:true, callbacks:{
+            label(ctx){ return ctx.dataset.yAxisID==='yVT' ? ' Valor: '+fmtBRL(ctx.raw) : ' Qtd.: '+ctx.raw+' planos'; }
+          }},
+          datalabels:{}
+        },
         scales:{
-          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:30},grid:{display:false}},
-          yVT:{type:'linear',position:'left',min:0,suggestedMax:maxVT*1.3,ticks:{font:{size:9},color:'#92400e',callback:v=>fmtBRL(v)},grid:{color:'#e5e7eb'},title:{display:true,text:'Valor (R$)',font:{size:9},color:'#92400e'}},
-          yQT:{type:'linear',position:'right',min:0,suggestedMax:maxQT*1.3,ticks:{font:{size:9},color:'#1d4ed8',precision:0},grid:{display:false},title:{display:true,text:'Qtd. Planos',font:{size:9},color:'#1d4ed8'}}
-        }}
+          x:{ticks:{font:{size:10},color:'#4b5563',maxRotation:35},grid:{display:false}},
+          yVT:{type:'linear',position:'left',min:0,suggestedMax:maxVT*1.5,
+            ticks:{font:{size:9},color:'#92400e',callback:v=>fmtBRL(v),maxTicksLimit:6},
+            grid:{color:'#e5e7eb'},
+            title:{display:true,text:'Valor (R$)',font:{size:9},color:'#92400e'}},
+          yQT:{type:'linear',position:'right',min:0,suggestedMax:maxQT*1.5,
+            ticks:{font:{size:9},color:'#1d4ed8',maxTicksLimit:6},
+            grid:{display:false},
+            title:{display:true,text:'Qtd. Planos',font:{size:9},color:'#1d4ed8'}}
+        }
+      }
     });
   }
+
 
 
   /* ══ Filtro de setor — select nativo ══════════════════════ */
