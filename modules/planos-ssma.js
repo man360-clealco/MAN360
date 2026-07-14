@@ -128,14 +128,7 @@
     window._ssmaRespSetor = {};
     (rRS.data||[]).forEach(x => { window._ssmaRespSetor[x.responsavel] = x.setor; });
     if (!window._ssmaGrafSetores) window._ssmaGrafSetores = [];
-    // Popula o select de setores
-    const _sel = document.getElementById('graf-setor-select');
-    const _wrap = document.getElementById('ssma-graf-filtro-wrap');
-    const _setores = [...new Set(Object.values(window._ssmaRespSetor).filter(Boolean))].sort();
-    if (_sel && _setores.length) {
-      _sel.innerHTML = _setores.map(s=>`<option value="${s.replace(/"/g,'&quot;')}">${s}</option>`).join('');
-      if (_wrap) _wrap.style.display = 'block';
-    }
+
     MODS = rMods.data || [];
     const mm={}, am={}, sm={};
     (rM.data||[]).forEach(x => mm[x.codigo]=x);
@@ -506,28 +499,7 @@
 
   <div class="ssma-chips" id="ssma-chips"></div>
   <!-- Filtro de setor dos gráficos — separado para não ser destruído no re-render -->
-  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px;display:none">
-    <div class="ssma-grafico-card" style="padding:10px 14px">
-      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;white-space:nowrap">Filtrar gráficos por setor:</span>
-        <select id="graf-setor-select" multiple
-          style="min-width:220px;max-width:420px;height:90px;border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--font);font-size:11px;padding:4px;background:var(--bg);color:#374151"
-          onchange="window._ssmaGrafSetores=[...this.selectedOptions].map(o=>o.value);renderGraficos()">
-        </select>
-        <div style="display:flex;flex-direction:column;gap:6px">
-          <button onclick="var s=document.getElementById('graf-setor-select');[...s.options].forEach(o=>o.selected=false);window._ssmaGrafSetores=[];renderGraficos()"
-            style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--yellow);background:var(--yellow);color:var(--dark1);cursor:pointer">
-            Todos
-          </button>
-          <button onclick="var s=document.getElementById('graf-setor-select');[...s.options].forEach(o=>o.selected=true);window._ssmaGrafSetores=[...s.options].map(o=>o.value);renderGraficos()"
-            style="height:26px;padding:0 12px;font-size:10px;font-family:var(--font);font-weight:600;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);color:#6b7280;cursor:pointer">
-            Nenhum
-          </button>
-        </div>
-        <span style="font-size:10px;color:#9ca3af;line-height:1.5">Ctrl+clique para<br>múltiplos setores</span>
-      </div>
-    </div>
-  </div>
+  <div id="ssma-graf-filtro-wrap" style="margin-bottom:10px"></div>
   <!-- Container dos gráficos -->
   <div id="ssma-graficos-area">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
@@ -980,23 +952,50 @@
       return !isNaN(d) && (d-hoje)/86400000 < 0;
     });
 
-    // Filtro de setor — lê do select nativo
-    const _selEl = document.getElementById('graf-setor-select');
-    const setoresSel = _selEl && _selEl.selectedOptions.length > 0
-      ? [..._selEl.selectedOptions].map(o => o.value)
-      : [];  // vazio = sem filtro = mostra todos
+    const setoresSel = window._ssmaGrafSetores || [];
 
-    // Aviso se nenhum setor selecionado (quando há mapeamento)
-    const todosSetores = [...new Set(Object.values(window._ssmaRespSetor||{}).filter(Boolean))].sort();
-    const temMapeamento = todosSetores.length > 0;
-    const nenhumSelecionado = false; // select múltiplo: vazio = todos
+    // ── Filtro de setor por botões ──────────────────────────────────────
+    const todosSetores = [...new Set(
+      Object.values(window._ssmaRespSetor||{}).filter(Boolean)
+    )].sort();
 
-    const dadosGraf = (temMapeamento && setoresSel.length > 0)
+    const wrapFiltro = document.getElementById('ssma-graf-filtro-wrap');
+    // Salva lista de setores globalmente para a função de toggle
+    window._ssmaGrafTodosSetores = todosSetores;
+
+    if (wrapFiltro) {
+      if (!todosSetores.length) {
+        wrapFiltro.innerHTML = '';
+      } else {
+        const btns = todosSetores.map(function(s, i) {
+          const ativo = setoresSel.length === 0 || setoresSel.includes(s);
+          return '<button id="gfbtn-' + i + '" onclick="ssmaGrafToggle(' + i + ')" style="'
+            + 'height:26px;padding:0 10px;font-size:11px;font-family:var(--font);font-weight:600;'
+            + 'border-radius:var(--radius-sm);cursor:pointer;white-space:nowrap;margin:2px;border:1px solid '
+            + (ativo ? 'var(--yellow);background:var(--yellow);color:var(--dark1)' : 'var(--border);background:var(--bg);color:#6b7280')
+            + '">' + s + '</button>';
+        }).join('');
+        wrapFiltro.innerHTML = '<div class="ssma-grafico-card" style="padding:10px 14px">'
+          + '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
+          + '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#6b7280;margin-right:6px;white-space:nowrap">Setor:</span>'
+          + btns
+          + '<button onclick="window._ssmaGrafSetores=[];renderGraficos();" style="'
+          + 'height:26px;padding:0 10px;font-size:10px;font-family:var(--font);font-weight:600;'
+          + 'border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg);'
+          + 'color:#374151;cursor:pointer;margin:2px;margin-left:8px">Todos</button>'
+          + '</div></div>';
+      }
+    }    // ────────────────────────────────────────────────────────────────────
+
+    // Aviso se nenhum setor selecionado
+    const nenhumSelecionado = false;
+
+    const dadosGraf = setoresSel.length > 0
       ? atrasados.filter(p => {
           const s = (window._ssmaRespSetor||{})[p.responsavel];
           return s && setoresSel.includes(s);
         })
-      : (nenhumSelecionado ? [] : atrasados);
+      : atrasados;
 
     // Agrupa por classificação efetiva (rec > classif), excluindo pendentes e sem classif
     const grupos = {};
@@ -1180,6 +1179,24 @@
       <tbody>${rows}${totRow}${pctRow}</tbody>
     </table>`;
   }
+
+  window.ssmaGrafToggle = function(idx2) {
+    var todos = window._ssmaGrafTodosSetores || [];
+    var arr   = (window._ssmaGrafSetores||[]).slice(); // copia
+    var s     = todos[idx2];
+    if (!s) return;
+    // Se estava mostrando tudo (arr vazio), começa filtrando só os outros
+    if (arr.length === 0) {
+      arr = todos.filter(function(x){ return x !== s; });
+    } else {
+      var pos = arr.indexOf(s);
+      if (pos >= 0) arr.splice(pos, 1); else arr.push(s);
+    }
+    // Se todos marcados = volta para "todos" (arr vazio)
+    if (arr.length === todos.length) arr = [];
+    window._ssmaGrafSetores = arr;
+    renderGraficos();
+  };
 
   window.tabSort = function(col) {
     if (!window._tabSort) window._tabSort={col:'setor',dir:1};
