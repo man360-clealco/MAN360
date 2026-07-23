@@ -291,17 +291,15 @@ function cardCfg(o) {
   // Chips de equipe — cada pessoa tem onclick com id e nome escapado por atributo data
   const eqChips = EQUIPE.map((e,i) => {
     const sel = (o.equipe||[]).includes(e);
-    return `<span class="pt-chip ${sel?'on':''}"
-      data-osid="${id}" data-nome="${esc(e)}"
-      onclick="ptTogEq(this)">${esc(e)}</span>`;
+    return `<span class="pt-chip ${sel?'on':''} pt-eq-chip"
+      data-osid="${id}" data-nome="${esc(e)}">${esc(e)}</span>`;
   }).join('');
 
   // Chips de recurso
   const recChips = ['Andaime','Munck','PTA','Guindaste'].map(r => {
     const sel = o.recurso===r;
-    return `<span class="pt-chip ${sel?'rec':''}"
-      data-osid="${id}" data-rec="${r}"
-      onclick="ptTogRec(this)">${r}</span>`;
+    return `<span class="pt-chip ${sel?'rec':''} pt-rec-chip"
+      data-osid="${id}" data-rec="${r}">${r}</span>`;
   }).join('');
 
   const durInfo = `${dur}h (${(o.equipe||[]).length||1} pessoa${(o.equipe||[]).length!==1?'s':''})`;
@@ -380,9 +378,59 @@ function buildFotosHtml(o) {
   </div>`;
 }
 
-/* ── Bind global ── */
+/* ── Bind global — event delegation ── */
 function bindGlobal() {
-  // Fechar dropdowns ao tocar fora
+  // Usa event delegation no container para capturar cliques
+  // nos chips de equipe e recurso sem depender de onclick inline
+  if (!_c) return;
+
+  _c.addEventListener('click', async function handler(e) {
+    // Chip de equipe
+    const eqEl = e.target.closest('.pt-eq-chip');
+    if (eqEl) {
+      e.stopPropagation();
+      const id   = eqEl.dataset.osid;
+      const nome = eqEl.dataset.nome;
+      const os   = findOS(id); if (!os) return;
+      if (!Array.isArray(os.equipe)) os.equipe = [];
+      const i = os.equipe.indexOf(nome);
+      if (i >= 0) os.equipe.splice(i, 1); else os.equipe.push(nome);
+      eqEl.classList.toggle('on', os.equipe.includes(nome));
+      await salvarOS(os);
+      // Atualiza duracao no card sem re-render
+      const card = document.getElementById('pos-'+id);
+      if (card) {
+        const dur = durH(os);
+        const qt = os.equipe.length||1;
+        const meta = card.querySelector('.pt-os-m');
+        if (meta) {
+          const spans = meta.querySelectorAll('span');
+          spans.forEach(s => {
+            if (s.textContent.includes('HH:')) {
+              s.textContent = `HH: ${os.hh}h · ${dur}h (${qt} pessoa${qt!==1?'s':''})`;
+            }
+          });
+        }
+      }
+      return;
+    }
+
+    // Chip de recurso
+    const recEl = e.target.closest('.pt-rec-chip');
+    if (recEl) {
+      e.stopPropagation();
+      const id  = recEl.dataset.osid;
+      const rec = recEl.dataset.rec;
+      const os  = findOS(id); if (!os) return;
+      os.recurso = (os.recurso === rec) ? null : rec;
+      if (!os.recurso) os.recurso_dur = null;
+      await salvarOS(os);
+      // Re-render só o card afetado
+      const card = document.getElementById('pos-'+id);
+      if (card) card.outerHTML = cardCfg(os);
+      return;
+    }
+  }, false);
 }
 
 /* ══ FUNÇÕES GLOBAIS ══════════════════════════════ */
@@ -428,37 +476,7 @@ async function salvarEquipe() {
   await getDB().from('parada_turno_config').update({equipe:EQUIPE}).eq('id', CFG.id);
 }
 
-/* Toggle equipe via data-attribute — sem string inline no onclick */
-window.ptTogEq = async function(el) {
-  const id   = el.dataset.osid;
-  const nome = el.dataset.nome;
-  const os   = findOS(id); if (!os) return;
-  if (!Array.isArray(os.equipe)) os.equipe = [];
-  const i = os.equipe.indexOf(nome);
-  if (i >= 0) os.equipe.splice(i, 1); else os.equipe.push(nome);
-  el.classList.toggle('on', os.equipe.includes(nome));
-  await salvarOS(os);
-  // Atualiza duração sem re-render completo
-  const card = document.getElementById('pos-'+id);
-  if (card) {
-    const durEl = card.querySelector('.pt-os-m span:last-of-type');
-    const dur = durH(os);
-    if (durEl) durEl.textContent = `HH: ${os.hh}h · ${dur}h (${os.equipe.length||1} pessoa${os.equipe.length!==1?'s':''})`;
-  }
-};
-
-/* Toggle recurso via data-attribute */
-window.ptTogRec = async function(el) {
-  const id  = el.dataset.osid;
-  const rec = el.dataset.rec;
-  const os  = findOS(id); if (!os) return;
-  os.recurso = (os.recurso === rec) ? null : rec;
-  if (!os.recurso) os.recurso_dur = null;
-  await salvarOS(os);
-  // Re-render só o card
-  const card = document.getElementById('pos-'+id);
-  if (card) card.outerHTML = cardCfg(os);
-};
+/* ptTogEq e ptTogRec tratados por event delegation em bindGlobal */
 
 window.ptSetDur = async function(el) {
   const id = el.dataset.osid;
